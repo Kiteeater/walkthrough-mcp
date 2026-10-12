@@ -4,7 +4,7 @@ const { randomUUID } = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { orderTotal } = require("./pricing");
 
-const port = Number(process.env.PORT || 3200);
+const port = Number(process.env.PORT || 0);
 const client = new MongoClient(process.env.MONGO_URL);
 const dbName = process.env.MONGO_DB || "walkthrough_demo";
 const langfuse = process.env.LANGFUSE_URL;

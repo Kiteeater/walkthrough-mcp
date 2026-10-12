@@ -56,7 +56,7 @@ function countOf(text: string, pattern?: string): number {
 
 /** Judge an expectation over raw evidence texts. No evidence or no readable value → inconclusive. */
 export function evaluateExpect(e: Expect, texts: string[]): Judgement {
-  if (!texts.length) return { status: "inconclusive", reasons: ["no evidence submitted for this check"] };
+  if (!texts.length) return { status: "inconclusive", reasons: ["该检查没有提交证据"] };
   const all = texts.join("\n");
   type Spec = { pattern?: string; eq?: number; min?: number; max?: number };
   const v = e.value as Spec & number & string & [number, number];
@@ -65,37 +65,37 @@ export function evaluateExpect(e: Expect, texts: string[]): Judgement {
   switch (e.type) {
     case "status": {
       const got = texts.map(readStatus).find((x) => x !== undefined);
-      if (got === undefined) return { status: "inconclusive", reasons: ["no HTTP status found in evidence"] };
+      if (got === undefined) return { status: "inconclusive", reasons: ["证据中没有 HTTP 状态码"] };
       const [lo, hi] = Array.isArray(v) ? v : [v, v];
-      return got >= lo && got <= hi ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`status ${got}, expected ${lo === hi ? lo : `${lo}-${hi}`}`] };
+      return got >= lo && got <= hi ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`状态码 ${got}，期望 ${lo === hi ? lo : `${lo}-${hi}`}`] };
     }
     case "count": {
       const spec: Spec = num(v) ? { eq: v } : v;
       const n = countOf(all, spec.pattern);
       const r: string[] = [];
-      if (num(spec.eq) && n !== spec.eq) r.push(`count ${n}, expected ${spec.eq}`);
-      if (num(spec.min) && n < spec.min) r.push(`count ${n}, expected >= ${spec.min}`);
-      if (num(spec.max) && n > spec.max) r.push(`count ${n}, expected <= ${spec.max}`);
+      if (num(spec.eq) && n !== spec.eq) r.push(`计数 ${n}，期望 ${spec.eq}`);
+      if (num(spec.min) && n < spec.min) r.push(`计数 ${n}，期望 >= ${spec.min}`);
+      if (num(spec.max) && n > spec.max) r.push(`计数 ${n}，期望 <= ${spec.max}`);
       return { status: r.length ? "fail" : "pass", reasons: r };
     }
     case "regex":
-      return new RegExp(v, "m").test(all) ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`no match for /${v}/`] };
+      return new RegExp(v, "m").test(all) ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`未匹配 /${v}/`] };
     case "absent": {
       const m = new RegExp(v, "m").exec(all);
-      return m ? { status: "fail", reasons: [`found /${v}/: ${JSON.stringify(m[0].slice(0, 120))}`] } : { status: "pass", reasons: [] };
+      return m ? { status: "fail", reasons: [`出现了 /${v}/：${JSON.stringify(m[0].slice(0, 120))}`] } : { status: "pass", reasons: [] };
     }
     case "threshold": {
       const t = e.value as Spec;
       const m = new RegExp(t.pattern!, "m").exec(all);
       const x = m ? Number(m[1]) : NaN;
-      if (!Number.isFinite(x)) return { status: "inconclusive", reasons: [`no number for /${t.pattern}/ in evidence`] };
+      if (!Number.isFinite(x)) return { status: "inconclusive", reasons: [`证据中没有匹配 /${t.pattern}/ 的数值`] };
       const r: string[] = [];
-      if (num(t.min) && x < t.min) r.push(`${x} < min ${t.min}`);
-      if (num(t.max) && x > t.max) r.push(`${x} > max ${t.max}`);
+      if (num(t.min) && x < t.min) r.push(`${x} < 下限 ${t.min}`);
+      if (num(t.max) && x > t.max) r.push(`${x} > 上限 ${t.max}`);
       return { status: r.length ? "fail" : "pass", reasons: r };
     }
   }
-  return { status: "inconclusive", reasons: ["unknown expect type"] };
+  return { status: "inconclusive", reasons: ["未知的期望类型"] };
 }
 
 export interface StackHit { message: string; file: string; line: number; column: number }

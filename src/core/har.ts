@@ -121,16 +121,16 @@ export function judgeUi(v: UiExpect, texts: string[]): { status: "pass" | "fail"
   if (v.har) {
     const re = safeRegex(v.har.urlMatch);
     const hits = hars.flatMap((h) => h?.log.entries ?? []).filter((e) => re.test(String(e.request?.url).slice(0, 2048)) && (!v.har!.method || e.request?.method?.toUpperCase() === v.har!.method.toUpperCase()));
-    if (!hits.length) return { status: "inconclusive", reasons: [`no HAR entry matching /${v.har.urlMatch}/`] };
+    if (!hits.length) return { status: "inconclusive", reasons: [`没有匹配 /${v.har.urlMatch}/ 的 HAR 条目`] };
     const [lo, hi] = Array.isArray(v.har.status) ? v.har.status : [v.har.status, v.har.status];
     const bad = hits.filter((e) => !(e.response?.status >= lo && e.response?.status <= hi) || (v.har!.bodyMatch && !safeRegex(v.har!.bodyMatch, "m").test((e.response?.content?.text ?? "").slice(0, 65536))));
     return bad.length
-      ? { status: "fail", reasons: bad.map((e) => `${e.request.method} ${e.request.url} → ${e.response?.status}, expected ${lo === hi ? lo : `${lo}-${hi}`}${v.har!.bodyMatch ? ` with body /${v.har!.bodyMatch}/` : ""}`) }
+      ? { status: "fail", reasons: bad.map((e) => `${e.request.method} ${e.request.url} → ${e.response?.status}，期望 ${lo === hi ? lo : `${lo}-${hi}`}${v.har!.bodyMatch ? ` 且响应体匹配 /${v.har!.bodyMatch}/` : ""}`) }
       : { status: "pass", reasons: [] };
   }
   const plain = texts.filter((_, i) => !hars[i]);
-  if (!plain.length) return { status: "inconclusive", reasons: ["no DOM/text evidence (screenshots are not judged)"] };
-  return plain.join("\n").includes(v.text!.contains) ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`page text does not contain ${JSON.stringify(v.text!.contains)}`] };
+  if (!plain.length) return { status: "inconclusive", reasons: ["没有页面文本证据（截图不参与判定）"] };
+  return plain.join("\n").includes(v.text!.contains) ? { status: "pass", reasons: [] } : { status: "fail", reasons: [`页面文本不包含 ${JSON.stringify(v.text!.contains)}`] };
 }
 
 function decodeURIComponentSafe(s: string): string { try { return decodeURIComponent(s); } catch { return s; } }

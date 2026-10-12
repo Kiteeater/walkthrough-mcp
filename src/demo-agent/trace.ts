@@ -12,6 +12,7 @@ export interface McpClients {
 export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean; /** Let walkthrough replay the failing request itself (core replay_request). */ replay?: boolean }
 
 /** 5xx ratio of the orders total route over 5m (one series). */
+const ZH: Record<string, string> = { pass: "通过", fail: "失败", pass_needs_review: "需复核", inconclusive: "无结论" };
 export const FIVE_XX_RATIO = 'sum(rate(http_requests_total{route="/api/orders/:id/total",status=~"5.."}[5m])) / sum(rate(http_requests_total{route="/api/orders/:id/total"}[5m]))';
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -65,7 +66,7 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       ] });
       const mEv = await core.queryMetrics(id, { query: FIVE_XX_RATIO, checkId: mId });
       const mRes = await core.evaluateCheck(id, { checkId: mId, evidenceIds: [mEv.id] });
-      chain.push({ claim: `Prometheus：/api/orders/:id/total 近 5 分钟 5xx 比例 — ${mRes.reasons.join("；")}（${mRes.status}），不是偶发`, kind: "observed", evidence_ids: [mEv.id] });
+      chain.push({ claim: `Prometheus：/api/orders/:id/total 近 5 分钟 5xx 比例 — ${mRes.reasons.join("；")}（${ZH[mRes.status] ?? mRes.status}），不是偶发`, kind: "observed", evidence_ids: [mEv.id] });
     }
     if (traceId) {
       const trace = await mcp.getTrace(traceId) as { metadata?: { db?: string; collection?: string; orderId?: string }; observations?: { name: string; level: string; statusMessage?: string }[] };
@@ -81,14 +82,14 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       const tEv = await core.importMcpResult(id, { checkId: `${n}-trace`, connector: "langfuse", tool: "get_trace", params: { traceId }, result: trace, links: [{ evidenceId: httpEv.id, key: traceId }] });
       const tRes = await core.evaluateCheck(id, { checkId: `${n}-trace`, evidenceIds: [tEv.id] });
       const err = trace.observations?.find((x) => x.level === "ERROR");
-      chain.push({ claim: `Langfuse trace ${traceId}：observation "${err?.name}" 为 ERROR（${err?.statusMessage}），对应 ${meta.collection} ${meta.orderId} — ${tRes.status}`, kind: "observed", evidence_ids: [tEv.id] });
+      chain.push({ claim: `Langfuse trace ${traceId}：observation "${err?.name}" 为 ERROR（${err?.statusMessage}），对应 ${meta.collection} ${meta.orderId} — 判定：${ZH[tRes.status] ?? tRes.status}`, kind: "observed", evidence_ids: [tEv.id] });
       if (meta.orderId && meta.collection) {
         const filter = { _id: meta.orderId };
         const docs = await mcp.find(meta.db ?? "test", meta.collection, filter);
         const dEv = await core.importMcpResult(id, { checkId: `${n}-doc`, connector: "mongodb", tool: "find", params: { database: meta.db, collection: meta.collection, filter }, result: docs, links: [{ evidenceId: tEv.id, key: meta.orderId }] });
         const dRes = await core.evaluateCheck(id, { checkId: `${n}-doc`, evidenceIds: [dEv.id] });
         const fields = Object.keys((docs[0] ?? {}) as object).join(", ");
-        chain.push({ claim: `MongoDB ${meta.db}.${meta.collection} {_id: "${meta.orderId}"} 只有字段 [${fields}]，没有 "items" — ${dRes.status}`, kind: "observed", evidence_ids: [dEv.id] });
+        chain.push({ claim: `MongoDB ${meta.db}.${meta.collection} {_id: "${meta.orderId}"} 只有字段 [${fields}]，没有 "items" — 判定：${ZH[dRes.status] ?? dRes.status}`, kind: "observed", evidence_ids: [dEv.id] });
       }
     }
     const w = core.load(id);

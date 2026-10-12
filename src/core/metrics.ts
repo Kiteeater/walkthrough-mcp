@@ -130,7 +130,7 @@ export const METRIC_EVIDENCE = "walkthrough.metric/v1";
 export function judgeMetric(v: MetricExpect, texts: string[]): { status: "pass" | "fail" | "inconclusive"; reasons: string[] } {
   const evs = texts.map((t) => { try { const j = JSON.parse(t); return j?.format === METRIC_EVIDENCE ? j : undefined; } catch { return undefined; } })
     .filter((j) => j && (!v.query || j.query === v.query));
-  if (!evs.length) return { status: "inconclusive", reasons: [v.query ? `no metric evidence for query ${v.query}` : "no metric evidence"] };
+  if (!evs.length) return { status: "inconclusive", reasons: [v.query ? `查询 ${v.query} 没有指标证据` : "没有指标证据"] };
   const out: { status: "pass" | "fail" | "inconclusive"; reasons: string[] }[] = evs.map((j) => {
     if (j.response?.status !== "success") return { status: "inconclusive", reasons: [`Prometheus status ${j.response?.status ?? "?"} (HTTP ${j.httpStatus}) ${j.response?.errorType ?? ""} ${j.response?.error ?? ""}`.trim()] };
     const d = j.response.data ?? {};
@@ -138,14 +138,14 @@ export function judgeMetric(v: MetricExpect, texts: string[]): { status: "pass" 
     if (d.resultType === "scalar") raw = (d.result as unknown[])?.[1];
     else if (d.resultType === "vector") {
       const r = (d.result ?? []) as { metric: unknown; value: [number, string] }[];
-      if (r.length === 0) return { status: "inconclusive", reasons: [`empty result for ${j.query} (not treated as 0)`] };
-      if (r.length > 1) return { status: "inconclusive", reasons: [`${r.length} series for ${j.query}; aggregate to one series (e.g. sum(...))`] };
+      if (r.length === 0) return { status: "inconclusive", reasons: [`${j.query} 结果为空（不按 0 处理）`] };
+      if (r.length > 1) return { status: "inconclusive", reasons: [`${j.query} 返回 ${r.length} 条序列；请聚合成一条（如 sum(...)）`] };
       raw = r[0].value?.[1];
-    } else return { status: "inconclusive", reasons: [`unsupported resultType ${d.resultType}`] };
+    } else return { status: "inconclusive", reasons: [`不支持的 resultType ${d.resultType}`] };
     const x = Number(raw);
-    if (typeof raw !== "string" || !Number.isFinite(x)) return { status: "inconclusive", reasons: [`non-finite value ${String(raw)} for ${j.query}`] };
+    if (typeof raw !== "string" || !Number.isFinite(x)) return { status: "inconclusive", reasons: [`${j.query} 的值 ${String(raw)} 不是有限数`] };
     const ok = { ">": x > v.value, ">=": x >= v.value, "<": x < v.value, "<=": x <= v.value, "==": x === v.value, "!=": x !== v.value }[v.op];
-    return ok ? { status: "pass", reasons: [`${j.query} = ${x} ${v.op} ${v.value}`] } : { status: "fail", reasons: [`${j.query} = ${x}, expected ${v.op} ${v.value}`] };
+    return ok ? { status: "pass", reasons: [`${j.query} = ${x} ${v.op} ${v.value}`] } : { status: "fail", reasons: [`${j.query} = ${x}，期望 ${v.op} ${v.value}`] };
   });
   if (out.some((o) => o.status === "fail")) return { status: "fail", reasons: out.filter((o) => o.status === "fail").flatMap((o) => o.reasons) };
   if (out.some((o) => o.status === "inconclusive")) return { status: "inconclusive", reasons: out.filter((o) => o.status === "inconclusive").flatMap((o) => o.reasons) };

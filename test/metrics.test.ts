@@ -85,7 +85,7 @@ describe("query_metrics (read-only Prometheus, core-executed)", () => {
     const ev = await core.queryMetrics(id, { query: "ratio", checkId: "m" });
     const r = await core.evaluateCheck(id, { checkId: "m", evidenceIds: [ev.id] });
     expect(r.status).toBe("fail");
-    expect(r.reasons.join()).toMatch(/= 0.5, expected <= 0.01/);
+    expect(r.reasons.join()).toMatch(/= 0.5，期望 <= 0.01/);
   });
   it("token echoed by the server (header + body) never reaches any artifact or the HTML", async () => {
     const { core, root } = mk();
@@ -107,7 +107,7 @@ describe("query_metrics (read-only Prometheus, core-executed)", () => {
     expect(r.status).toBe("inconclusive");
     expect(r.reasons.join()).toMatch(/status error \(HTTP 400\) bad_data/);
   });
-  it.each([["empty", /empty result/], ["nan", /non-finite value NaN/], ["inf", /non-finite value \+Inf/], ["multi", /2 series/]])("%s → inconclusive", async (q, why) => {
+  it.each([["empty", /结果为空（不按 0 处理）/], ["nan", /NaN 不是有限数/], ["inf", /\+Inf 不是有限数/], ["multi", /2 条序列/]])("%s → inconclusive", async (q, why) => {
     const { core } = mk();
     const id = await planned(core, [metricCheck({ op: "==", value: 0 })]);
     const ev = await core.queryMetrics(id, { query: q, checkId: "m" });
