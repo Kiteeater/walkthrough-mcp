@@ -335,6 +335,14 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     secrets for the whole capture, so they are masked in the HAR (including page HTML that embeds them), DOM text,
     command log and report. The report's first screen shows the count
     ("🛡 capture_page 已拦截 N 个请求") with the table behind a `<details>`.
+  - **Read-only, like replay:** only `GET`/`HEAD` are forwarded. `POST`/`PUT`/`PATCH`/`DELETE`/… from the page
+    (form submits, fetch/XHR) are blocked ("read-only") and recorded; they never reach the server.
+  - **WebRTC** (ICE/STUN/TURN bypasses `route` and the resolver): Chromium runs with
+    `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, and an init script in every frame replaces
+    `RTCPeerConnection` / `webkitRTCPeerConnection` / `RTCDataChannel` with constructors that throw; attempts are
+    recorded (`type: webrtc`, with the ICE server URLs).
+  - Blocked-request evidence has its own evidence type `blocked`; `evaluate_check` never treats it as page content,
+    so it can't satisfy or fail a ui text/HAR expectation.
   - `capture_page` sends no test-account credentials, and the browser's own cookies are not forwarded by the fetcher.
 - **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
   `?code=…` (e.g. a product or error code) shows up as `[REDACTED]`; judge on the status/body instead.

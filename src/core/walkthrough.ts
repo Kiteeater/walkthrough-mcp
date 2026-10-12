@@ -126,6 +126,8 @@ export function maskAllQuery(u: string): string {
   } catch { return u.replace(/([?&;][^=&#\s]*)=[^&#\s]*/g, "$1=[REDACTED]"); }
 }
 
+const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
+
 export class WalkthroughCore {
   readonly base: string;
   private readonly redactor: Redactor;
@@ -392,7 +394,7 @@ export class WalkthroughCore {
       add("response", "http", "txt", r.text(p.text));
       // Blocked requests are evidence too: URL redacted (secret params, userinfo, token patterns), reason, type.
       const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) }));
-      if (blocked.length) add("response", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
+      if (blocked.length) add("blocked", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
         navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
@@ -427,7 +429,8 @@ export class WalkthroughCore {
       resolver,
       hostResolverRules: rules.join(", "),
       fetch: (u) => guardedGet(cfg, u, { resolver }),
-      request: (r) => guardedRequest(cfg, r.url, { method: r.method, headers: r.headers, body: r.body, resolver, maxBodyBytes: 5 * 1024 * 1024 }),
+      // Read-only like replay: only GET/HEAD are forwarded; anything else is blocked (and recorded) by the capturer.
+      request: (r) => { if (!READ_ONLY_METHODS.has(r.method.toUpperCase())) throw new ReplayRejectedError(`${r.method.toUpperCase()} blocked (read-only: capture_page forwards only GET/HEAD)`); return guardedRequest(cfg, r.url, { method: r.method, headers: r.headers, body: r.body, resolver, maxBodyBytes: 5 * 1024 * 1024 }); },
     };
   }
 
@@ -885,12 +888,13 @@ export class WalkthroughCore {
       this.verifyEvidence(w, "inferred", evidenceIds);
       const evs = evidenceIds.map((e) => w.evidence.find((x) => x.id === e)!);
       for (const ev of evs) if (ev.checkId !== check.id) throw new ClaimRejectedError(`evidence ${ev.id} was not captured for ${check.id}`);
-      const texts = evs.filter((ev) => ev.type !== "screenshot").map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
+      // Screenshots are for humans; blocked-request evidence is a security record, never page content.
+      const judged = evs.filter((ev) => ev.type !== "screenshot" && ev.type !== "blocked");
+      const texts = judged.map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
       const j = await this.registry.verifier(check.verify?.type ?? "rule").verify(check, texts);
       // Provenance rule: any piece of evidence that fails the expectation → fail, whoever executed it. If everything
       // satisfies it: ≥1 core-executed evidence that passes on its own → pass; agent-reported only → pass_needs_review.
       // (`count` aggregates across evidence, so it is judged on the combined texts only.)
-      const judged = evs.filter((ev) => ev.type !== "screenshot");
       const per = check.expect.type === "count" || judged.length < 2 ? [] : await Promise.all(judged.map(async (ev, i) => ({ ev, j: await this.registry.verifier(check.verify?.type ?? "rule").verify(check, [texts[i]]) })));
       const failing = per.filter((x) => x.j.status === "fail");
       let status = j.status;
