@@ -9,7 +9,7 @@ import type { WalkthroughCore } from "./walkthrough.js";
 export interface FlowConfig {
   title: string;
   sandbox: SandboxConfig;
-  waitFor?: { url: string; timeoutMs?: number; attemptTimeoutMs?: number };
+  waitFor?: { url: string; timeoutMs?: number; attemptTimeoutMs?: number; /** only count a 2xx that also carries this header value (proves it is OUR service, not whatever else holds the port) */ header?: { name: string; value: string } };
   exec?: string[];
   captures: ({ as: string; type: "screenshot"; url: string } | { as: string; type: "logs"; service: string })[];
   sources?: { as: string; file: string; line: number; note?: string }[];
@@ -30,14 +30,19 @@ export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConf
 }
 
 /** Poll `url` until it answers 2xx. Every attempt has a ref'd deadline, so this always settles (exit-13 fix). */
-export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000): Promise<void> {
+export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000, header?: { name: string; value: string }): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let last = "";
   while (Date.now() < deadline) {
     const budget = Math.max(1, Math.min(attemptTimeoutMs, deadline - Date.now()));
-    try { if ((await withDeadline((signal) => fetch(url, { signal }), budget, `GET ${url}`)).ok) return; } catch { /* not ready */ }
+    try {
+      const r = await withDeadline((signal) => fetch(url, { signal }), budget, `GET ${url}`);
+      if (r.ok && (!header || r.headers.get(header.name) === header.value)) return;
+      if (r.ok) last = ` (got 2xx without the expected ${header!.name} header — another process on that port?)`;
+    } catch { /* not ready */ }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`timed out waiting for ${url}`);
+  throw new Error(`timed out waiting for ${url}${last}`);
 }
 
 export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { skipWait?: boolean; agent?: (id: string) => Promise<void> } = {}) {
@@ -46,7 +51,7 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
   const up = await core.runInSandbox(w.id, "up");
   if (up.exitCode !== 0) throw new Error(`sandbox up failed:\n${up.output}`);
   try {
-    if (cfg.waitFor && !opts.skipWait) await waitForUrl(cfg.waitFor.url, cfg.waitFor.timeoutMs ?? 60_000, cfg.waitFor.attemptTimeoutMs);
+    if (cfg.waitFor && !opts.skipWait) await waitForUrl(cfg.waitFor.url, cfg.waitFor.timeoutMs ?? 60_000, cfg.waitFor.attemptTimeoutMs, cfg.waitFor.header);
     for (const c of cfg.exec ?? []) await core.runInSandbox(w.id, "exec", c);
     // The host agent plans, executes and submits evidence here (core only keeps the ledger and judges).
     if (opts.agent) await opts.agent(w.id);

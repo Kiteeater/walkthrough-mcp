@@ -47,4 +47,4 @@ fetch("/api/orders").then(async (r) => {
   }
 });
 
-server.listen(port, () => console.log(`listening on ${port}`));
+server.listen(port, process.env.HOST || undefined, () => console.log(`listening on ${server.address().port}`));

@@ -10,9 +10,15 @@ import { chromium } from "playwright";
 import { createCore, renderWalkthrough } from "../../dist/core/index.js";
 
 const root = resolve(process.argv[2] ?? ".");
-const port = 3300, base = `http://127.0.0.1:${port}`;
-const svc = spawn(process.execPath, ["examples/orders-service/server.js"], { env: { PATH: process.env.PATH, PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
-await new Promise((r, j) => { svc.stdout.on("data", (d) => String(d).includes("listening") && r()); svc.on("exit", (c) => j(new Error(`service exited ${c}`))); });
+// OS-assigned port on 127.0.0.1 (no fixed port); readiness comes from OUR child's own "listening on <port>" line,
+// so another server on some port can't be mistaken for it. Exit / no line within 15 s → clear error, nonzero exit.
+const svc = spawn(process.execPath, ["examples/orders-service/server.js"], { env: { PATH: process.env.PATH, PORT: "0", HOST: "127.0.0.1" }, stdio: ["ignore", "pipe", "pipe"] });
+const port = await new Promise((r, j) => {
+  const t = setTimeout(() => { svc.kill(); j(new Error("ui-demo: orders service did not report 'listening on <port>' within 15 s")); }, 15_000);
+  svc.stdout.on("data", (d) => { const m = /listening on (\d+)/.exec(String(d)); if (m) { clearTimeout(t); r(Number(m[1])); } });
+  svc.on("exit", (c) => { clearTimeout(t); j(new Error(`ui-demo: orders service exited ${c} before it was ready`)); });
+}).catch((e) => { console.error(e.message); process.exit(1); });
+const base = `http://127.0.0.1:${port}`;
 
 // Replay policy: only this host; loopback allowed only because the exact address is listed (default: denied).
 const core = createCore(root, undefined, { allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] });

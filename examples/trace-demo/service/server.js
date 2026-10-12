@@ -21,7 +21,7 @@ const stats = { orders5xx: 0, first5xxAt: null };
 
 http.createServer(async (req, res) => {
   console.log(`${req.method} ${req.url}`);
-  if (req.url === "/health") return json(res, 200, { ok: true });
+  if (req.url === "/health") { res.setHeader("x-walkthrough-demo-token", process.env.DEMO_HEALTH_TOKEN || ""); return json(res, 200, { ok: true }); }
   if (req.url === "/metrics.json") return json(res, 200, stats);
   const m = /^\/api\/orders\/([\w-]+)\/total$/.exec(req.url);
   if (!m) return json(res, 404, { error: "not found" });
@@ -38,4 +38,4 @@ http.createServer(async (req, res) => {
       observations: [{ name: "orderTotal", level: "ERROR", statusMessage: String(err.message) }] }).catch(() => {});
     return json(res, 500, { error: "internal error", traceId }, { "x-trace-id": traceId });
   }
-}).listen(port, () => console.log(`trace-service listening on ${port}`));
+}).listen(port, "127.0.0.1", () => console.log(`trace-service listening on ${port}`));

@@ -3,6 +3,7 @@
 // see mongo-demo.mjs for the wipe guard; only db walkthrough_demo is used) and a mock Langfuse,
 // seeds data, then runs the trace demo agent. Prints the walkthrough result JSON on the last line.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
@@ -42,6 +43,8 @@ const pk = "pk-lf-demo", sk = process.env.LANGFUSE_SECRET_KEY ?? `sk-lf-demo-${M
 const freePort = () => new Promise((res, rej) => { const s = createServer(); s.once("error", rej); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); }); });
 const svcPort = Number(process.env.DEMO_SERVICE_PORT) || await freePort();
 const serviceUrl = `http://127.0.0.1:${svcPort}`;
+// Per-run token echoed by the service on /health: readiness only counts for OUR service, not whatever else got the port.
+const healthToken = randomBytes(12).toString("hex");
 const lf = await startMockLangfuse(0, pk, sk);
 const lfUrl = `http://127.0.0.1:${lf.address().port}`;
 const promToken = process.env.WALKTHROUGH_PROMETHEUS_TOKEN ?? `prom-${Math.random().toString(36).slice(2)}`;
@@ -50,9 +53,9 @@ const promUrl = `http://127.0.0.1:${prom.address().port}`;
 // The committed flow config has a ${SERVICE_URL} placeholder; the run uses a generated copy next to it (gitignored).
 const here = dirname(fileURLToPath(import.meta.url));
 const flowPath = join(here, "walkthrough.trace.generated.json");
-writeFileSync(flowPath, readFileSync(join(here, "walkthrough.trace.json"), "utf8").replaceAll("${SERVICE_URL}", serviceUrl));
+writeFileSync(flowPath, readFileSync(join(here, "walkthrough.trace.json"), "utf8").replaceAll("${SERVICE_URL}", serviceUrl).replaceAll("${HEALTH_TOKEN}", healthToken));
 cleanups.push(() => { /* keep the generated config for inspection; it holds no secrets */ });
-const env = { ...process.env, PORT: String(svcPort), MONGO_URL: url, MONGO_DB: plan.db, LANGFUSE_URL: lfUrl, LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
+const env = { ...process.env, PORT: String(svcPort), DEMO_HEALTH_TOKEN: healthToken, MONGO_URL: url, MONGO_DB: plan.db, LANGFUSE_URL: lfUrl, LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
   WALKTHROUGH_PROMETHEUS_URL: promUrl, WALKTHROUGH_PROMETHEUS_TOKEN: promToken };
 let child;
 cleanups.push(() => lf.close(), () => prom.close(), () => { try { child?.kill("SIGTERM"); } catch { /* gone */ } });
