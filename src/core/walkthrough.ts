@@ -1,10 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Capturer } from "./capture.js";
 import { Redactor } from "./redact.js";
 import type { Sandbox } from "./sandbox.js";
+import { hasMachineExpect, severityFor, traceStack } from "./checks.js";
+import type { Registry } from "./registry.js";
+import { defaultRegistry } from "./sources.js";
 import type {
+  Check, CheckResult, ObserveSpec, Finding, RootCause, Severity, SignOff,
   Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
 } from "./types.js";
 
@@ -16,6 +20,8 @@ export interface CoreDeps {
   /** Root directory that holds `.walkthrough/`. */
   root: string;
   sandboxFactory: (cfg: SandboxConfig, key?: string) => Sandbox;
+  /** Action / observe / verifier registry for checks (defaults to http, command, log, rule). */
+  registry?: Registry;
   capturer: Capturer;
   redactor?: Redactor;
   now?: () => Date;
@@ -27,6 +33,7 @@ export class WalkthroughCore {
   readonly base: string;
   private readonly redactor: Redactor;
   private readonly now: () => Date;
+  readonly registry: Registry;
   private readonly locks = new Map<string, Promise<unknown>>();
 
   /** Per-id serial lock (promise-chain mutex) around read-modify-write of walkthrough.json. */
@@ -43,6 +50,7 @@ export class WalkthroughCore {
     this.base = resolve(deps.root, ".walkthrough");
     this.redactor = deps.redactor ?? Redactor.fromEnv();
     this.now = deps.now ?? (() => new Date());
+    this.registry = deps.registry ?? defaultRegistry();
   }
 
   dir(id: string): string {
@@ -170,11 +178,141 @@ export class WalkthroughCore {
     });
   }
 
+  /** Store text (HTTP response, command output, log slice) as hashed evidence. */
+  addTextEvidence(id: string, type: "logs" | "response", source: string, text: string): Promise<Evidence> {
+    return this.withLock(id, () => {
+      const w = this.load(id);
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.${type === "logs" ? "log" : "txt"}`;
+      writeFileSync(join(this.dir(id), rel), this.redactor.text(text));
+      const ev: Evidence = { id: evId, type, path: rel, sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts(), source: this.redactor.text(source) };
+      w.evidence.push(ev);
+      this.save(w);
+      return ev;
+    });
+  }
+
+  /** plan_checks: the agent records the checks it will run for a goal (its own plan, or one from a planner). */
+  planChecks(id: string, input: { goal: string; checks: Check[] }): Promise<Check[]> {
+    return this.withLock(id, () => {
+      const w = this.load(id);
+      const ids = new Set<string>();
+      for (const c of input.checks) {
+        if (!c.id || ids.has(c.id)) throw new Error(`check ids must be unique and non-empty: ${c.id}`);
+        if (!hasMachineExpect(c)) throw new Error(`check ${c.id}: expect must be machine-checkable (status, statusRange, bodyIncludes, exitCode or watch.alerts)`);
+        if (!c.action || !this.registry.has("action", c.action.type)) throw new Error(`check ${c.id}: no action source "${c.action?.type}"`);
+        for (const o of c.observe ?? []) if (!this.registry.has("observer", o.source)) throw new Error(`check ${c.id}: no observe source "${o.source}"`);
+        if (c.verify && !this.registry.has("verifier", c.verify.type)) throw new Error(`check ${c.id}: verifier "${c.verify.type}" not available`);
+        ids.add(c.id);
+      }
+      w.goal = input.goal;
+      w.checks = input.checks;
+      w.checkResults = [];
+      this.save(w);
+      return w.checks;
+    });
+  }
+
+  /** run_checks: execute every planned check in the sandbox, capture evidence, auto-judge, and draft findings for failures. */
+  async runChecks(id: string, opts: { settleMs?: number } = {}): Promise<CheckResult[]> {
+    const w = this.load(id);
+    const sb = this.deps.sandboxFactory(w.sandbox, w.id);
+    const results: CheckResult[] = [];
+    const ctx = { walkthrough: w, sandbox: sb };
+    for (const check of w.checks ?? []) {
+      const observe: ObserveSpec[] = [...(check.observe ?? []), ...(check.watch?.logs ?? []).map((service) => ({ source: "log" as const, service }))];
+      const snaps: unknown[] = [];
+      for (const o of observe) snaps.push(await this.registry.observer(o.source).snapshot(o, ctx));
+      const out = await this.registry.action(check.action.type).run(check.action, ctx);
+      await new Promise((r) => setTimeout(r, opts.settleMs ?? 200));
+      const evidenceIds = [(await this.addTextEvidence(id, "response", check.name, out.evidenceText)).id];
+      const data = { status: out.status, exitCode: out.exitCode, body: out.body, logs: "" };
+      let logEvidenceId: string | undefined;
+      for (const [i, o] of observe.entries()) {
+        const c = await this.registry.observer(o.source).collect(o, ctx, snaps[i]);
+        const ev = await this.addTextEvidence(id, c.evidenceType, `${c.label} (during ${check.id})`, c.text);
+        evidenceIds.push(ev.id);
+        if (c.evidenceType === "logs") { data.logs += c.text; logEvidenceId ??= ev.id; }
+      }
+      const a = data;
+      const repro = out.repro;
+      const reasons = await this.registry.verifier(check.verify?.type ?? "rule").verify(check, data);
+      const result: CheckResult = {
+        checkId: check.id, status: reasons.length ? "fail" : "pass", reasons,
+        actual: { status: a.status, exitCode: a.exitCode }, evidenceIds, at: this.ts(),
+      };
+      if (reasons.length) {
+        const hit = traceStack(a.logs, w.sandbox.cwd, this.deps.root);
+        const rootCause: RootCause = { logEvidenceId: hit || a.logs.trim() ? logEvidenceId : undefined };
+        if (hit) {
+          rootCause.sourceId = (await this.linkSource(id, { file: hit.file, line: hit.line, note: hit.message })).id;
+          rootCause.summary = hit.message;
+        }
+        const finding = await this.recordFinding(id, {
+          title: `${check.name} — ${reasons[0]}`,
+          severity: severityFor(a, reasons),
+          whatHappened: `${check.name} failed: ${reasons.join("; ")}.${hit ? ` Logs show "${hit.message}" at ${hit.file}:${hit.line}.` : ""}`,
+          repro: [`Start the sandbox: ${w.sandbox.backend === "local" ? (w.sandbox.local?.up ?? w.sandbox.up) : w.sandbox.up}`, repro],
+          rootCause, evidenceIds, kind: "observed", draft: true, checkId: check.id,
+        });
+        result.findingId = finding.id;
+      }
+      results.push(result);
+    }
+    await this.withLock(id, () => {
+      const cur = this.load(id);
+      cur.checkResults = results;
+      this.save(cur);
+    });
+    return results;
+  }
+
+  /** record_finding: observed findings need valid evidence; root-cause references are verified too. */
+  recordFinding(id: string, input: {
+    title: string; severity: Severity; whatHappened: string; repro?: string[]; rootCause?: RootCause;
+    evidenceIds?: string[]; kind: ClaimKind; draft?: boolean; checkId?: string;
+  }): Promise<Finding> {
+    return this.withLock(id, () => {
+      if (!["critical", "high", "medium", "low"].includes(input.severity)) throw new ClaimRejectedError(`invalid severity: ${input.severity}`);
+      if (input.kind !== "observed" && input.kind !== "inferred") throw new ClaimRejectedError("kind must be observed or inferred");
+      const w = this.load(id);
+      const evidenceIds = input.evidenceIds ?? [];
+      this.verifyEvidence(w, input.kind, evidenceIds);
+      const rc = input.rootCause;
+      if (rc?.logEvidenceId) {
+        this.verifyEvidence(w, "observed", [rc.logEvidenceId]);
+        if (w.evidence.find((e) => e.id === rc.logEvidenceId)?.type !== "logs") throw new ClaimRejectedError(`root cause evidence is not logs: ${rc.logEvidenceId}`);
+      }
+      if (rc?.sourceId && !w.sources.some((s) => s.id === rc.sourceId)) throw new ClaimRejectedError(`source link not found: ${rc.sourceId}`);
+      w.findings ??= [];
+      const finding: Finding = {
+        id: `finding-${w.findings.length + 1}`, title: input.title, severity: input.severity, whatHappened: input.whatHappened,
+        repro: input.repro ?? [], rootCause: rc, evidenceIds, kind: input.kind,
+        ...(input.draft ? { draft: true } : {}), ...(input.checkId ? { checkId: input.checkId } : {}),
+      };
+      w.findings.push(finding);
+      this.save(w);
+      return finding;
+    });
+  }
+
+  /** Read one line of a linked source file (inside root only), for showing the root cause inline. */
+  sourceLine(file: string, line: number): string | undefined {
+    const root = resolve(this.deps.root);
+    const p = resolve(root, file);
+    if (!p.startsWith(root + sep) || !existsSync(p)) return undefined;
+    return readFileSync(p, "utf8").split("\n")[line - 1]?.trim();
+  }
+
   /** Apply a downloaded review.json back into the walkthrough JSON. */
   importReview(review: unknown): Promise<{ id: string; applied: number }> {
-    const r = review as { walkthroughId?: string; decisions?: { claimId: string; decision: string; note?: string }[] };
-    if (!r || typeof r.walkthroughId !== "string" || !Array.isArray(r.decisions)) return Promise.reject(new Error("invalid review file"));
-    const decisions = r.decisions;
+    const r = review as {
+      walkthroughId?: string; decisions?: { claimId: string; decision: string; note?: string }[]; signoff?: { decision?: string; comment?: string };
+    };
+    if (!r || typeof r.walkthroughId !== "string" || !(Array.isArray(r.decisions) || r.signoff)) return Promise.reject(new Error("invalid review file"));
+    const decisions = r.decisions ?? [];
+    const signoff = r.signoff;
+    if (signoff && signoff.decision !== "approve" && signoff.decision !== "reject") return Promise.reject(new Error(`invalid sign-off: ${signoff.decision}`));
     return this.withLock(r.walkthroughId, () => {
     const w = this.load(r.walkthroughId as string);
     let applied = 0;
@@ -185,6 +323,7 @@ export class WalkthroughCore {
       c.review = { decision: d.decision, ...(d.note ? { note: String(d.note) } : {}) } as Review;
       applied++;
     }
+    if (signoff) w.signoff = { decision: signoff.decision, ...(signoff.comment ? { comment: String(signoff.comment) } : {}) } as SignOff;
     this.save(w);
     return { id: w.id, applied };
     });

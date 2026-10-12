@@ -11,6 +11,10 @@ export * from "./metrics.js";
 export * from "./walkthrough.js";
 export * from "./render.js";
 export * from "./flow.js";
+export * from "./checks.js";
+export * from "./registry.js";
+export * from "./sources.js";
+export * from "./schemas.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
 export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer()): WalkthroughCore {

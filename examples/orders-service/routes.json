@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/health" },
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/api/orders" },
+    { "method": "GET", "path": "/api/orders/1" },
+    { "method": "GET", "path": "/api/orders/3" }
+  ]
+}

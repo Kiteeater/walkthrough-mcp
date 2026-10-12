@@ -1,8 +1,45 @@
 {
-  "title": "Sample change: greeting endpoint + home banner (local backend)",
+  "title": "Sample change: order totals from line items (local backend)",
+  "waitFor": {
+    "url": "http://localhost:3000/health",
+    "timeoutMs": 90000
+  },
+  "captures": [
+    {
+      "as": "home",
+      "type": "screenshot",
+      "url": "http://localhost:3000/"
+    }
+  ],
+  "sources": [
+    {
+      "as": "getOrder",
+      "file": "examples/orders-service/orders.js",
+      "line": 16,
+      "note": "getOrder() (untouched by the patch)"
+    }
+  ],
+  "claims": [
+    {
+      "question": "Does the service start and serve its home page?",
+      "conclusion": "Yes: the home page rendered and lists the order endpoints.",
+      "kind": "observed",
+      "evidence": [
+        "home"
+      ]
+    },
+    {
+      "question": "Does the change alter the response shape of /api/orders/:id?",
+      "conclusion": "Probably not: getOrder() is not touched by the patch. Inferred from the diff; the shape itself was not asserted.",
+      "kind": "inferred",
+      "sources": [
+        "getOrder"
+      ]
+    }
+  ],
   "sandbox": {
     "backend": "local",
-    "cwd": "hello-service",
+    "cwd": "orders-service",
     "up": "docker compose up -d",
     "down": "docker compose down -v",
     "local": {
@@ -12,66 +49,9 @@
       ]
     }
   },
-  "waitFor": {
-    "url": "http://localhost:3000/health",
-    "timeoutMs": 90000
-  },
-  "exec": [
-    "curl -fsS http://localhost:3000/api/greeting"
-  ],
-  "captures": [
-    {
-      "as": "home",
-      "type": "screenshot",
-      "url": "http://localhost:3000/"
-    },
-    {
-      "as": "weblogs",
-      "type": "logs",
-      "service": "web"
-    }
-  ],
-  "sources": [
-    {
-      "as": "greetingFn",
-      "file": "examples/hello-service/server.js",
-      "line": 7,
-      "note": "new greeting()"
-    },
-    {
-      "as": "route",
-      "file": "examples/hello-service/server.js",
-      "line": 15,
-      "note": "new /api/greeting route"
-    },
-    {
-      "as": "banner",
-      "file": "examples/hello-service/server.js",
-      "line": 22,
-      "note": "new home banner"
-    }
-  ],
-  "claims": [
-    {
-      "question": "What does the change do to the home page and API when the service actually runs?",
-      "conclusion": "The home page renders the new greeting banner, and the service log shows the /api/greeting route being served.",
-      "kind": "observed",
-      "evidence": [
-        "home",
-        "weblogs"
-      ],
-      "sources": [
-        "banner",
-        "route"
-      ]
-    },
-    {
-      "question": "Does the change affect other callers of greeting()?",
-      "conclusion": "Probably not: greeting() is a new pure function only used by the two new code paths. Not exercised at runtime here.",
-      "kind": "inferred",
-      "sources": [
-        "greetingFn"
-      ]
-    }
-  ]
+  "agent": {
+    "goal": "Verify every declared route of orders-service still works after the change",
+    "baseUrl": "http://localhost:3000",
+    "service": "app"
+  }
 }

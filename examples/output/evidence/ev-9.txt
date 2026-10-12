@@ -1,0 +1,4 @@
+GET http://localhost:3000/api/orders/3
+HTTP 200 OK
+
+{"id":3,"customer":"kai","items":[]}
