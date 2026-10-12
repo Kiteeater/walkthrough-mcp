@@ -12,7 +12,7 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 </style></head><body>
 <h1>Sample change: greeting endpoint + home banner (local backend)</h1>
 <p><span class="badge local" title="local run, not isolated">本地运行、未隔离</span> Commands ran as host child processes without isolation.</p>
-<p class="meta">walkthrough wt-20261012185032-401b1b · 2 questions · 2 evidence items</p>
+<p class="meta">walkthrough wt-20261012185330-b1a3dc · 2 questions · 2 evidence items</p>
 <div class="summary" id="summary">
 <span>observed: <b data-count="observed">1</b></span>
 <span>inferred: <b data-count="inferred">1</b></span>
@@ -24,15 +24,15 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 <p><span class="badge local" title="local run, not isolated">本地运行、未隔离</span> <span class="badge observed">observed</span> The home page renders the new greeting banner, and the service log shows the /api/greeting route being served.</p>
 <ul class="sources"><li><code>examples/hello-service/server.js:22</code> — new home banner</li><li><code>examples/hello-service/server.js:15</code> — new /api/greeting route</li></ul>
 <div class="review agree">Review: <strong>agree</strong> — <span class="review-note">screenshot shows the banner; log shows GET /api/greeting</span></div>
-<figure><div class="meta">ev-1 · screenshot · http://localhost:3000/ · sha256 e1e09f6216cb… · 2026-10-12T18:50:33.742Z</div><img src="evidence/ev-1.png" alt="ev-1"></figure>
-<figure><div class="meta">ev-2 · logs · local:web · sha256 ab926c0627c9… · 2026-10-12T18:50:33.743Z</div><pre>hello-service starting, api key loaded: [REDACTED]
+<figure><div class="meta">ev-1 · screenshot · http://localhost:3000/ · sha256 e1e09f6216cb… · 2026-10-12T18:53:31.528Z</div><img src="evidence/ev-1.png" alt="ev-1"></figure>
+<figure><div class="meta">ev-2 · logs · local:web · sha256 ab926c0627c9… · 2026-10-12T18:53:31.528Z</div><pre>hello-service starting, api key loaded: [REDACTED]
 listening on 3000
 GET /health
 GET /api/greeting
 GET /
 </pre></figure>
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
-<input class="note" placeholder="note (optional)"><span class="state"></span></div>
+<input class="note" placeholder="note (optional)" value="screenshot shows the banner; log shows GET /api/greeting"><span class="state"></span></div>
 </section>
 <section class="claim" id="claim-2" data-claim="claim-2" data-prior="flag">
 <h2>Q2. Does the change affect other callers of greeting()?</h2>
@@ -41,11 +41,11 @@ GET /
 <div class="review flag">Review: <strong>flag</strong> — <span class="review-note">inferred only; needs a runtime check</span></div>
 <p class="none">No evidence attached (inferred).</p>
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
-<input class="note" placeholder="note (optional)"><span class="state"></span></div>
+<input class="note" placeholder="note (optional)" value="inferred only; needs a runtime check"><span class="state"></span></div>
 </section>
 <button id="export">Export review.json</button>
 <script>
-const WID="wt-20261012185032-401b1b";const decisions={};
+const WID="wt-20261012185330-b1a3dc";const decisions={};
 document.querySelectorAll(".claim").forEach(s=>{
   const st=s.querySelector(".state");if(s.dataset.prior){decisions[s.dataset.claim]=s.dataset.prior;st.textContent=s.dataset.prior;}
   s.querySelectorAll("button[data-d]").forEach(b=>b.onclick=()=>{decisions[s.dataset.claim]=b.dataset.d;st.textContent=b.dataset.d;});

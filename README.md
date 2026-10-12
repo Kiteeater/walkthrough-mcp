@@ -31,7 +31,7 @@ node dist/cli/index.js import-review review.json
 ```
 
 Output lives in `.walkthrough/<id>/`: `walkthrough.json`, `evidence/`, `index.html`.
-After `import-review`, re-rendering shows each claim's review status and note under it, plus a summary block (observed / inferred / agreed / flagged counts) at the top; all of it is escaped and redacted.
+After `import-review`, re-rendering shows each claim's review status and note under it, prefills each note input with the saved note (so re-exporting keeps it), plus a summary block (observed / inferred / agreed / flagged counts) at the top; all of it is escaped and redacted.
 The HTML is fully static: click Agree/Flag (with an optional note) per question, then
 **Export review.json** downloads your decisions for `import-review`.
 
@@ -40,6 +40,9 @@ The HTML is fully static: click Agree/Flag (with an optional note) per question,
 `--sandbox local` (CLI), `"backend": "local"` in the config's `sandbox` block, or `sandbox: "local"` on the
 `start_walkthrough` MCP tool runs the service as a **host child process**. `sandbox.local.up` is the long-running
 command; its stdout/stderr become the `logs` evidence (`source` = `local:<service>`). `down` kills the process group.
+The child env is an **allowlist**: only `PATH`, `HOME`, `LANG`, `TMPDIR` and `TERM` pass by default; any other host
+var must be listed in `sandbox.local.passEnv` (e.g. `["DEMO_API_KEY"]`). `down()` sends SIGTERM to the process group,
+waits `sandbox.local.killTimeoutMs` (default 5000 ms), then SIGKILLs.
 This is **not isolated**: every page of the rendered HTML carries a red 「本地运行、未隔离」 badge.
 
 ```bash

@@ -50,7 +50,14 @@ export interface SandboxConfig {
   /** `compose` (default, isolated) or `local` (child processes on the host, NOT isolated). */
   backend?: SandboxBackend;
   /** Overrides used when backend is `local`: `up` is a long-running command whose stdout/stderr become the logs. */
-  local?: { up: string; down?: string };
+  local?: {
+    up: string;
+    down?: string;
+    /** Extra host env var names passed to local child processes (default: only PATH, HOME, LANG, TMPDIR, TERM). */
+    passEnv?: string[];
+    /** Grace period between SIGTERM and SIGKILL on down() (default 5000 ms). */
+    killTimeoutMs?: number;
+  };
   /** Working directory for sandbox commands. */
   cwd: string;
   up: string;

@@ -52,3 +52,20 @@ describe("rendered review status", () => {
     expect(section(html, "claim-1")).toContain("[REDACTED]");
   });
 });
+
+describe("note prefill", () => {
+  it("re-rendered HTML prefills notes so a re-export keeps them", async () => {
+    const { core, id } = await setup();
+    const note = `keep me "quoted" <b>&</b>`;
+    await core.importReview({ walkthroughId: id, decisions: [{ claimId: "claim-1", decision: "flag", note }] });
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    // Simulate the page's export: read prior decision + prefilled note input per claim.
+    const unesc = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const decisions = [...html.matchAll(/data-claim="([^"]+)" data-prior="([^"]+)"[\s\S]*?<input class="note"[^>]*value="([^"]*)"/g)]
+      .map(([, claimId, decision, value]) => ({ claimId, decision, note: unesc(value) }));
+    expect(decisions).toEqual([{ claimId: "claim-1", decision: "flag", note }]);
+    expect(html).not.toContain("<b>&</b>");
+    await core.importReview({ walkthroughId: id, decisions });
+    expect(core.load(id).claims[0].review).toEqual({ decision: "flag", note });
+  });
+});
