@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WalkthroughCore } from "./walkthrough.js";
 import { harSummary, parseHar } from "./har.js";
+import { metricSummary } from "./metrics.js";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -23,7 +24,9 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
     if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
     const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">reported by agent · agent 自报</span>' : '<span class="prov core">executed by walkthrough · 我们执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
     const har = ev.type === "har" ? parseHar(core.readEvidenceText(w, ev)) : undefined;
-    const body = ev.type === "screenshot"
+    const met = ev.kind === "metric" ? metricSummary(core.readEvidenceText(w, ev)) : undefined;
+    const body = met ? `<pre class="metric-summary">${esc(met.query)} = ${esc(String(met.value ?? (met.ok ? "(no single value)" : "(query failed)")))}</pre><details><summary>Prometheus response</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
+      : ev.type === "screenshot"
       ? `<details class="shot" open><summary>screenshot (for human audit only · 仅供人工核对，不参与判定)</summary><a href="${esc(ev.path)}"><img src="${esc(ev.path)}" alt="${esc(ev.id)}"></a></details>`
       : har ? `<pre class="har-summary">${esc(harSummary(har))}</pre><details><summary>HAR (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
       : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>(empty)</em>"}</pre>`;
@@ -45,6 +48,10 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
     const code = core.sourceLine(src.file, src.line);
     return `<code class="loc">${esc(src.file)}:${src.line}</code> — ${esc(src.note ?? step?.claim ?? "")}${code ? `<div class="code"><code>${src.line} | ${esc(code)}</code></div>` : ""}`;
   };
+  /** First-screen corroboration: core-executed Prometheus evidence cited by the finding. */
+  const metricLine = (f: (typeof findings)[number]) => f.evidenceIds.map((e) => w.evidence.find((x) => x.id === e))
+    .filter((e) => e && e.kind === "metric" && e.executedBy !== "agent")
+    .map((e) => { const m = metricSummary(core.readEvidenceText(w, e!)); return m ? `<div class="metric-confirm" data-metric="${esc(e!.id)}">📈 指标佐证 · metric confirms: <code>${esc(m.query)}</code> = <b>${esc(String(m.value ?? "?"))}</b> <span class="meta">(Prometheus, executed by walkthrough, ${esc(e!.id)})</span></div>` : ""; }).join("");
   const passed = results.filter((r) => r.status === "pass").length;
   const needsReview = results.filter((r) => r.status === "pass_needs_review");
   const verdict = `<section class="verdict" id="verdict">
@@ -55,7 +62,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
 <span class="checks-sum">checks: ${passed + needsReview.length}/${results.length} passed</span>${needsReview.length ? ` <span class="chip needs-review" data-needs-review="${needsReview.length}" title="passed only on agent-reported evidence">⚠ ${needsReview.length} pass needs review（仅 agent 自报证据）: ${esc(needsReview.map((r) => r.checkId).join(", "))}</span>` : ""}</div>
 ${w.goal ? `<p class="goal">Goal: ${esc(w.goal)}</p>` : ""}
 <ol class="finding-list">${findings.map((f) => `<li data-finding="${esc(f.id)}"><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> <span class="badge ${esc(f.kind)}">${esc(f.kind)}</span> <b>${esc(f.title)}</b>
-<div class="rc">Root cause: ${rootCauseLine(f)}</div><a href="#${esc(f.id)}" onclick="document.getElementById('${esc(f.id)}').open=true">evidence chain ▸</a></li>`).join("\n")}</ol>
+<div class="rc">Root cause: ${rootCauseLine(f)}</div>${metricLine(f)}<a href="#${esc(f.id)}" onclick="document.getElementById('${esc(f.id)}').open=true">evidence chain ▸</a></li>`).join("\n")}</ol>
 <div class="signoff" data-prior="${esc(w.signoff?.decision ?? "")}">
 <b>报告签核 Sign-off:</b>
 <label><input type="radio" name="signoff" value="accept"${w.signoff?.decision === "accept" ? " checked" : ""}> 认可</label>
@@ -133,6 +140,7 @@ details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0
 table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}tr.pass_needs_review td{background:#fff3cd}
 .prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
 li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
+.metric-confirm{margin:.2rem 0;padding:.2rem .5rem;background:#ddf4ff;border-left:4px solid #0969da}
 .evgrid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.evgrid figure{margin:0;min-width:0}
 </style></head><body>
 <h1>${esc(w.title)}</h1>

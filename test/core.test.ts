@@ -69,6 +69,6 @@ describe("core", () => {
   });
 
   it("metrics adapter is a read-only stub in v1", async () => {
-    await expect(new NotImplementedMetricsAdapter().query("up")).rejects.toThrow(/PR 2/);
+    await expect(new NotImplementedMetricsAdapter().query("up")).rejects.toThrow(/not configured/);
   });
 });

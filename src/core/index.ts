@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReplayConfig } from "./replay.js";
+import { prometheusFromEnv } from "./metrics.js";
 import { PlaywrightCapturer, type Capturer } from "./capture.js";
 import { createSandboxFactory } from "./sandbox.js";
 import { WalkthroughCore } from "./walkthrough.js";
@@ -23,7 +24,7 @@ export * from "./runcli.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
 export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer(), replay?: ReplayConfig): WalkthroughCore {
-  return new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer, replay: replay ?? replayConfigFrom(root) });
+  return new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer, replay: replay ?? replayConfigFrom(root), prometheus: prometheusFromEnv() });
 }
 
 /** `replay` block of `<root>/walkthrough.config.json`, if any (or the file named by WALKTHROUGH_CONFIG). */

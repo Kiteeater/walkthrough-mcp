@@ -98,6 +98,8 @@ export interface ReplayResult {
   method: string; url: string; status: number; headers: Record<string, string>; body: string; hops: ReplayHop[];
   /** Credential values actually sent (callers must redact them from anything they store). */
   sentSecrets: string[];
+  /** The body exceeded maxBodyBytes and was cut. */
+  truncated: boolean;
 }
 
 /** Auth headers for one hop: only when the hop's origin is one the account is bound to. Never cookies. */
@@ -141,7 +143,7 @@ export async function guardedGet(cfg: ReplayConfig, url: string, opts: { resolve
 /** Replay one request. Throws ReplayRejectedError on any policy violation; nothing is sent in that case. */
 export async function replayRequest(
   cfg: ReplayConfig, input: { method: string; url: string },
-  opts: { resolver?: Resolver; env?: NodeJS.ProcessEnv } = {},
+  opts: { resolver?: Resolver; env?: NodeJS.ProcessEnv; hopCheck?: (url: URL) => void } = {},
 ): Promise<ReplayResult> {
   const method = input.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") throw new ReplayRejectedError(`only GET/HEAD can be replayed, got ${method}`);
@@ -152,6 +154,7 @@ export async function replayRequest(
   const first = url.origin;
   const sent: string[] = [];
   for (let i = 0; ; i++) {
+    opts.hopCheck?.(url);
     const ip = await checkHop(cfg, url, resolver);
     // Fresh headers per hop: nothing carries over; the account is attached only for its own origin(s).
     const auth = authFor(cfg, url, first, opts.env);
@@ -165,11 +168,11 @@ export async function replayRequest(
       url = new URL(loc, url); // next hop goes through the same allowlist + IP checks
       continue;
     }
-    return { method, url: input.url, status: r.status, headers: r.headers, body: r.body, hops, sentSecrets: [...new Set(sent)] };
+    return { method, url: input.url, status: r.status, headers: r.headers, body: r.body, hops, sentSecrets: [...new Set(sent)], truncated: r.truncated };
   }
 }
 
-function send(url: URL, method: string, headers: Record<string, string>, ip: string, cfg: ReplayConfig): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+function send(url: URL, method: string, headers: Record<string, string>, ip: string, cfg: ReplayConfig): Promise<{ status: number; headers: Record<string, string>; body: string; truncated: boolean }> {
   const mod = url.protocol === "https:" ? https : http;
   const fam = isIP(ip);
   return new Promise((resolveP, reject) => {
@@ -187,13 +190,17 @@ function send(url: URL, method: string, headers: Record<string, string>, ip: str
       res.on("end", () => {
         const h: Record<string, string> = {};
         for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h[k] = Array.isArray(v) ? v.join(", ") : v;
-        resolveP({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks).toString("utf8") });
+        clearTimeout(deadline);
+        resolveP({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks).toString("utf8"), truncated: n > cap });
       });
       res.on("error", reject);
     });
     // Re-check the actual peer before any byte is written.
     req.on("socket", (s) => s.once("connect", () => { const r = norm(s.remoteAddress ?? ""); if (r !== norm(ip)) req.destroy(new ReplayRejectedError(`connected to ${r}, expected ${ip}`)); }));
-    req.on("timeout", () => req.destroy(new Error("replay timed out")));
+    req.on("timeout", () => req.destroy(new Error("request timed out")));
+    // Overall deadline (the socket timeout above only covers idle periods).
+    const deadline = setTimeout(() => req.destroy(new Error(`request timed out after ${cfg.timeoutMs ?? 10_000} ms`)), cfg.timeoutMs ?? 10_000);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", reject);
     req.end();
   });
