@@ -58,7 +58,9 @@ Ctrl-C). After `npm ci` it needs no network: the mongod binary is downloaded onc
 
 The audit page's first screen (readable in ~30 s): one-sentence verdict, root-cause chain with every step labelled
 **walkthrough 执行** (core-executed) or **agent 自报** (agent-reported), corroborating signals, the needs-review count,
-sign-off. Everything else is collapsed.
+sign-off. The check summary reads `N 通过 · N 失败 · N 需复核 · N 无结论` (each opens its list). Times show in the
+viewer's local zone (UTC ISO in the tooltip); without JS they fall back to `WALKTHROUGH_TZ` / `TZ` / the system zone.
+Everything else is collapsed. Step 1 of the demo chain is walkthrough's own `replay_request` of the failing call.
 
 ![audit page first screen](docs/audit-page.png)
 
@@ -149,6 +151,7 @@ Secrets go in the environment of the process that launches the server, never in 
 ```text
 You are verifying the change "<one-line description>" in <project> with the walkthrough MCP tools.
 Rules: walkthrough judges, you execute. Never state a verdict yourself; only evaluate_check decides pass/fail.
+Write check intents, findings and every root-cause chain step in the user's language (<e.g. 中文>).
 
 1. start_walkthrough {title, sandbox}; run_in_sandbox up.
 2. plan_checks {goal, checks}: one check per user-visible behaviour the change touches. Each check has method,

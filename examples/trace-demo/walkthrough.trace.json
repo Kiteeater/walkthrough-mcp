@@ -1,6 +1,6 @@
 {
-  "title": "Trace a 500 across HTTP → Langfuse → MongoDB → source",
-  "waitFor": { "url": "http://localhost:3200/health", "timeoutMs": 60000 },
+  "title": "追查一个 500：HTTP → Langfuse → MongoDB → 源码",
+  "waitFor": { "url": "http://127.0.0.1:3200/health", "timeoutMs": 60000 },
   "captures": [],
   "claims": [],
   "sandbox": {
@@ -11,8 +11,8 @@
     "local": { "up": "exec node server.js", "passEnv": ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
   },
   "agent": {
-    "goal": "Every order's total endpoint answers 2xx; if not, trace the failure to its root cause across sources",
-    "baseUrl": "http://localhost:3200",
+    "goal": "每个订单的金额接口都返回 2xx；如果没有，跨数据源追到根因",
+    "baseUrl": "http://127.0.0.1:3200",
     "service": "app",
     "orders": ["ord-1", "ord-3"]
   }

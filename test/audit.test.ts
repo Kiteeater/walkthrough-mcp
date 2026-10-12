@@ -100,7 +100,7 @@ describe("demo agent executes, core judges, finding points at the real bug (plan
     expect(w.findings ?? []).toHaveLength(0);
     const html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('data-findings="0"');
-    expect(html).toContain("检查通过 6/6");
+    expect(html).toMatch(/data-total="6">检查 6 项：<a class="cc cc-pass"[^>]*data-count="3"/);
   }, T);
 });
 

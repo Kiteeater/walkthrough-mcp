@@ -5,12 +5,32 @@ import { harSummary, parseHar } from "./har.js";
 import { metricSummary } from "./metrics.js";
 import { ALERTS_EVIDENCE } from "./alerts.js";
 
+/** Zone for the static (no-JS) time text: explicit option, WALKTHROUGH_TZ, TZ, else the system zone. */
+export function renderTimeZone(explicit?: string): string {
+  for (const z of [explicit, process.env.WALKTHROUGH_TZ, process.env.TZ]) {
+    if (!z) continue;
+    try { new Intl.DateTimeFormat("en", { timeZone: z }); return z; } catch { /* invalid zone: try next */ }
+  }
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+export function fmtTime(d: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("sv-SE", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d);
+  return `${parts} (${tz})`;
+}
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** Render a static HTML walkthrough: one section per question. Returns the HTML path. */
-export function renderWalkthrough(core: WalkthroughCore, id: string): string {
+export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { timeZone?: string } = {}): string {
   const w = core.load(id);
+  const tz = renderTimeZone(opts.timeZone);
+  /** No-JS fallback in the configured zone; the page script re-renders it in the viewer's zone. UTC ISO in the tooltip. */
+  const t = (iso?: string) => {
+    if (!iso) return "?";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return esc(iso);
+    return `<time datetime="${esc(d.toISOString())}" title="${esc(d.toISOString())} (UTC)">${esc(fmtTime(d, tz))}</time>`;
+  };
   const local = w.sandbox.backend === "local";
   const localBadge = local ? `<span class="badge local" title="local run, not isolated">本地运行、未隔离</span> ` : "";
   const count = (f: (c: (typeof w.claims)[number]) => boolean) => w.claims.filter(f).length;
@@ -23,10 +43,10 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const evidenceHtml = (ids: string[]) => ids.map((evId) => {
     const ev = w.evidence.find((e) => e.id === evId);
     if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
-    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">agent 自报</span>' : '<span class="prov core">walkthrough 执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
+    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">agent 自报</span>' : '<span class="prov core">walkthrough 执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${t(ev.createdAt)}</div>`;
     const har = ev.type === "har" ? parseHar(core.readEvidenceText(w, ev)) : undefined;
     const alertDoc = ev.kind === "alert" ? (() => { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return j.format === ALERTS_EVIDENCE ? j : undefined; } catch { return undefined; } })() : undefined;
-    if (alertDoc) return `<figure data-type="alert" data-prov="core">${meta}<pre class="alert-summary">${esc(`${alertDoc.note} · window ${alertDoc.window.start} → ${alertDoc.window.end} · ${alertDoc.polls} poll(s)`)}${(alertDoc.firing as { labels: Record<string, string>; annotations: Record<string, string> }[]).map((a) => esc(`\n🔔 ${a.labels.alertname ?? "?"} ${JSON.stringify(a.labels)} ${a.annotations.summary ?? ""}`)).join("")}</pre><details><summary>alerts (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details></figure>`;
+    if (alertDoc) return `<figure data-type="alert" data-prov="core">${meta}<pre class="alert-summary">${esc(alertDoc.note)} · 窗口 ${t(alertDoc.window.start)} → ${t(alertDoc.window.end)}${esc(` · ${alertDoc.polls} poll(s)`)}${(alertDoc.firing as { labels: Record<string, string>; annotations: Record<string, string> }[]).map((a) => esc(`\n🔔 ${a.labels.alertname ?? "?"} ${JSON.stringify(a.labels)} ${a.annotations.summary ?? ""}`)).join("")}</pre><details><summary>alerts (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details></figure>`;
     const met = ev.kind === "metric" ? metricSummary(core.readEvidenceText(w, ev)) : undefined;
     const body = met ? `<pre class="metric-summary">${esc(met.query)} = ${esc(String(met.value ?? (met.ok ? "(no single value)" : "(query failed)")))}</pre><details><summary>Prometheus response</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
       : ev.type === "screenshot"
@@ -58,19 +78,17 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const alertLine = (f: (typeof findings)[number]) => {
     const items = (w.alertWatches ?? []).flatMap((aw) => aw.matched.filter((m) => m.findingId === f.id).map((m) => {
       const also = m.checkIds.filter((c) => c !== f.checkId);
-      return `<div class="alert-confirm" data-alert="${esc(m.alertname)}" data-first-seen="${esc(m.firstSeenAt ?? "")}">🔔 告警触发：<b>${esc(m.alertname)}</b> · 开始于 <time>${esc(m.activeAt ?? "?")}</time> · walkthrough 首次看到 <time>${esc(m.firstSeenAt ?? "?")}</time>${aw.outcome === "interrupted" ? ' <span class="chip interrupted">盯守中断</span>' : ""}${also.length ? ` <span class="also-matched" data-also="${esc(also.join(","))}">也匹配了 ${esc(also.join(", "))}</span>` : ""} <span class="meta">（Prometheus，walkthrough 执行，${esc(aw.evidenceId)}，关联 ${esc(m.checkIds.join(", "))}）</span></div>`;
+      return `<div class="alert-confirm" data-alert="${esc(m.alertname)}" data-first-seen="${esc(m.firstSeenAt ?? "")}">🔔 告警触发：<b>${esc(m.alertname)}</b> · 开始于 ${t(m.activeAt)} · walkthrough 首次看到 ${t(m.firstSeenAt)}${aw.outcome === "interrupted" ? ' <span class="chip interrupted">盯守中断</span>' : ""}${also.length ? ` <span class="also-matched" data-also="${esc(also.join(","))}">也匹配了 ${esc(also.join(", "))}</span>` : ""} <span class="meta">（Prometheus，walkthrough 执行，${esc(aw.evidenceId)}，关联 ${esc(m.checkIds.join(", "))}）</span></div>`;
     }));
     return items.length ? `<div class="corroborating" data-corroborating="${items.length}"><b>同时观测到的信号</b> <span class="meta">（佐证，不属于根因链）</span>${items.join("")}</div>` : "";
   };
   const watches = w.alertWatches ?? [];
   const unmatchedAlerts = watches.flatMap((aw) => aw.unmatched.map((u) => ({ ...u, ev: aw.evidenceId })));
   const outcomeTxt = (aw: (typeof watches)[number]) => aw.outcome === "interrupted" ? "⚠ 盯守中断（数据不完整，不代表窗口内无告警）" : aw.outcome === "stopped_early" ? "窗口结束前已收取" : "窗口已走完";
-  const alertsBlock = watches.length ? `<div class="alerts-sum">${watches.map((aw) => `<div class="alert-window ${esc(aw.outcome)}" data-outcome="${esc(aw.outcome)}" data-firing="${aw.matched.length + aw.unmatched.length}">🔔 告警盯守 ${esc(aw.watchId)} ${esc(aw.start)} → ${esc(aw.end)} (${aw.polls} 次轮询，${esc(aw.evidenceId)}, ${esc(outcomeTxt(aw))}${aw.finalizedBy === "sign_off" ? "，签核时自动结束" : ""}): ${aw.matched.length + aw.unmatched.length ? `已关联 ${aw.matched.length}，未关联 ${aw.unmatched.length}` : aw.errors?.length && aw.errors.length && aw.polls === 0 ? "无轮询" : aw.outcome === "interrupted" ? "中断前未见触发的告警" : aw.errors?.length ? `轮询出错：${esc(aw.errors.join("; "))}` : "窗口内无告警"}</div>`).join("")}
+  const alertsBlock = watches.length ? `<div class="alerts-sum">${watches.map((aw) => `<div class="alert-window ${esc(aw.outcome)}" data-outcome="${esc(aw.outcome)}" data-firing="${aw.matched.length + aw.unmatched.length}">🔔 告警盯守 ${esc(aw.watchId)} ${t(aw.start)} → ${t(aw.end)} (${aw.polls} 次轮询，${esc(aw.evidenceId)}, ${esc(outcomeTxt(aw))}${aw.finalizedBy === "sign_off" ? "，签核时自动结束" : ""}): ${aw.matched.length + aw.unmatched.length ? `已关联 ${aw.matched.length}，未关联 ${aw.unmatched.length}` : aw.errors?.length && aw.errors.length && aw.polls === 0 ? "无轮询" : aw.outcome === "interrupted" ? "中断前未见触发的告警" : aw.errors?.length ? `轮询出错：${esc(aw.errors.join("; "))}` : "窗口内无告警"}</div>`).join("")}
 ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unmatchedAlerts.length}"><b>未关联的告警</b>（没有检查的匹配规则命中，未挂到任何问题上）：<ul>${unmatchedAlerts.map((u) => `<li><span class="chip ${esc(u.severity)}">${esc(u.severity)}</span> ${esc(u.alertname)} <code>${esc(JSON.stringify(u.labels))}</code> <span class="meta">${esc(u.ev)}</span></li>`).join("")}</ul></div>` : ""}</div>` : "";
   const autoFin = w.signoff?.autoFinalizedWatches ?? [];
   const autoFinNote = autoFin.length ? `<div class="auto-finalized" data-auto-finalized="${autoFin.length}">⚠ 签核时自动结束的告警盯守：${autoFin.map((a) => `<span class="aw ${esc(a.outcome)}" data-outcome="${esc(a.outcome)}">${esc(a.watchId)} (${a.outcome === "interrupted" ? "<b>interrupted</b> — 数据不完整" : esc(a.outcome)})</span>`).join(", ")}</div>` : "";
-  const passed = results.filter((r) => r.status === "pass").length;
-  const needsReview = results.filter((r) => r.status === "pass_needs_review");
   const sevRank = (x: string) => { const i = (SEV as readonly string[]).indexOf(x); return i < 0 ? 9 : i; };
   const ordered = [...findings].sort((x, y) => sevRank(x.severity) - sevRank(y.severity));
   const top = ordered[0];
@@ -89,12 +107,21 @@ ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unma
     const src = srcOf(l.source_ref);
     return `<li class="rc-step" data-prov="${prov}">${provLabel(prov)} ${esc(l.claim)}${src ? ` → <code>${esc(src.file)}:${src.line}</code>` : ""}</li>`;
   }).join("")}</ol>`;
+  const allChecks = w.checks ?? [];
+  const statusOf = (cid: string) => results.find((r) => r.checkId === cid)?.status;
+  const buckets: [string, string, (st?: string) => boolean][] = [
+    ["pass", "通过", (st) => st === "pass"], ["fail", "失败", (st) => st === "fail"],
+    ["needs-review", "需复核", (st) => st === "pass_needs_review"], ["none", "无结论", (st) => st !== "pass" && st !== "fail" && st !== "pass_needs_review"],
+  ];
+  const grouped = buckets.map(([key, label, f]) => ({ key, label, list: allChecks.filter((c) => f(statusOf(c.id))) }));
+  const checkCounts = `<span class="check-counts" data-total="${allChecks.length}">检查 ${allChecks.length} 项：${grouped.map((g) => `<a class="cc cc-${g.key}" href="#checks-${g.key}" data-status="${g.key}" data-count="${g.list.length}"${g.key === "needs-review" ? ` data-needs-review="${g.list.length}"` : ""} onclick="var d=document.getElementById('checks-${g.key}');if(d)d.open=true">${g.list.length} ${g.label}</a>`).join(" · ")}</span>`;
+  const checkLists = grouped.map((g) => `<details class="check-bucket" id="checks-${g.key}" data-status="${g.key}"><summary>${g.label}（${g.list.length}）</summary>${g.list.length ? `<ul>${g.list.map((c) => { const r = results.find((x) => x.checkId === c.id); return `<li data-check="${esc(c.id)}"><code>${esc(c.id)}</code> ${esc(c.intent)}${r?.reasons.length ? ` <span class="meta">— ${esc(r.reasons.join("; "))}</span>` : ""}</li>`; }).join("")}</ul>` : "<p class=\"meta\">无</p>"}</details>`).join("");
   const verdict = `<section class="verdict" id="verdict">
 <div class="headline" data-findings="${findings.length}">${top
     ? `发现 <b>${findings.length}</b> 个问题：${sentence(top)}`
     : "未发现问题"}</div>
 <div class="sev">${SEV.map((s) => `<span class="chip ${s}" data-sev="${s}">${s} ${sevCount(s)}</span>`).join("")}
-<span class="checks-sum">检查通过 ${passed + needsReview.length}/${results.length}</span> <span class="chip needs-review" data-needs-review="${needsReview.length}" title="只有 agent 自报证据的通过项，需人工复核">待复核 ${needsReview.length}${needsReview.length ? `：${esc(needsReview.map((r) => r.checkId).join(", "))}` : ""}</span></div>
+${checkCounts}</div>
 ${top ? `<div class="top-finding" data-finding="${esc(top.id)}"><h3>根因链 <span class="meta">（${esc(top.title)}）</span></h3>
 ${firstChain(top)}
 <div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}</div>` : ""}
@@ -110,6 +137,7 @@ ${w.goal ? `<p class="goal meta">目标：${esc(w.goal)}</p>` : ""}
 ${autoFinNote}
 ${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">已签核：<b>${w.signoff.decision === "accept" ? "认可" : "打回"}</b>${w.signoff.comment ? ` — ${esc(w.signoff.comment)}` : ""}</div>` : ""}
 </div>
+<div class="check-lists">${checkLists}</div>
 </section>`;
   const findingDetails = findings.map((f) => {
     const steps = f.root_cause_chain.map((l, i) => {
@@ -129,7 +157,7 @@ ${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<l
   }).join("\n");
   const row = (c: NonNullable<typeof w.checks>[number]) => {
     const r = results.find((x) => x.checkId === c.id);
-    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加 after ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${esc(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
+    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加 after ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${t(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
   };
   const head = "<tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>";
   const original = (w.checks ?? []).filter((c) => !c.appended), appended = (w.checks ?? []).filter((c) => c.appended);
@@ -172,7 +200,7 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 .verdict{border:2px solid #222;border-radius:10px;padding:1rem 1.25rem}.headline{font-size:1.6rem}
 .chip{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85rem;margin-right:.4rem;background:#eee;color:#222}
 .chip.critical{background:#82071e;color:#fff}.chip.high{background:#cf222e;color:#fff}.chip.medium{background:#bf8700;color:#fff}.chip.low{background:#57606a;color:#fff}
-.sev{margin:.5rem 0}.checks-sum{color:#555;margin-left:.5rem}.finding-list li{margin:.6rem 0}.rc{margin:.2rem 0}.loc{background:#fff8c5;padding:1px 4px}
+.sev{margin:.5rem 0}.check-counts{color:#555;margin-left:.5rem}.cc{margin:0 .15rem}.cc-fail{color:#cf222e}.cc-needs-review{color:#7a4d00}.check-bucket{margin:.4rem 0;padding:.3rem .8rem}.finding-list li{margin:.6rem 0}.rc{margin:.2rem 0}.loc{background:#fff8c5;padding:1px 4px}
 .code code{display:block;background:#f6f8fa;padding:.3rem .5rem;margin-top:.2rem;white-space:pre-wrap}
 .signoff{margin-top:1rem;padding-top:.75rem;border-top:1px solid #ddd}.signoff textarea{width:100%;height:3rem;margin:.4rem 0}
 details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0}summary{cursor:pointer;font-weight:600}
@@ -188,7 +216,7 @@ li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}命令以宿主机子进程运行，没有隔离。</p>` : ""}
-<p class="meta">walkthrough ${esc(w.id)} · ${findings.length} 个问题 · ${results.length} 项检查 · ${w.claims.length} 条结论 · ${w.evidence.length} 份证据</p>
+<p class="meta">walkthrough ${esc(w.id)}</p>
 ${verdict}
 ${findingDetails ? `<h2>问题详情（证据链）</h2>\n${findingDetails}` : ""}
 ${checksTable}
@@ -197,6 +225,7 @@ ${summary}
 ${sections}
 </details>
 <script>
+document.querySelectorAll("time[datetime]").forEach(function(el){var d=new Date(el.getAttribute("datetime"));if(!isNaN(d))el.textContent=d.toLocaleString(undefined,{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,timeZoneName:"short"});});
 const WID=${JSON.stringify(w.id)};const decisions={};
 document.querySelectorAll(".claim").forEach(s=>{
   const st=s.querySelector(".state");if(s.dataset.prior){decisions[s.dataset.claim]=s.dataset.prior;st.textContent=s.dataset.prior;}
