@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end: build, run the sample walkthrough against Docker Compose + Playwright, verify the HTML.
-set -euo pipefail
+set -euxo pipefail
 cd "$(dirname "$0")/.."
 : "${DEMO_API_KEY:=e2e-demo-key-$RANDOM$RANDOM}"
 export DEMO_API_KEY
@@ -9,7 +9,7 @@ export DEMO_API_KEY
 rm -rf .walkthrough e2e-output
 # The demo agent plans its checks from the declared routes (no knowledge of any bug).
 node dist/demo-agent/planner.js examples/walkthrough.config.json examples/orders-service/routes.json examples/.generated.compose.json
-result="$(node dist/cli/index.js run --config examples/.generated.compose.json --root .)"
+result="$(node dist/cli/index.js run --config examples/.generated.compose.json --root .)" || { rc=$?; echo "walkthrough run exited $rc" >&2; ls -la .walkthrough/*/ 2>&1 || true; cat .walkthrough/*/walkthrough.json 2>&1 || true; exit $rc; }
 echo "$result"
 id="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$result")"
 dir=".walkthrough/$id"
