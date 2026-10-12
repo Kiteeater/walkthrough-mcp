@@ -1,0 +1,151 @@
+/**
+ * run_cli: a thin, read-only, whitelisted CLI executor (design doc §PR #6).
+ *  - argv only, spawned as spawn(binary, args) with shell disabled; no string is ever handed to a shell.
+ *  - each connector allows a fixed set of subcommand prefixes; credential flags and shell syntax are rejected.
+ *  - mongosh never takes agent argv: only fixed query templates (find / aggregate / countDocuments) that we render.
+ *  - every call appends one hash-chained line to commands.jsonl (redacted argv, exit code, output sha256, cli
+ *    name+version+profile name). Credentials are never logged: they stay in the CLI's own local login state.
+ */
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+
+export class CliRejectedError extends Error {
+  constructor(message: string) { super(message); this.name = "CliRejectedError"; }
+}
+
+export interface ConnectorConfig {
+  name: string;
+  /** Executable name or absolute path. */
+  binary: string;
+  kind?: "cli" | "mongo";
+  /** Allowed subcommand prefixes (argv after the binary). Ignored for kind=mongo. */
+  allow?: string[][];
+  /** Extra denied flags (matched as `--flag` or `--flag=…`). */
+  denyArgs?: string[];
+  /** Name of the CLI's own local profile to use (`--profile <name>`); the name is logged, never its secrets. */
+  profile?: string;
+  /** mongo: connection string WITHOUT credentials (use the shell's own auth / a read-only user). */
+  uri?: string;
+  versionArgs?: string[];
+  /** Host env var names passed to the CLI in addition to the sandbox defaults. */
+  passEnv?: string[];
+}
+
+export const PRESET_CONNECTORS: ConnectorConfig[] = [
+  {
+    name: "aliyun", binary: "aliyun",
+    allow: [
+      ["sls", "GetLogs"], ["sls", "GetHistograms"], ["sls", "ListLogStores"], ["sls", "ListProject"],
+      ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],
+    ],
+  },
+  {
+    name: "mqadmin", binary: "mqadmin",
+    allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["consumerProgress"], ["consumerStatus"], ["queryMsgById"], ["queryMsgByKey"], ["brokerStatus"]],
+  },
+  { name: "mongosh", binary: "mongosh", kind: "mongo" },
+];
+
+const CRED_FLAGS = ["--access-key-id", "--access-key-secret", "--sts-token", "--ram-role-arn", "--private-key", "--password", "-p", "--username", "-u",
+  "--apiKey", "--token", "--secret", "--accessKey", "--secretKey", "--profile", "--eval", "-e", "--file", "-f", "--shell", "--nodb", "--config"];
+const SHELLISH = /[;&|`<>$\n\r]|\$\(/;
+
+export interface MongoTemplate {
+  name: "find" | "aggregate" | "countDocuments";
+  db: string; collection: string;
+  filter?: Record<string, unknown>; projection?: Record<string, unknown>; sort?: Record<string, unknown>;
+  limit?: number; pipeline?: Record<string, unknown>[];
+}
+
+export const AGG_STAGES = ["$match", "$project", "$group", "$sort", "$limit", "$skip", "$count", "$unwind", "$addFields", "$set", "$unset", "$lookup", "$sortByCount", "$replaceRoot"];
+/** Operators that write ($out/$merge) or run server-side JS ($where/$function/$accumulator) — rejected at any depth. */
+export const MONGO_FORBIDDEN = ["$out", "$merge", "$where", "$function", "$accumulator"];
+const NAME = /^[A-Za-z0-9_][\w.-]{0,119}$/;
+
+function scanForbidden(v: unknown, at: string): void {
+  if (Array.isArray(v)) v.forEach((x, i) => scanForbidden(x, `${at}[${i}]`));
+  else if (v && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      if (MONGO_FORBIDDEN.includes(k)) throw new CliRejectedError(`${k} is not allowed (${at})`);
+      scanForbidden(x, `${at}.${k}`);
+    }
+  }
+}
+
+/** Render a fixed mongosh query template into argv. Only data is substituted, as JSON string literals. */
+export function mongoArgv(c: ConnectorConfig, t: MongoTemplate): string[] {
+  if (!t || !["find", "aggregate", "countDocuments"].includes(t.name)) throw new CliRejectedError(`mongo template must be find|aggregate|countDocuments, got ${t?.name}`);
+  if (!NAME.test(t.db ?? "") || !NAME.test(t.collection ?? "")) throw new CliRejectedError("invalid db/collection name");
+  for (const [k, v] of Object.entries({ filter: t.filter, projection: t.projection, sort: t.sort })) {
+    if (v !== undefined && (typeof v !== "object" || v === null || Array.isArray(v))) throw new CliRejectedError(`${k} must be an object`);
+  }
+  scanForbidden({ filter: t.filter, projection: t.projection, sort: t.sort, pipeline: t.pipeline }, "template");
+  const limit = Math.min(Math.max(1, Math.trunc(t.limit ?? 100)), 1000);
+  const lit = (v: unknown) => `EJSON.parse(${JSON.stringify(JSON.stringify(v ?? {}))})`;
+  const coll = `db.getSiblingDB(${JSON.stringify(t.db)}).getCollection(${JSON.stringify(t.collection)})`;
+  let expr: string;
+  if (t.name === "aggregate") {
+    if (!Array.isArray(t.pipeline)) throw new CliRejectedError("aggregate needs a pipeline array");
+    for (const st of t.pipeline) {
+      const keys = st && typeof st === "object" ? Object.keys(st) : [];
+      if (keys.length !== 1 || !AGG_STAGES.includes(keys[0])) throw new CliRejectedError(`aggregate stage not allowed: ${keys.join(",") || JSON.stringify(st)}`);
+    }
+    expr = `${coll}.aggregate(${lit([...t.pipeline, { $limit: limit }])}).toArray()`;
+  } else if (t.name === "countDocuments") {
+    expr = `${coll}.countDocuments(${lit(t.filter)})`;
+  } else {
+    expr = `${coll}.find(${lit(t.filter)}, ${lit(t.projection)}).sort(${lit(t.sort)}).limit(${limit}).toArray()`;
+  }
+  if (c.uri && /\/\/[^/@]*@/.test(c.uri)) throw new CliRejectedError("connector uri must not embed credentials");
+  return [...(c.uri ? [c.uri] : []), "--quiet", "--norc", "--eval", `print(EJSON.stringify(${expr}))`];
+}
+
+/** Validate agent argv for a cli connector and return the final argv (profile appended by us). */
+export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
+  if (!Array.isArray(argv) || argv.some((a) => typeof a !== "string")) throw new CliRejectedError("argv must be an array of strings");
+  for (const a of argv) {
+    if (SHELLISH.test(a)) throw new CliRejectedError(`argument contains shell syntax: ${JSON.stringify(a)}`);
+    const flag = a.split("=")[0];
+    if ([...CRED_FLAGS, ...(c.denyArgs ?? [])].includes(flag)) throw new CliRejectedError(`flag not allowed: ${flag}`);
+  }
+  const ok = (c.allow ?? []).some((p) => p.length <= argv.length && p.every((x, i) => argv[i] === x));
+  if (!ok) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
+  return c.profile ? [...argv, "--profile", c.profile] : argv;
+}
+
+export interface CommandLogEntry {
+  seq: number; ts: string; walkthroughId: string; checkId?: string;
+  connector: string; cli: { name: string; version: string; profile?: string };
+  argv: string[]; cwd: string; exitCode: number; outputSha256: string; evidenceId: string;
+  executedBy: "core"; prev: string; hash: string;
+}
+
+export const GENESIS = "0".repeat(64);
+const entryHash = (e: Omit<CommandLogEntry, "hash">) => createHash("sha256").update(JSON.stringify(e)).digest("hex");
+
+/** Append one entry; caller holds the walkthrough lock. Returns the new entry (with its hash). */
+export function appendCommandLog(file: string, e: Omit<CommandLogEntry, "seq" | "prev" | "hash">): CommandLogEntry {
+  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+  const last = lines.length ? (JSON.parse(lines[lines.length - 1]) as CommandLogEntry) : undefined;
+  const base = { seq: lines.length + 1, ...e, prev: last?.hash ?? GENESIS };
+  const full: CommandLogEntry = { ...base, hash: entryHash(base) };
+  appendFileSync(file, `${JSON.stringify(full)}\n`, { flag: "a" });
+  return full;
+}
+
+/** Recompute the chain. `head` (stored in walkthrough.json) also catches truncation of the tail. */
+export function verifyCommandLog(file: string, head?: { seq: number; hash: string }): { ok: boolean; entries: number; error?: string } {
+  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+  let prev = GENESIS;
+  for (let i = 0; i < lines.length; i++) {
+    let e: CommandLogEntry;
+    try { e = JSON.parse(lines[i]); } catch { return { ok: false, entries: i, error: `line ${i + 1}: not JSON` }; }
+    const { hash, ...rest } = e;
+    if (e.seq !== i + 1) return { ok: false, entries: i, error: `line ${i + 1}: seq ${e.seq} out of order` };
+    if (e.prev !== prev) return { ok: false, entries: i, error: `line ${i + 1}: prev hash mismatch` };
+    if (entryHash(rest) !== hash) return { ok: false, entries: i, error: `line ${i + 1}: hash mismatch (entry modified)` };
+    prev = hash;
+  }
+  if (head && (head.seq !== lines.length || head.hash !== prev)) return { ok: false, entries: lines.length, error: `head mismatch: expected seq ${head.seq}, log has ${lines.length} (truncated or replaced)` };
+  return { ok: true, entries: lines.length };
+}

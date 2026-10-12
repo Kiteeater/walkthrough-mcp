@@ -40,6 +40,13 @@ server.tool("record_claim", "Record a claim. observed claims must cite existing,
   evidenceIds: z.array(z.string()).optional(), sourceIds: z.array(z.string()).optional(),
 }, (a) => wrap(() => core.recordClaim(a.id, a))());
 
+server.tool("run_cli", "walkthrough runs a whitelisted READ-ONLY CLI for you (argv only, no shell) and stores the output as evidence. mongosh takes only template {name: find|aggregate|countDocuments, db, collection, filter|pipeline}.", {
+  id, check_id: z.string().optional(), connector: z.string(), argv: z.array(z.string()).optional(),
+  template: z.record(z.unknown()).optional(), timeout_s: z.number().optional(),
+}, (a) => wrap(() => core.runCli(a.id, { checkId: a.check_id, connector: a.connector, argv: a.argv, template: a.template as never, timeoutS: a.timeout_s }))());
+
+server.tool("verify_command_log", "Verify the hash-chained run_cli command log.", { id }, (a) => wrap(() => core.verifyCommandLog(a.id))());
+
 server.tool("plan_checks", "Record your check plan. Every check needs a machine-checkable expect. Returns next_actions.", planChecksShape,
   (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never }))());
 
