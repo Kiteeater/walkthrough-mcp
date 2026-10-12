@@ -113,6 +113,24 @@ After `import-review`, re-rendering shows each claim's review status and note un
 The HTML is fully static: click Agree/Flag (with an optional note) per question, then
 **Export review.json** downloads your decisions for `import-review`.
 
+**Readiness (`waitFor`).** `waitFor.url` is polled until it answers 2xx, and on timeout the run fails with
+`timed out waiting for …`. A plain 2xx only shows that *something* answers on that port. Add
+`waitFor.header: { "name": "…", "value": "…" }` so only a response that carries your per-run token counts as ready.
+Flow configs expand `${NAME}` from the environment **only for an allowlist**: `PORT` and `DEMO_HEALTH_TOKEN`
+(`FLOW_ENV_ALLOWLIST` in `src/core/flow.ts`). Any other `${NAME}` is a load error even if that variable is set, so a
+config can't pull credentials out of the environment. An allowlisted but unset variable is also an error. Each
+allowlisted name carries a `redact` flag (`FLOW_ENV_VARS`). Token-type values (`DEMO_HEALTH_TOKEN`, `redact: true`)
+are added to the Redactor and appear as `[REDACTED]` in evidence, `walkthrough.json` and the report. `PORT`
+(`redact: false`) is not a secret and is never redacted, because masking its digits everywhere would corrupt
+timestamps, order ids and amounts that happen to contain them. This lets the port and token be chosen per run instead of hard-coded:
+
+```json
+"waitFor": { "url": "http://127.0.0.1:${PORT}/health", "header": { "name": "x-walkthrough-demo-token", "value": "${DEMO_HEALTH_TOKEN}" } }
+```
+
+The example configs work this way: `examples/run-e2e.sh` / `run-local-e2e.sh` pick an OS-assigned free port and a
+random token, and `examples/orders-service` echoes the token on `/health`.
+
 ## Local backend (no Docker)
 
 `--sandbox local` (CLI), `"backend": "local"` in the config's `sandbox` block, or `sandbox: "local"` on the

@@ -1,14 +1,15 @@
 {
   "title": "Sample change: order totals from line items",
   "waitFor": {
-    "url": "http://localhost:3000/health",
+    "url": "http://127.0.0.1:${PORT}/health",
+    "header": { "name": "x-walkthrough-demo-token", "value": "${DEMO_HEALTH_TOKEN}" },
     "timeoutMs": 90000
   },
   "captures": [
     {
       "as": "home",
       "type": "screenshot",
-      "url": "http://localhost:3000/"
+      "url": "http://127.0.0.1:${PORT}/"
     }
   ],
   "sources": [
@@ -45,7 +46,7 @@
   },
   "agent": {
     "goal": "Verify every declared route of orders-service still works after the change",
-    "baseUrl": "http://localhost:3000",
+    "baseUrl": "http://127.0.0.1:${PORT}",
     "service": "app"
   }
 }

@@ -130,7 +130,7 @@ const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
 
 export class WalkthroughCore {
   readonly base: string;
-  private readonly redactor: Redactor;
+  private redactor: Redactor;
   private readonly now: () => Date;
   readonly registry: Registry;
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -166,6 +166,8 @@ export class WalkthroughCore {
   }
 
   get root(): string { return this.deps.root; }
+  /** Also mask these values in everything written from now on (e.g. per-run values substituted into a flow config). */
+  addRedactions(values: string[]): void { this.redactor = this.redactor.with(values); }
 
   dir(id: string): string {
     if (!/^[\w-]+$/.test(id)) throw new Error(`invalid walkthrough id: ${id}`);

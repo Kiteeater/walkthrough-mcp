@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { createServer, type AddressInfo } from "node:net";
+import { waitForUrl } from "../src/core/flow.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,23 +108,27 @@ describe("cross-source root-cause chain: HTTP 500 → Langfuse trace → Mongo d
     const mms = await MongoMemoryServer.create();
     const mongo = new MongoClient(mms.getUri());
     await mongo.db("walkthrough_demo").collection("orders").insertMany([{ _id: "ord-1", items: [{ price: 1, qty: 1 }] }, { _id: "ord-3", legacyTotal: 12 }] as never);
-    const lfPort = 41000 + Math.floor(Math.random() * 5000), port = lfPort + 6000;
-    const lf = await startMockLangfuse(lfPort, "pk", "sk-test-xyz");
+    // OS-assigned ports (no random range that can collide with other test files' servers) + a per-run token the
+    // service echoes on /health, so readiness can't be satisfied by some other server (issue #22).
+    const lf = await startMockLangfuse(0, "pk", "sk-test-xyz");
+    const lfPort = (lf.address() as AddressInfo).port;
+    const port = await new Promise<number>((r, j) => { const s = createServer(); s.once("error", j); s.listen(0, "127.0.0.1", () => { const p = (s.address() as AddressInfo).port; s.close(() => r(p)); }); });
+    const healthToken = randomBytes(12).toString("hex");
     const auth = "Basic " + Buffer.from("pk:sk-test-xyz").toString("base64");
-    Object.assign(process.env, { MONGO_URL: mms.getUri(), LANGFUSE_URL: `http://127.0.0.1:${lfPort}`, LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk-test-xyz", PORT: String(port) });
+    Object.assign(process.env, { MONGO_URL: mms.getUri(), LANGFUSE_URL: `http://127.0.0.1:${lfPort}`, LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk-test-xyz", PORT: String(port), DEMO_HEALTH_TOKEN: healthToken });
     const root = resolve(".");
     const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: { screenshot: async () => {} } as Capturer, redactor: new Redactor(["sk-test-xyz"]) });
-    const w = core.startWalkthrough({ title: "trace", sandbox: { backend: "local", cwd: join(root, "examples/trace-demo/service"), up: "", down: "", local: { up: "exec node server.js", passEnv: ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "PORT"], killTimeoutMs: 1000 } } });
+    const w = core.startWalkthrough({ title: "trace", sandbox: { backend: "local", cwd: join(root, "examples/trace-demo/service"), up: "", down: "", local: { up: "exec node server.js", passEnv: ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "DEMO_HEALTH_TOKEN", "PORT"], killTimeoutMs: 1000 } } });
     await core.runInSandbox(w.id, "up");
     try {
-      for (let i = 0; i < 80; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((r) => setTimeout(r, 100)); }
+      await waitForUrl(`http://127.0.0.1:${port}/health`, 15_000, 1_000, { name: "x-walkthrough-demo-token", value: healthToken }); // throws on timeout
       await runTraceAgent(core, w.id, {
         getTrace: async (t) => (await fetch(`http://127.0.0.1:${lfPort}/api/public/traces/${t}`, { headers: { authorization: auth } })).json(),
         find: (db, c, f) => mongo.db(db).collection(c).find(f as never).toArray(),
       }, { goal: "totals work", baseUrl: `http://127.0.0.1:${port}`, orders: ["ord-1", "ord-3"] });
     } finally {
       await core.runInSandbox(w.id, "down"); await mongo.close(); lf.close(); await mms.stop();
-      for (const k of ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "PORT"]) delete process.env[k];
+      for (const k of ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "PORT", "DEMO_HEALTH_TOKEN"]) delete process.env[k];
     }
     const out = core.load(w.id);
     expect(out.findings).toHaveLength(1);

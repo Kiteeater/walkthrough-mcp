@@ -142,6 +142,7 @@ describe("CLI smoke: watch start / collect share the core", () => {
     const { watchId } = JSON.parse(s.stdout);
     expect(watchId).toMatch(/^w_[0-9a-f]{16}$/);
     for (let i = 0; i < 50 && core.readWatch(watchId).polls.length < 2; i++) await new Promise((r) => setTimeout(r, 200));
+    if (core.readWatch(watchId).polls.length < 2) throw new Error(`detached poller: expected >= 2 polls within 10 s, got ${core.readWatch(watchId).polls.length}`);
     expect(core.readWatch(watchId).polls.length).toBeGreaterThanOrEqual(2);
     const c = spawnSync(process.execPath, [CLI, "watch", "collect", watchId, "--root", root], { encoding: "utf8", env, timeout: 30_000 });
     expect(c.status, c.stderr).toBe(0);

@@ -15,10 +15,43 @@ export interface FlowConfig {
   sources?: { as: string; file: string; line: number; note?: string }[];
   claims: { question: string; conclusion: string; kind: ClaimKind; evidence?: string[]; sources?: string[] }[];
   keepRunning?: boolean;
+  /** Token-type values substituted for `${NAME}` at load time; runFlow registers them with the core's Redactor. */
+  substituted?: string[];
+}
+
+/**
+ * Env vars a flow config may reference as `${NAME}`: per-run plumbing only (an OS-assigned port and the readiness
+ * token checked by waitFor.header). Anything else — even if set in the environment — is a load error, so a config
+ * can never pull a credential out of the environment.
+ */
+export const FLOW_ENV_VARS: Readonly<Record<string, { redact: boolean }>> = {
+  // A port is not a secret, and masking its digits everywhere would corrupt timestamps / ids / amounts.
+  PORT: { redact: false },
+  // Token-type: registered with the Redactor so it never appears in evidence or reports.
+  DEMO_HEALTH_TOKEN: { redact: true },
+};
+export const FLOW_ENV_ALLOWLIST: readonly string[] = Object.keys(FLOW_ENV_VARS);
+
+/** Expand `${NAME}` (allowlisted names only). Values of `redact: true` names are pushed to `used` for the Redactor. */
+export function expandEnv(v: unknown, where: string, env: NodeJS.ProcessEnv = process.env, used: string[] = []): unknown {
+  if (typeof v === "string") return v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
+    if (!FLOW_ENV_ALLOWLIST.includes(k)) throw new Error(`${where}: \${${k}} is not allowed in a flow config (allowed: ${FLOW_ENV_ALLOWLIST.join(", ")})`);
+    const x = env[k];
+    if (x === undefined || x === "") throw new Error(`${where}: \${${k}} is not set`);
+    if (FLOW_ENV_VARS[k].redact) used.push(x);
+    return x;
+  });
+  if (Array.isArray(v)) return v.map((x) => expandEnv(x, where, env, used));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expandEnv(x, where, env, used)]));
+  return v;
 }
 
 export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConfig, "up" | "down" | "backend">> = {}): FlowConfig {
-  const cfg = JSON.parse(readFileSync(path, "utf8")) as FlowConfig;
+  // `${NAME}` (upper-case env var) in any string is replaced from the environment, so per-run values (an OS-assigned
+  // port, a readiness token for waitFor.header) never have to be hard-coded. An unset variable is an error.
+  const used: string[] = [];
+  const cfg = expandEnv(JSON.parse(readFileSync(path, "utf8")), path, process.env, used) as FlowConfig;
+  if (used.length) cfg.substituted = [...new Set(used)];
   cfg.sandbox.cwd = resolve(dirname(path), cfg.sandbox.cwd ?? ".");
   if (overrides.up) cfg.sandbox.up = overrides.up;
   if (overrides.down) cfg.sandbox.down = overrides.down;
@@ -46,6 +79,7 @@ export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutM
 }
 
 export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { skipWait?: boolean; agent?: (id: string) => Promise<void> } = {}) {
+  if (cfg.substituted?.length) core.addRedactions(cfg.substituted); // never in evidence / reports
   const w = core.startWalkthrough({ title: cfg.title, sandbox: cfg.sandbox });
   const names = new Map<string, string>();
   const up = await core.runInSandbox(w.id, "up");
