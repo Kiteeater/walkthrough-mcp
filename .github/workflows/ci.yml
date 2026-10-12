@@ -15,7 +15,16 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      # Real-Chromium SSRF tests (test/ssrf-policy.test.ts) must run here, not be skipped.
+      - run: npx playwright install --with-deps chromium
       - run: npm run build
+      - run: npx vitest run --reporter=verbose test/ssrf-policy.test.ts
+        env: { REQUIRE_CHROMIUM: "1" }
       - run: npm test
 
   e2e:

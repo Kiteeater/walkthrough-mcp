@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { Capturer } from "./capture.js";
 import { Redactor } from "./redact.js";
@@ -13,6 +13,8 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
+import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, safeRegex } from "./har.js";
+import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
   Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
@@ -36,6 +38,12 @@ export interface CoreDeps {
   connectors?: ConnectorConfig[];
   /** MCP servers whose results may be imported (default: read-only presets mongodb / langfuse / aliyun). */
   mcpImports?: McpImportConnector[];
+  /** HAR replay policy (host allowlist, CIDR exceptions, test-account auth). No config → replay is disabled. */
+  replay?: ReplayConfig;
+  /** DNS resolver for replay (injectable for tests). */
+  resolver?: Resolver;
+  /** Env used for replay test-account credentials (defaults to process.env). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface ImportMcpInput {
@@ -183,6 +191,7 @@ export class WalkthroughCore {
       if (!KINDS.includes(input.kind)) throw new Error(`invalid evidence kind: ${input.kind}`);
       if (!input.source?.tool) throw new Error("source.tool is required");
       const binary = input.kind === "screenshot" || input.kind === "har";
+      if (binary && input.path && input.content === undefined) input = { ...input, path: this.agentFile(input.path, input.kind as "har" | "screenshot") };
       if (input.content === undefined && !(binary && input.path)) throw new Error(input.path ? "path is only accepted for screenshot/har; send text as content" : "content is required");
       const ext = input.kind === "screenshot" ? "png" : input.kind === "har" ? "har" : input.kind === "log" ? "log" : "txt";
       const s = input.source;
@@ -191,13 +200,115 @@ export class WalkthroughCore {
         path: `evidence/${evId}.${ext}`, executedBy: "agent",
         source: this.redactor.text(`agent:${s.tool}${s.server ? `@${s.server}` : ""}${s.command ? ` ${s.command}` : ""}`),
       };
-      if (input.content !== undefined) writeFileSync(abs(ev.path), input.kind === "screenshot" ? Buffer.from(input.content, "base64") : this.redactor.text(input.content));
-      else writeFileSync(abs(ev.path), input.kind === "har" ? this.redactor.text(readFileSync(input.path!, "utf8")) : readFileSync(input.path!));
+      if (input.kind === "har") ev.type = "har";
+      const cap = input.kind === "screenshot" ? SCREENSHOT_MAX_BYTES : HAR_MAX_BYTES;
+      const raw: Buffer = input.content !== undefined ? (input.kind === "screenshot" ? Buffer.from(input.content, "base64") : Buffer.from(input.content, "utf8")) : readFileSync(input.path!);
+      if (raw.length > cap) throw new ClaimRejectedError(`${input.kind} too large: ${raw.length} bytes > ${cap}`);
+      writeFileSync(abs(ev.path), input.kind === "screenshot" ? raw : input.kind === "har" ? redactHar(raw.toString("utf8"), this.redactor) : this.redactor.text(raw.toString("utf8")));
     }
     const full: Evidence = { ...ev, ...(input.checkId ? { checkId: input.checkId } : {}), sha256: sha256File(abs(ev.path)), createdAt: this.ts() };
     w.evidence.push(full);
     this.save(w);
     return full;
+    });
+  }
+
+  /**
+   * A screenshot/HAR file the agent hands over by path must live under `.walkthrough/` (after realpath, so a symlink
+   * can't point outside) and stay under the size cap. Returns the resolved path.
+   */
+  private agentFile(p: string, kind: "har" | "screenshot"): string {
+    let real: string;
+    try { real = realpathSync(resolve(this.deps.root, p)); } catch { throw new ClaimRejectedError(`${kind} file not found: ${p}`); }
+    const base = existsSync(this.base) ? realpathSync(this.base) : this.base;
+    if (!real.startsWith(base + sep)) throw new ClaimRejectedError(`${kind} path must be inside ${this.base} (resolved to ${real})`);
+    const st = statSync(real);
+    if (!st.isFile()) throw new ClaimRejectedError(`${kind} path is not a regular file: ${p}`);
+    const cap = kind === "har" ? HAR_MAX_BYTES : SCREENSHOT_MAX_BYTES;
+    if (st.size > cap) throw new ClaimRejectedError(`${kind} too large: ${st.size} bytes > ${cap}`);
+    return real;
+  }
+
+  /**
+   * replay_request: walkthrough itself re-sends ONE GET/HEAD request found in a HAR evidence item (core-executed).
+   * Host allowlist + IP policy from config, HAR cookies/auth never forwarded, redirects re-checked hop by hop. The result
+   * is stored as a one-entry HAR (executedBy core) and appended to the hash-chained command log.
+   */
+  replayHar(id: string, input: { checkId: string; evidenceId: string; urlMatch?: string; method?: string }): Promise<Evidence> {
+    return this.withLock(id, async () => {
+      const cfg = this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("replay is not configured (no replay.allowHosts)");
+      const w = this.load(id);
+      if (!(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
+      this.verifyEvidence(w, "observed", [input.evidenceId]);
+      const src = w.evidence.find((e) => e.id === input.evidenceId)!;
+      if (src.type !== "har") throw new ClaimRejectedError(`${src.id} is not HAR evidence`);
+      const har = parseHar(readFileSync(join(this.dir(id), src.path), "utf8"))!;
+      const re = input.urlMatch ? safeRegex(input.urlMatch) : undefined;
+      const entry = har.log.entries.find((e) => (!re || re.test(String(e.request.url).slice(0, 2048))) && (!input.method || e.request.method.toUpperCase() === input.method.toUpperCase()));
+      if (!entry) throw new ClaimRejectedError(`no HAR entry in ${src.id} matching ${input.urlMatch ?? "(any)"}`);
+      // Only method + URL are taken from the HAR; its headers/cookies/body are never sent.
+      const r = await replayRequest(cfg, { method: entry.request.method, url: entry.request.url }, { resolver: this.deps.resolver, env: this.deps.env });
+      // Everything written for this run is redacted with the account value too (its env name may not look secret).
+      const env = this.deps.env ?? process.env;
+      const red = this.redactor.with([...r.sentSecrets, cfg.auth ? env[cfg.auth.valueEnv] : undefined]);
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.har`;
+      const out = { log: { version: "1.2", creator: { name: "walkthrough-replay", version: "1" }, entries: [{
+        startedDateTime: this.ts(), request: { method: r.method, url: r.url, headers: [], cookies: [], queryString: [] },
+        response: { status: r.status, headers: Object.entries(r.headers).map(([name, value]) => ({ name, value })), cookies: [], content: { mimeType: r.headers["content-type"] ?? "", text: r.body } },
+        _hops: r.hops,
+      }] } };
+      writeFileSync(join(this.dir(id), rel), redactHar(JSON.stringify(out), red));
+      const sha = sha256File(join(this.dir(id), rel));
+      const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+        ts: this.ts(), walkthroughId: id, type: "replay", checkId: input.checkId, fromEvidenceId: src.id,
+        method: r.method, url: red.text(r.url), hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })), status: r.status,
+        outputSha256: sha, evidenceId: evId, executedBy: "core",
+      });
+      w.commandLogHead = { seq: log.seq, hash: log.hash };
+      const ev: Evidence = { id: evId, type: "har", kind: "har", path: rel, sha256: sha, createdAt: this.ts(), checkId: input.checkId, executedBy: "core",
+        source: red.text(`replay:${r.method} ${r.url} (from ${src.id})`) };
+      w.evidence.push(ev);
+      this.save(w);
+      return ev;
+    });
+  }
+
+  /**
+   * method: ui fallback when the host agent has no computer use: walkthrough loads the page itself (Playwright) and
+   * stores screenshot + HAR + DOM text as core-executed evidence. Throws if the capturer has no page support.
+   */
+  capturePage(id: string, input: { url: string; checkId: string }): Promise<Evidence[]> {
+    return this.withLock(id, async () => {
+      if (!this.deps.capturer.page) throw new Error("page capture is not available (no Playwright capturer)");
+      const cfg = this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("capture_page needs replay.allowHosts (same policy as replay)");
+      const w = this.load(id);
+      if (!(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
+      // Pre-check gives a clear error before any browser starts; every navigation hop is re-checked by the guard.
+      await checkHop(cfg, new URL(input.url), this.deps.resolver);
+      const p = await this.deps.capturer.page(input.url, { fetch: (u) => guardedGet(cfg, u, { resolver: this.deps.resolver }) });
+      const src = this.redactor.text(`playwright:${input.url}`);
+      const out: Evidence[] = [];
+      const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
+        const id2 = `ev-${w.evidence.length + 1}`, rel = `evidence/${id2}.${ext}`;
+        writeFileSync(join(this.dir(id), rel), data);
+        const ev: Evidence = { id: id2, type, kind, path: rel, source: src, executedBy: "core", checkId: input.checkId, sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts() };
+        w.evidence.push(ev); out.push(ev);
+      };
+      add("screenshot", "screenshot", "png", p.screenshot);
+      add("har", "har", "har", redactHar(p.har, this.redactor));
+      add("response", "http", "txt", this.redactor.text(p.text));
+      const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+        ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
+        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, this.redactor) })),
+        subresources: p.subresources.slice(0, 200).map((u) => { const [m, ...r] = u.split(" "); return `${m} ${redactUrl(r.join(" "), this.redactor)}`; }),
+        evidenceIds: out.map((e) => e.id), executedBy: "core",
+      });
+      w.commandLogHead = { seq: log.seq, hash: log.hash };
+      this.save(w);
+      return out;
     });
   }
 
@@ -408,7 +519,7 @@ export class WalkthroughCore {
         status = "fail";
         reasons = failing.map((x) => `${x.ev.id} (${x.ev.executedBy === "agent" ? "reported by agent" : "executed by walkthrough"}): ${x.j.reasons.join("; ")}`);
       } else if (status === "pass") {
-        const coreOk = judged.length < 2 ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
+        const coreOk = judged.length < 2 || check.expect.type === "count" ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
         if (!coreOk) {
           status = "pass_needs_review";
           reasons = [...j.reasons, "no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review"];

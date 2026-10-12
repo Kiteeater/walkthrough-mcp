@@ -180,6 +180,83 @@ truncated entries.
   reachable. Tracking issue: [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8).
 - The allowlist is only as safe as the flags it lists; review additions to `args` like code.
 
+## UI evidence (screenshots, HAR) and replay
+
+The host agent drives the page itself (computer use / Playwright MCP) and hands over what it got with
+`capture_evidence(type=submit, kind=screenshot|har)`; DOM text goes in as `kind=http`. All of it is **agent-reported**.
+
+- **Screenshots are never judged.** They are for human audit only: the audit view shows them next to the network
+  evidence. A check backed only by a screenshot is `inconclusive`, whatever the expectation.
+- **`expect.type: "ui"`** judges network or text: `{"har": {"urlMatch": "/api/orders$", "status": [200, 299], "bodyMatch?": "...", "method?": "GET"}}`
+  reads HAR entries; `{"text": {"contains": "..."}}` reads DOM text. Exactly one of the two. Agent-supplied regexes
+  (`urlMatch`, `bodyMatch`, `replay_request.url_match`) get a ReDoS guard: ≤ 200 chars, no backreferences, no nested
+  or alternation quantifiers like `(a+)+` / `(a|aa)*`; matched against at most 2 KB of URL / 64 KB of body. Other
+  expect patterns are capped at 500 chars.
+- **HAR redaction** before anything is stored: header values are masked when the header NAME matches a credential
+  pattern (`authorization`, `cookie`, `token`, `api-key`, `secret`, `session`, `auth`, `csrf`, `signature`, `jwt`… so
+  `X-Access-Token`, `X-Goog-Api-Key`, `X-Session-Id`, `Set-Cookie` are covered) and all cookie values are masked;
+  query/form params are masked when the whole name or its last `-`/`_`/`.` segment is a credential word (`token`,
+  `access_token`, `key`, `api_key`, `secret`, `sig`, `signature`, `password`, `session`, `sid`, `jwt`, `ticket`, `code`…;
+  `barcode`, `zipcode`, `monkey` are kept); request and response bodies (and
+  every other string) go through the generic secret patterns plus env-secret redaction.
+- **HAR/screenshot by `path`**: the file must resolve (realpath, so symlinks are followed) to a regular file inside
+  `.walkthrough/`; HAR ≤ 5 MB, screenshot ≤ 10 MB. Content submitted inline has the same caps.
+- **Provenance**: agent-reported HAR/screenshots alone give at most `pass_needs_review`, same as other imports.
+- **No computer use on the host?** `capture_page(check_id, url)` makes walkthrough load the page with Playwright and
+  store screenshot + HAR + DOM text as core-executed evidence (needs `npx playwright install chromium`; CI e2e has it).
+  It uses the **same policy as replay** (needs `replay.allowHosts`): the URL is pre-checked before a browser starts,
+  and every main-frame navigation, including each redirect hop, is intercepted (`route`) and fetched by walkthrough's
+  own fetcher (allowlist + IP rules, DNS resolved once, connection pinned to that IP), then handed to Chromium. So
+  the main document can't be redirected or DNS-rebound to a forbidden address. Navigations and sub-resources are
+  logged in the `capture_page` entry of `commands.jsonl`.
+  **Known gap:** sub-resources (scripts, images, XHR/fetch), iframe navigations, popups opened with `window.open`
+  (their main frame is a different page) and WebSockets (which don't go through `route` at all) are loaded by Chromium
+  itself with its own DNS: they are logged where visible, **not blocked**, and not pinned. `capture_page` sends no
+  test-account credentials. A page on an allowlisted host can make the browser request
+  internal addresses. Tracked in [#11](https://github.com/Kiteeater/walkthrough-mcp/issues/11); until then use
+  `capture_page` only against your own service inside the sandbox.
+- **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
+  `?code=…` (e.g. a product or error code) shows up as `[REDACTED]`; judge on the status/body instead.
+
+### replay_request (core-executed)
+
+`replay_request(check_id, evidence_id, url_match?, method?)` takes **one** request from a HAR item and walkthrough
+sends it itself; the result is stored as a one-entry HAR (`executedBy: core`) and appended to the hash-chained
+`commands.jsonl`. So a UI finding can be confirmed by evidence we executed, and judged as a normal pass/fail.
+
+Configure it in `walkthrough.config.json` (no `replay` block → replay is disabled):
+
+```json
+{ "replay": { "allowHosts": ["orders.staging.example.com", "127.0.0.1:3300"], "allowCidrs": ["127.0.0.1/32"],
+              "auth": { "header": "Authorization", "valueEnv": "WALKTHROUGH_TEST_ACCOUNT_AUTH" } } }
+```
+
+- Only `GET` / `HEAD`. Only the method and URL come from the HAR; its cookies, `Authorization` and other headers and
+  body are never sent. If the target needs auth, the test-account value comes from the env var named in config
+  (`auth.valueEnv`). It is bound to origins (scheme://host:port): `auth.origins` if given, else only the origin of the
+  replayed URL. Headers are rebuilt per hop, so a redirect to another host, port or scheme (including https → http)
+  carries no account and no cookies; only an origin listed in `auth.origins` gets the account again.
+- The account value is added to the redactor for that run before anything is written (HAR, `commands.jsonl`, evidence
+  source, HTML), even when its env name doesn't look secret, so a server that echoes it back can't leak it.
+- Host must be in `allowHosts` (optionally `host:port`). Redirects are not followed automatically: each hop goes
+  through the allowlist and IP checks again (max 3).
+- IP policy, checked on the address actually connected to (DNS resolved once per hop, connection pinned to that IP and
+  the socket's remote address re-checked, so DNS rebinding can't swap it):
+  - cloud metadata (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`) is **always** denied, even if listed;
+  - private (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `fc00::/7`), link-local (`169.254/16`, `fe80::/10`),
+    loopback (`127/8`, `::1`), `0/8`, multicast (`224/4`, `ff00::/8`), reserved (`240/4`), benchmarking
+    (`198.18/15`), Teredo (`2001::/32`) and NAT64 local-use (`64:ff9b:1::/48`) are denied unless the CIDR is listed
+    in `allowCidrs`. The allowed private/loopback scope is exactly the configured CIDRs; loopback exceptions must be
+    exact hosts (`127.0.0.1/32`, `::1/128`), wider loopback ranges are ignored;
+  - IPv6 forms that embed an IPv4 address are judged by the IPv4 rules: IPv4-mapped `::ffff:0:0/96`
+    (`::ffff:127.0.0.1`, `::ffff:a9fe:a9fe`), IPv4-compatible `::/96` (`::127.0.0.1`), NAT64 `64:ff9b::/96`
+    (`64:ff9b::a9fe:a9fe`) and 6to4 `2002::/16` (`2002:a9fe:a9fe::1`). To allow one, list the IPv4 form.
+- The local demo lists `127.0.0.1/32` explicitly; nothing is reachable on loopback by default.
+
+Demo (`node examples/ui-demo/run.mjs`, part of `examples/run-e2e.sh`): the orders page calls `/api/orders` and shows
+"Failed to load orders"; the agent's screenshot shows the banner, its HAR shows the 500, walkthrough replays
+`GET /api/orders` → 500, and the check is a normal `fail`. The finding shows the screenshot and the replay side by side.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:

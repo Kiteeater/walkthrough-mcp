@@ -51,5 +51,11 @@ set +x
 if grep -rqF "$LANGFUSE_SECRET_KEY" "$tdir"; then echo "langfuse secret leaked into output" >&2; exit 1; fi
 set -x
 
-mkdir -p e2e-output && cp -r "$dir" "$tdir" e2e-output/
+# PR #10: UI evidence — agent screenshot + HAR, core judges from HAR and replays GET /api/orders (500) itself.
+uresult="$(node examples/ui-demo/run.mjs . | tail -1)"
+uid="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$uresult")"
+udir=".walkthrough/$uid"
+node examples/assert-ui-finding.mjs "$udir"
+
+mkdir -p e2e-output && cp -r "$dir" "$tdir" "$udir" e2e-output/
 echo "E2E OK: $html"

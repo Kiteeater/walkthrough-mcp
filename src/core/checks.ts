@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Expect, Verdict } from "./types.js";
+import { judgeUi, uiExpectProblem, type UiExpect } from "./har.js";
 
 /** Default alert patterns an agent can watch for in logs. */
 export const DEFAULT_ALERTS = ["Error:", "Unhandled", "FATAL"];
@@ -9,7 +10,7 @@ const num = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 function compiles(p: unknown): p is string {
-  if (typeof p !== "string" || !p) return false;
+  if (typeof p !== "string" || !p || p.length > 500) return false; // length cap on agent-supplied patterns
   try { new RegExp(p, "m"); return true; } catch { return false; }
 }
 
@@ -30,6 +31,8 @@ export function expectProblem(e: Expect | undefined): string | undefined {
     case "threshold":
       if (!obj(v) || !compiles(v.pattern) || ![v.min, v.max].some(num)) return "threshold value must be {pattern, min|max}";
       return new RegExp(v.pattern as string).source.includes("(") ? undefined : "threshold pattern needs a capture group";
+    case "ui":
+      return uiExpectProblem(v);
     default:
       return `unknown expect type ${JSON.stringify((e as { type?: unknown }).type)}`;
   }
@@ -54,6 +57,7 @@ export function evaluateExpect(e: Expect, texts: string[]): Judgement {
   const all = texts.join("\n");
   type Spec = { pattern?: string; eq?: number; min?: number; max?: number };
   const v = e.value as Spec & number & string & [number, number];
+  if (e.type === "ui") return judgeUi(e.value as UiExpect, texts);
   switch (e.type) {
     case "status": {
       const got = texts.map(readStatus).find((x) => x !== undefined);

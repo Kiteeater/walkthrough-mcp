@@ -1,5 +1,5 @@
 /** `response` = HTTP response / command output / MCP result submitted for a check. */
-export type EvidenceType = "screenshot" | "logs" | "response";
+export type EvidenceType = "screenshot" | "logs" | "response" | "har";
 /** Design-doc evidence kinds for capture_evidence. */
 export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log";
 
@@ -67,8 +67,10 @@ export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
  * - regex: `value` = pattern that must match
  * - threshold: `value` = { pattern (one capture group with a number), min?, max? }
  * - absent: `value` = pattern that must NOT match
+ * - ui: `value` = {har: {urlMatch, status, bodyMatch?, method?}} (judged from HAR network entries) or {text: {contains}} (DOM text).
+ *   Screenshots are never judged.
  */
-export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent";
+export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui";
 export interface Expect { type: ExpectType; value: unknown }
 
 export interface Check {
