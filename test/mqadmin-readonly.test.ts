@@ -57,6 +57,30 @@ describe("mqadmin read-only preset: argv allowlist", () => {
     expect(cliArgv(mq, ["topicStatus", "-n", NS, "-t", "orders"])).toEqual(["topicStatus", "-n", NS, "-t", "orders"]);
   });
 
+  it("queryMsgById is rejected (#26: direct connect to the IP:port in the msgId) with a hint to the name-server-routed queries", () => {
+    for (const argv of [["queryMsgById", "-t", "orders", "-i", ID_A], ["queryMsgById", "-n", NS, "-t", "orders", "-i", ID_A]]) {
+      expect(() => cliArgv(mq, argv)).toThrow(CliRejectedError);
+      expect(() => cliArgv(mq, argv)).toThrow(/queryMsgById is not allowed: mqadmin connects to the broker IP:port decoded from the msgId.*Use queryMsgByUniqueKey -t <topic> -i <uniqueKey> or queryMsgByKey -t <topic> -k <key>/);
+    }
+    expect(preset.allow!.some((p) => p[0] === "queryMsgById")).toBe(false);
+    expect(preset.messageBody!.subcommands).toEqual(["queryMsgByUniqueKey"]);
+  });
+
+  it("queryMsgByUniqueKey -g / -d (consumeMessageDirectly) are not allowlisted and are rejected in space and = forms", () => {
+    expect(preset.args!.queryMsgByUniqueKey).not.toContain("-g");
+    expect(preset.args!.queryMsgByUniqueKey).not.toContain("-d");
+    const base = ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A];
+    for (const extra of [["-g", "g1"], ["-g=g1"], ["-d", "client-1"], ["-d=client-1"], ["-g", "g1", "-d", "client-1"], ["-g=g1", "-d=client-1"]]) {
+      expect(() => cliArgv(mq, [...base, ...extra])).toThrow(/argument not in allowlist: "-[gd]"/);
+    }
+  });
+
+  it("brokerStatus -b (direct broker address, #25) is rejected; -c (cluster via name server) still works", () => {
+    expect(() => cliArgv(mq, ["brokerStatus", "-b", "10.0.0.5:10911"])).toThrow(/argument not in allowlist: "-b"/);
+    expect(() => cliArgv(mq, ["brokerStatus", "-b=169.254.169.254:80"])).toThrow(/argument not in allowlist: "-b"/);
+    expect(cliArgv(mq, ["brokerStatus", "-c", "DefaultCluster"])).toEqual(["brokerStatus", "-c", "DefaultCluster", "-n", NS]);
+  });
+
   it("consumerStatus -b (direct broker address) is rejected", () => {
     expect(() => cliArgv(mq, ["consumerStatus", "-g", "g1", "-b", "169.254.169.254:80"])).toThrow(/argument not in allowlist/);
     expect(() => cliArgv(mq, ["consumerStatus", "-g", "g1", "-b=10.0.0.5:10911"])).toThrow(/argument not in allowlist/);
@@ -74,10 +98,8 @@ describe("mqadmin read-only preset: argv allowlist", () => {
 
   it("allowlists match RocketMQ 5.5.1 tools options; side-effecting options are rejected", () => {
     expect(cliArgv(mq, ["queryMsgByKey", "-t", "orders", "-k", "o1", "-b", "1700000000000", "-m", "32"])).toBeTruthy();
-    expect(cliArgv(mq, ["queryMsgById", "-t", "orders", "-i", ID_A, "-c", "c1"])).toBeTruthy();
+    expect(cliArgv(mq, ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A, "-c", "c1"])).toBeTruthy();
     for (const argv of [
-      ["queryMsgById", "-t", "orders", "-i", ID_A, "-s", "true"],          // resend
-      ["queryMsgById", "-t", "orders", "-i", ID_A, "-g", "g1", "-d", "c1"], // consumeMessageDirectly
       ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A, "-g", "g1", "-d", "c1"],
       ["clusterList", "-i", "1"],                                           // interval: never exits
       ["queryMsgByKey", "-n", NS, "-t", "orders", "-k", "o1", "-x", "1"],
@@ -93,6 +115,8 @@ describe("mqadmin via run_cli with a mock binary", () => {
   it("rejected calls never spawn", async () => {
     const { core, calls, start } = setup();
     const id = await start();
+    await rejects(core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_A] }), /queryMsgById is not allowed/);
+    await rejects(core.runCli(id, { connector: "mqadmin", argv: ["brokerStatus", "-b", "10.0.0.5:10911"] }), /not in allowlist/);
     await rejects(core.runCli(id, { connector: "mqadmin", argv: ["deleteTopic", "-t", "orders"] }), /not in whitelist/);
     await rejects(core.runCli(id, { connector: "mqadmin", argv: ["topicStatus", "-t", "orders", "-b", "b1"] }), /not in allowlist/);
     await rejects(core.runCli(id, { connector: "mqadmin", argv: ["topicStatus", "-n", "attacker:9876", "-t", "orders"] }), /name server/);
@@ -116,15 +140,14 @@ describe("mqadmin via run_cli with a mock binary", () => {
     } finally { delete process.env.NAMESRV_ADDR; }
   });
 
-  it("queryMsgById: body file is read, redacted, truncated, stored as evidence and deleted; secret is nowhere in run files", async () => {
+  it("queryMsgByUniqueKey: body file is read, redacted, truncated, stored as evidence and deleted; secret is nowhere in run files", async () => {
     const cap = preset.messageBody!.maxChars;
     const body = `auth=${TOKEN}\n\n${"x".repeat(cap * 3)}TAIL-MARKER`;
     const s = setup({ body });
     const id = await s.start();
-    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_A] });
+    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A] });
     expect(existsSync(join(s.dir, ID_A))).toBe(false);
     const text = s.ev(id, r.evidence.id);
-    expect(text).toContain(`OffsetID:            ${ID_A}`);
     expect(text).toMatch(/^Message Body Path: +\S+ \[read by core, original deleted\]$/m);
     const line = text.split("\n").find((l) => l.startsWith("Message Body: "))!;
     expect(line).toContain("auth=[REDACTED]\\n\\nxxx");
@@ -134,15 +157,6 @@ describe("mqadmin via run_cli with a mock binary", () => {
     expect(text).toContain("WARN: No Consumer");
     expect(s.runFiles(id)).not.toContain(TOKEN);
     expect(r.log.outputSha256).toBe(r.evidence.sha256);
-  });
-
-  it("queryMsgById: file named after the unique key (≠ requested offset id) is matched via the OffsetID line", async () => {
-    const s = setup({ body: `hello ${TOKEN}`, fileId: UNIQ });
-    const id = await s.start();
-    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_A] });
-    expect(s.ev(id, r.evidence.id)).toMatch(/^Message Body: +hello \[REDACTED\]$/m);
-    expect(existsSync(join(s.dir, UNIQ))).toBe(false);
-    expect(s.runFiles(id)).not.toContain(TOKEN);
   });
 
   it("queryMsgByUniqueKey: same treatment", async () => {
@@ -158,7 +172,7 @@ describe("mqadmin via run_cli with a mock binary", () => {
     const s = setup();
     const id = await s.start();
     for (const bad of ["../../etc/passwd", "..%2f..%2fetc", `${ID_A}/../x`, `${ID_A},../../x`, "abc"]) {
-      await rejects(s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", bad] }), /hex message id/);
+      await rejects(s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgByUniqueKey", "-t", "orders", "-i", bad] }), /hex message id/);
     }
     expect(s.calls()).toEqual([]);
   });
@@ -184,7 +198,7 @@ describe("mqadmin via run_cli with a mock binary", () => {
     writeFileSync(target, `victim ${TOKEN}`);
     symlinkSync(target, join(s.dir, ID_A));
     const id = await s.start();
-    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_A] });
+    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A] });
     expect(s.ev(id, r.evidence.id)).toContain("[not read: not a regular file]");
     expect(lstatSync(join(s.dir, ID_A)).isSymbolicLink()).toBe(true);
     expect(readFileSync(target, "utf8")).toBe(`victim ${TOKEN}`);
@@ -195,8 +209,8 @@ describe("mqadmin via run_cli with a mock binary", () => {
     const s = setup({ waitFiles: 2, listAll: true, body: "shared-body" });
     const [w1, w2] = [await s.start(), await s.start()];
     const [r1, r2] = await Promise.all([
-      s.core.runCli(w1, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_A] }),
-      s.core.runCli(w2, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", ID_B] }),
+      s.core.runCli(w1, { connector: "mqadmin", argv: ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_A] }),
+      s.core.runCli(w2, { connector: "mqadmin", argv: ["queryMsgByUniqueKey", "-t", "orders", "-i", ID_B] }),
     ]);
     const [t1, t2] = [s.ev(w1, r1.evidence.id), s.ev(w2, r2.evidence.id)];
     expect(t1).toMatch(new RegExp(`${ID_A} \\[read by core, original deleted\\]`));
@@ -215,5 +229,23 @@ describe("mock mqadmin consumerProgress (5.5.1 format)", () => {
     const text = s.ev(id, r.evidence.id);
     expect(text).toMatch(/^orders +broker-a +0 +10 +7 +3 +0 +\S/m);
     expect(text).toMatch(/^Consume Diff Total: 3$/m);
+  });
+});
+
+describe("#27: the blank-line body capper is gone; body files are capped as a whole", () => {
+  it("capMessageBodies is no longer exported", async () => {
+    const mod = await import("../src/core/index.js");
+    expect("capMessageBodies" in mod).toBe(false);
+  });
+  it("a body with blank lines is still cut to the cap in full (no text after the first blank line escapes)", () => {
+    const d = mkdtempSync(join(tmpdir(), "wt-mqc-"));
+    const dir = join(d, "msgbodys"); mkdirSync(dir);
+    writeFileSync(join(dir, ID_A), `head\n\n${"y".repeat(5000)}\n\nTAIL`);
+    const out = collectMessageBodies(`Message Body Path:   ${join(dir, ID_A)}\n\nWARN: No Consumer`, { dir, maxChars: 16, sinceMs: Date.now(), ids: new Set([ID_A]) }, (x) => x);
+    const line = out.split("\n").find((l) => l.startsWith("Message Body: "))!;
+    expect(line.replace(/^Message Body: +/, "")).toMatch(/^head\\n\\ny{10}…\[truncated \d+ chars\]$/);
+    expect(out).not.toContain("TAIL");
+    expect(out.length).toBeLessThan(300);
+    expect(out.endsWith("WARN: No Consumer")).toBe(true);
   });
 });

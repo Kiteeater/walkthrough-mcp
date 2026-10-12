@@ -44,12 +44,14 @@ export interface ConnectorConfig {
    */
   namesrvs?: string[];
   /**
-   * Message bodies. mqadmin 5.5.1 `queryMsgById` / `queryMsgByUniqueKey` do not print the body; they write it raw to
+   * Message bodies. mqadmin 5.5.1 `queryMsgByUniqueKey` does not print the body; it writes it raw to
    * `<dir>/<msgId>` (UniqueKey: `<msgId>_<n>` for n>0) and print `Message Body Path: <file>`. The core reads each such
    * file (only directly under `dir`, hex-id name, regular file, written during this call), redacts it, cuts it to
    * `maxChars`, puts it in the evidence, and deletes the original. Default dir: /tmp/rocketmq/msgbodys (hardcoded upstream).
    */
   messageBody?: { subcommands: string[]; maxChars: number; dir?: string };
+  /** Subcommands rejected with a specific explanation (why, and what to use instead) rather than the generic message. */
+  deniedHints?: Record<string, string>;
   /** Append `--profile <profile>` to argv (default true). False for CLIs without a profile flag; the name is still logged. */
   appendProfile?: boolean;
   /** Host env var names passed to the CLI in addition to the sandbox defaults. */
@@ -85,7 +87,7 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
     // bodyFormat, queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS). Write/admin subcommands (updateTopic, deleteTopic, sendMessage,
     // resetOffsetByTime, updateSubGroup, wipeWritePerm, …) are simply absent and therefore rejected.
     allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["topicClusterList"], ["consumerProgress"], ["consumerStatus"],
-      ["queryMsgById"], ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
+      ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
     args: {
       clusterList: ["-n", "-c"],
       topicList: ["-n"],
@@ -94,14 +96,19 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
       topicClusterList: ["-n", "-t"],
       consumerProgress: ["-n", "-g", "-t", "-s", "-c"],
       consumerStatus: ["-n", "-g", "-i"], // no -b: it connects straight to the given broker, bypassing the fixed name server
-      brokerStatus: ["-n", "-b", "-c"],
-      queryMsgById: ["-n", "-t", "-i", "-c"],
+      brokerStatus: ["-n", "-c"], // no -b: BrokerStatusSubCommand L73-77 connects straight to the given address (#25)
       queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"],
       queryMsgByUniqueKey: ["-n", "-i", "-t", "-c", "-s"],
     },
     namesrvs: [], // set in config: the fixed name server address(es) the agent may query
     // queryMsgByKey prints only a msgId/queue/offset table (QueryMsgByKeySubCommand L134-145) and writes no body file.
-    messageBody: { subcommands: ["queryMsgById", "queryMsgByUniqueKey"], maxChars: 2048, dir: "/tmp/rocketmq/msgbodys" },
+    // queryMsgById is NOT allowed (#26): MQAdminImpl.viewMessage L267-277 decodes the broker IP:port from the offset
+    // msgId and connects there directly, bypassing the fixed name server. queryMsgByUniqueKey / queryMsgByKey resolve
+    // brokers through the name server's topic route (MQAdminImpl.queryMessage L321-353) and stay allowed.
+    deniedHints: {
+      queryMsgById: "queryMsgById is not allowed: mqadmin connects to the broker IP:port decoded from the msgId, bypassing the fixed name server. Use queryMsgByUniqueKey -t <topic> -i <uniqueKey> or queryMsgByKey -t <topic> -k <key> instead (both resolve brokers via the name server).",
+    },
+    messageBody: { subcommands: ["queryMsgByUniqueKey"], maxChars: 2048, dir: "/tmp/rocketmq/msgbodys" },
     appendProfile: false,
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
@@ -170,6 +177,7 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     if ([...CRED_FLAGS, ...(c.denyArgs ?? [])].includes(flag)) throw new CliRejectedError(`flag not allowed: ${flag}`);
   }
   const prefix = (c.allow ?? []).filter((p) => p.length <= argv.length && p.every((x, i) => argv[i] === x)).sort((a, b) => b.length - a.length)[0];
+  if (!prefix && c.deniedHints?.[argv[0]]) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${c.deniedHints[argv[0]]}`);
   if (!prefix) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
   const allowed = c.args?.[prefix.join(" ")] ?? [];
   const rest = argv.slice(prefix.length);
@@ -252,16 +260,6 @@ export function verifyCommandLog(file: string, head?: { seq: number; hash: strin
 /** Env vars that would redirect or re-credential a cloud CLI (endpoint, region, keys). Never passed to run_cli children. */
 export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_|NAMESRV_ADDR$|ROCKETMQ_)/i;
 
-/**
- * Cap message bodies in query output: each `Message Body:` value (up to the next blank line) is passed through
- * `redact` FIRST (so a secret is never cut in half and partially kept), then cut to `maxChars`.
- */
-export function capMessageBodies(output: string, maxChars: number, redact: (s: string) => string): string {
-  return output.replace(/(Message Body:[ \t]*)([\s\S]*?)(?=\r?\n\s*\r?\n|$)/g, (_m, head: string, body: string) => {
-    const r = redact(body);
-    return r.length <= maxChars ? head + r : `${head}${r.slice(0, maxChars)}…[truncated ${r.length - maxChars} chars]`;
-  });
-}
 
 export const MSG_BODY_DIR = "/tmp/rocketmq/msgbodys";
 /** A message id as accepted for `-i` and as a body file name: hex only, so no `/`, `..` or other path syntax. */
@@ -280,25 +278,17 @@ export function requestedMsgIds(argv: string[]): Set<string> {
 }
 
 /**
- * Replace each `Message Body Path: <file>` line (format `%-20s %s%n`, QueryMsgByIdSubCommand L142-145 /
+ * Replace each `Message Body Path: <file>` line (format `%-20s %s%n`,
  * QueryMsgByUniqueKeySubCommand L102) with the redacted, capped body read from that file, then delete the file.
  * A file is read only if ALL hold: it sits directly in `dir`; its name is `<hexId>` or `<hexId>_<n>`; it belongs to
- * this query (hexId is one of `ids`; or the block's `OffsetID:` is one of `ids` and hexId equals that block's
- * `UNIQ_KEY` property: queryMsgById names the file after msg.getMsgId(), i.e. the unique key, which can differ
- * from the offset id that was asked for); lstat says regular file (not a symlink),
+ * this query (hexId is one of the call's `-i` ids); lstat says regular file (not a symlink),
  * written during this call; and the fd opened with O_NOFOLLOW has the same dev/inode. It is unlinked only if a
  * second lstat still shows that dev/inode. Anything else is left untouched. Newlines in the body are escaped.
  */
 export function collectMessageBodies(output: string, o: { dir?: string; maxChars: number; sinceMs: number; ids: Set<string> }, redact: (s: string) => string): string {
   const dir = resolvePath(o.dir ?? MSG_BODY_DIR);
   const label = "Message Body:".padEnd(20);
-  let offsetId = "";
-  let uniqKey = "";
   return output.split("\n").map((line) => {
-    const off = /^OffsetID:[ \t]+([0-9A-Fa-f]+)\s*$/.exec(line);
-    if (off) { offsetId = off[1].toUpperCase(); uniqKey = ""; return line; }
-    const props = /^Properties:[ \t].*\bUNIQ_KEY=([0-9A-Fa-f]+)/.exec(line);
-    if (props) { uniqKey = props[1].toUpperCase(); return line; }
     const m = /^Message Body Path:[ \t]+(\S[^\r]*?)[ \t]*\r?$/.exec(line);
     if (!m) return line;
     const raw = m[1];
@@ -307,9 +297,7 @@ export function collectMessageBodies(output: string, o: { dir?: string; maxChars
     const skip = (why: string) => `${line}\n${label} [not read: ${why}]`;
     if (raw.includes("..") || dirname(p) !== dir || !name) return skip("unexpected path");
     const fileId = name[1].toUpperCase();
-    const ours = o.ids.has(fileId) || (o.ids.has(offsetId) && fileId === uniqKey);
-    offsetId = ""; uniqKey = ""; // one body path per printed message block
-    if (!ours) return skip("not this query's message id");
+    if (!o.ids.has(fileId)) return skip("not this query's message id");
     let st;
     try { st = lstatSync(p); } catch { return skip("file missing"); }
     if (st.isSymbolicLink() || !st.isFile()) return skip("not a regular file");
