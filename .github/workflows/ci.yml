@@ -66,7 +66,7 @@ jobs:
       - run: npm run demo | tee demo.log
       - name: Assert the audit page (verdict sentence, chain, sign-off on the first screen)
         run: |
-          html="$(sed -n 's/^audit page: //p' demo.log)"
+          html="$(sed -n 's/^完整报告（浏览器打开）：//p' demo.log)"
           node examples/assert-trace-chain.mjs "${html%index.html}walkthrough.json"
           grep -q '发现 1 个问题' demo.log
           mkdir -p demo-output && cp "$html" demo-output/

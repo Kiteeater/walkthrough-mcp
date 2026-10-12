@@ -79,7 +79,7 @@ describe("agent-reported evidence is at most pass_needs_review", () => {
     const ev = await core.importMcpResult(id, { checkId: "d", connector: "mongodb", tool: "find", result: [{ _id: "tr-42", items: [1] }], links: [{ evidenceId: http.id, key: "tr-42" }] });
     const r = await core.evaluateCheck(id, { checkId: "d", evidenceIds: [ev.id] });
     expect(r.status).toBe("pass_needs_review");
-    expect(r.reasons.join()).toMatch(/agent-reported only/);
+    expect(r.reasons.join()).toMatch(/仅 agent 自报/);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     expect(html).toContain('data-needs-review="1"');
     expect(html).toMatch(/<tr class="pass_needs_review"><td>d /);
@@ -158,7 +158,7 @@ describe("judgment provenance rule", () => {
     const { core, id, coreEv, agentEv } = await two("c", "ok", "web | ok", "nothing here");
     const r = await core.evaluateCheck(id, { checkId: "c", evidenceIds: [coreEv.id, agentEv.id] });
     expect(r.status).toBe("fail");
-    expect(r.reasons.join()).toMatch(new RegExp(`${agentEv.id} \\(reported by agent\\)`));
+    expect(r.reasons.join()).toMatch(new RegExp(`${agentEv.id} \\(agent 自报\\)`));
   });
   it("agent-reported passes + core-executed fails → fail", async () => {
     const { core, id, coreEv, agentEv } = await two("c", "ok", "web | nope", "ok");

@@ -77,7 +77,7 @@ describe("demo agent executes, core judges, finding points at the real bug (plan
     const { w, results } = await runReal("a");
     expect(statuses(results)).toEqual(["pass_needs_review", "fail", "pass_needs_review"]) // http-only checks: agent-reported evidence (PR #7);
     expect(results.find((r) => r.checkId === "chk-2-logs")?.status).toBe("fail");
-    expect(results.find((r) => r.checkId === "chk-2")?.reasons[0]).toMatch(/status 500/);
+    expect(results.find((r) => r.checkId === "chk-2")?.reasons[0]).toMatch(/状态码 500/);
     expect(w.findings).toHaveLength(1);
     expect(w.findings![0]).toMatchObject({ severity: "high", kind: "observed" });
     expect(rootCauseOf(w)).toMatchObject({ checkId: "chk-2", loc: "svc/lib.js:2" });

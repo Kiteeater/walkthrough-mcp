@@ -3,6 +3,30 @@
 Don't review the diff — **run the change and answer "what does it actually do?" with evidence.**
 Built on WeZZard's walkthrough idea: audit the execution result, not the code.
 
+## 一条命令跑起来
+
+clone 之后，在仓库根目录执行（需要 Node 20+，不需要 Docker、不联网连任何真实服务，端口随机分配）：
+
+```bash
+npm ci && npm run demo
+```
+
+大约十几秒后会打印类似：
+
+```
+walkthrough 演示：正在启动进程内 MongoDB、模拟 Langfuse、模拟 Prometheus 和订单服务（端口随机分配）…
+
+发现 1 个问题：/api/orders/ord-3/total 返回 500，根因在 pricing.js:3
+4 项检查失败，归为 1 个问题
+检查 7 项，问题 1 个，walkthrough wt-<时间戳>-<随机串>
+完整报告（浏览器打开）：.walkthrough/wt-<时间戳>-<随机串>/index.html
+```
+
+用浏览器打开最后一行的 `index.html` 就是完整审计页（首屏如下；提交在仓库里的同一次运行见
+[`examples/output-trace/`](examples/output-trace/)）。
+
+![审计页首屏](docs/audit-page.png)
+
 ## Audit-only workflow
 
 Humans only audit the **final result**: which problems the agent found, how it reported them, and the root-cause

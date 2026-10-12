@@ -274,7 +274,9 @@ export class WalkthroughCore {
       const key = `${id}\0${input.service}`;
       const prev = this.logMarks.get(key) ?? "";
       this.logMarks.set(key, raw);
-      writeFileSync(abs(ev.path), this.redactor.text(input.delta && raw.startsWith(prev) ? raw.slice(prev.length) : raw));
+      // Stack traces carry absolute host paths; under the walkthrough root they are written repo-relative.
+      const rootPrefix = resolve(this.deps.root) + sep;
+      writeFileSync(abs(ev.path), this.redactor.text(input.delta && raw.startsWith(prev) ? raw.slice(prev.length) : raw).split(rootPrefix).join(""));
     } else {
       if (!KINDS.includes(input.kind)) throw new Error(`invalid evidence kind: ${input.kind}`);
       if (!input.source?.tool) throw new Error("source.tool is required");
@@ -632,8 +634,8 @@ export class WalkthroughCore {
     const errors = s.polls.filter((p) => p.error).length;
     const fired = [...firing.values()].map((x) => ({ ...x.alert, firstSeenAt: x.firstSeenAt }));
     const note = outcome === "interrupted"
-      ? `interrupted: poller stopped after ${s.polls.length} poll(s); data after ${end} is missing (NOT a quiet window)${fired.length ? `; ${fired.length} firing alert(s) seen before that` : ""}`
-      : fired.length ? `${fired.length} firing alert(s) in window` : errors === s.polls.length && s.polls.length ? `no successful poll (${errors} error(s)); NOT a quiet window` : "no alerts in window";
+      ? `已中断（interrupted）：轮询 ${s.polls.length} 次后停止；${end} 之后的数据缺失（不代表窗口内无告警）${fired.length ? `；此前看到 ${fired.length} 条触发中的告警` : ""}`
+      : fired.length ? `窗口内 ${fired.length} 条告警触发` : errors === s.polls.length && s.polls.length ? `没有一次轮询成功（${errors} 次错误）；不代表窗口内无告警` : "窗口内无告警";
     const evId = `ev-${w.evidence.length + 1}`;
     const rel = `evidence/${evId}.json`;
     const doc = { format: ALERTS_EVIDENCE, watchId: s.id, endpoint, outcome, finalizedBy: reason, window: { start: s.start, end, deadline: s.deadline, requestedS: s.windowS, intervalS: s.intervalS },
@@ -901,12 +903,12 @@ export class WalkthroughCore {
       let reasons = j.reasons;
       if (failing.length) {
         status = "fail";
-        reasons = failing.map((x) => `${x.ev.id} (${x.ev.executedBy === "agent" ? "reported by agent" : "executed by walkthrough"}): ${x.j.reasons.join("; ")}`);
+        reasons = failing.map((x) => `${x.ev.id} (${x.ev.executedBy === "agent" ? "agent 自报" : "walkthrough 执行"}): ${x.j.reasons.join("; ")}`);
       } else if (status === "pass") {
         const coreOk = judged.length < 2 || check.expect.type === "count" ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
         if (!coreOk) {
           status = "pass_needs_review";
-          reasons = [...j.reasons, "no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review"];
+          reasons = [...j.reasons, "没有 walkthrough 执行的证据满足期望（仅 agent 自报）：需人工复核"];
         }
       }
       const result: CheckResult = { checkId: check.id, status, reasons, evidenceIds, at: this.ts() };

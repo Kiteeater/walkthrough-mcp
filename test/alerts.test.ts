@@ -118,7 +118,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     expect(r.watch.polls).toBe(4);
     expect(sleeps).toEqual([10000, 10000, 10000]);
     const doc = JSON.parse(readFileSync(join(core.dir(id), r.evidence.path), "utf8"));
-    expect(doc.note).toBe("no alerts in window");
+    expect(doc.note).toBe("窗口内无告警");
     expect(doc.window).toMatchObject({ start: "2026-10-12T20:00:00.000Z", end: "2026-10-12T20:00:30.000Z" });
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     expect(html).toContain(": 窗口内无告警</div>");
@@ -158,7 +158,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     const id = await planned(core);
     const rr = await core.watchAlerts(id, { windowS: 5, intervalS: 5 }); // poll errors are recorded, never a quiet window
     expect(rr.watch.errors?.[0]).toMatch(/only \/api\/v1\/alerts is allowed/);
-    expect(JSON.parse(readFileSync(join(core.dir(id), rr.evidence.path), "utf8")).note).toMatch(/no successful poll.*NOT a quiet window/);
+    expect(JSON.parse(readFileSync(join(core.dir(id), rr.evidence.path), "utf8")).note).toMatch(/没有一次轮询成功.*不代表窗口内无告警/);
     await expect(core.watchAlerts(id, { windowS: 5, intervalS: 5, matchers: [{ checkId: "orders", labels: { route: "~(a+)+" } }] })).rejects.toThrow(/ReDoS/);
     const w = core.startWalkthrough({ title: "t", sandbox: SB });
     await expect(core.planChecks(w.id, { goal: "g", checks: [{ ...orders, alertMatchers: [{}] }] })).rejects.toThrow(/matcher/);
@@ -232,7 +232,7 @@ describe("start_watch / collect_watch: background polling, no long lock", () => 
     const r = await core.collectWatch(s.id);
     expect(r.watch.outcome).toBe("interrupted");
     const doc = JSON.parse(readFileSync(join(core.dir(id), r.evidence.path), "utf8"));
-    expect(doc.note).toMatch(/^interrupted: poller stopped after 1 poll/);
+    expect(doc.note).toMatch(/^已中断（interrupted）：轮询 1 次后停止/);
     expect(doc.note).not.toMatch(/no alerts in window/);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     expect(html).toMatch(/class="alert-window interrupted" data-outcome="interrupted"/);
@@ -256,7 +256,7 @@ describe("start_watch / collect_watch: background polling, no long lock", () => 
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     const panel = html.slice(html.indexOf('class="signoff"'), html.indexOf("</section>", html.indexOf('class="signoff"')));
     expect(panel).toMatch(/class="auto-finalized" data-auto-finalized="2"/);
-    expect(panel).toMatch(new RegExp(`class="aw interrupted" data-outcome="interrupted">${dead.id} \\(<b>interrupted</b>`));
+    expect(panel).toMatch(new RegExp(`class="aw interrupted" data-outcome="interrupted">${dead.id} \\(<b>已中断（interrupted）</b>`));
     expect(core.verifyCommandLog(id).error).toBeUndefined();
   }, 15_000);
   it("watch ids are core-generated and strictly validated (no path traversal)", async () => {

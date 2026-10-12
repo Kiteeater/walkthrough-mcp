@@ -2,7 +2,7 @@
 // http_requests_total for the orders total route shows a 5xx spike (ratio 0.5 over 5m). No Grafana.
 import http from "node:http";
 
-export function startMockPrometheus(port, token, serviceUrl = "http://127.0.0.1:3200") {
+export function startMockPrometheus(port, token, serviceUrl) {
   const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x");
     const json = (code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };

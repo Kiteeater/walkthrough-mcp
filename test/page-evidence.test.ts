@@ -71,7 +71,7 @@ describe("page evidence: judging from HAR / DOM text", () => {
     const a = await harEv("ui-ok");
     const r = await core.evaluateCheck(id, { checkId: "ui-ok", evidenceIds: [a.id] });
     expect(r.status).toBe("fail");
-    expect(r.reasons.join()).toMatch(/→ 500, expected 200-299/);
+    expect(r.reasons.join()).toMatch(/→ 500，期望 200-299/);
     const b = await harEv("ui-500");
     expect((await core.evaluateCheck(id, { checkId: "ui-500", evidenceIds: [b.id] })).status).toBe("pass_needs_review");
   });

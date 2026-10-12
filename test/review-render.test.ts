@@ -26,7 +26,7 @@ describe("rendered review status", () => {
     expect(section(html, "claim-1")).toContain('class="review agree"');
     expect(section(html, "claim-2")).toContain("needs a runtime check");
     expect(section(html, "claim-2")).toContain('class="review flag"');
-    expect(section(html, "claim-3")).toContain("pending");
+    expect(section(html, "claim-3")).toContain("待复核");
   });
 
   it("summary counts are correct", async () => {

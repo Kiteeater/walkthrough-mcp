@@ -22,6 +22,9 @@ const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** Render a static HTML walkthrough: one section per question. Returns the HTML path. */
+const STATUS_ZH: Record<string, string> = { pass: "通过", fail: "失败", pass_needs_review: "需复核", inconclusive: "无结论" };
+const OUTCOME_ZH: Record<string, string> = { completed: "窗口已走完", stopped_early: "提前收取", interrupted: "已中断" };
+
 export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { timeZone?: string } = {}): string {
   const w = core.load(id);
   const tz = renderTimeZone(opts.timeZone);
@@ -33,28 +36,28 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
     return `<time datetime="${esc(d.toISOString())}" title="${esc(d.toISOString())} (UTC)">${esc(fmtTime(d, tz))}</time>`;
   };
   const local = w.sandbox.backend === "local";
-  const localBadge = local ? `<span class="badge local" title="local run, not isolated">本地运行、未隔离</span> ` : "";
+  const localBadge = local ? `<span class="badge local" title="本地运行，未隔离">本地运行、未隔离</span> ` : "";
   const count = (f: (c: (typeof w.claims)[number]) => boolean) => w.claims.filter(f).length;
   const summary = `<div class="summary" id="summary">
-<span>observed: <b data-count="observed">${count((c) => c.kind === "observed")}</b></span>
-<span>inferred: <b data-count="inferred">${count((c) => c.kind === "inferred")}</b></span>
-<span>agreed: <b data-count="agreed">${count((c) => c.review?.decision === "agree")}</b></span>
-<span>flagged: <b data-count="flagged">${count((c) => c.review?.decision === "flag")}</b></span>
+<span>直接观测：<b data-count="observed">${count((c) => c.kind === "observed")}</b></span>
+<span>推断：<b data-count="inferred">${count((c) => c.kind === "inferred")}</b></span>
+<span>已认可：<b data-count="agreed">${count((c) => c.review?.decision === "agree")}</b></span>
+<span>已标记：<b data-count="flagged">${count((c) => c.review?.decision === "flag")}</b></span>
 </div>`;
   const evidenceHtml = (ids: string[]) => ids.map((evId) => {
     const ev = w.evidence.find((e) => e.id === evId);
-    if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
+    if (!ev) return `<p class="missing">缺少证据 ${esc(evId)}</p>`;
     const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">agent 自报</span>' : '<span class="prov core">walkthrough 执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${t(ev.createdAt)}</div>`;
     const har = ev.type === "har" ? parseHar(core.readEvidenceText(w, ev)) : undefined;
     const alertDoc = ev.kind === "alert" ? (() => { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return j.format === ALERTS_EVIDENCE ? j : undefined; } catch { return undefined; } })() : undefined;
-    if (alertDoc) return `<figure data-type="alert" data-prov="core">${meta}<pre class="alert-summary">${esc(alertDoc.note)} · 窗口 ${t(alertDoc.window.start)} → ${t(alertDoc.window.end)}${esc(` · ${alertDoc.polls} poll(s)`)}${(alertDoc.firing as { labels: Record<string, string>; annotations: Record<string, string> }[]).map((a) => esc(`\n🔔 ${a.labels.alertname ?? "?"} ${JSON.stringify(a.labels)} ${a.annotations.summary ?? ""}`)).join("")}</pre><details><summary>alerts (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details></figure>`;
-    if (ev.kind === "blocked") { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return `<figure data-type="blocked" data-prov="core">${meta}<table class="blocked-table" data-count="${Number(j.count)}"><tr><th>type</th><th>request (redacted)</th><th>reason</th></tr>${(j.blocked as { url: string; method: string; type: string; reason: string }[]).map((b) => `<tr><td>${esc(b.type)}</td><td><code>${esc(b.method)} ${esc(b.url)}</code></td><td>${esc(b.reason)}</td></tr>`).join("")}</table></figure>`; } catch { /* fall through */ } }
+    if (alertDoc) return `<figure data-type="alert" data-prov="core">${meta}<pre class="alert-summary">${esc(alertDoc.note)} · 窗口 ${t(alertDoc.window.start)} → ${t(alertDoc.window.end)}${esc(` · 轮询 ${Array.isArray(alertDoc.polls) ? alertDoc.polls.length : alertDoc.polls} 次`)}${(alertDoc.firing as { labels: Record<string, string>; annotations: Record<string, string> }[]).map((a) => esc(`\n🔔 ${a.labels.alertname ?? "?"} ${JSON.stringify(a.labels)} ${a.annotations.summary ?? ""}`)).join("")}</pre><details><summary>告警（已脱敏）</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details></figure>`;
+    if (ev.kind === "blocked") { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return `<figure data-type="blocked" data-prov="core">${meta}<table class="blocked-table" data-count="${Number(j.count)}"><tr><th>类型</th><th>请求（已脱敏）</th><th>原因</th></tr>${(j.blocked as { url: string; method: string; type: string; reason: string }[]).map((b) => `<tr><td>${esc(b.type)}</td><td><code>${esc(b.method)} ${esc(b.url)}</code></td><td>${esc(b.reason)}</td></tr>`).join("")}</table></figure>`; } catch { /* fall through */ } }
     const met = ev.kind === "metric" ? metricSummary(core.readEvidenceText(w, ev)) : undefined;
-    const body = met ? `<pre class="metric-summary">${esc(met.query)} = ${esc(String(met.value ?? (met.ok ? "(no single value)" : "(query failed)")))}</pre><details><summary>Prometheus response</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
+    const body = met ? `<pre class="metric-summary">${esc(met.query)} = ${esc(String(met.value ?? (met.ok ? "（无单一数值）" : "（查询失败）")))}</pre><details><summary>Prometheus 原始响应</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
       : ev.type === "screenshot"
-      ? `<details class="shot" open><summary>screenshot (for human audit only · 仅供人工核对，不参与判定)</summary><a href="${esc(ev.path)}"><img src="${esc(ev.path)}" alt="${esc(ev.id)}"></a></details>`
-      : har ? `<pre class="har-summary">${esc(harSummary(har))}</pre><details><summary>HAR (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
-      : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>(empty)</em>"}</pre>`;
+      ? `<details class="shot" open><summary>截图（仅供人工核对，不参与判定）</summary><a href="${esc(ev.path)}"><img src="${esc(ev.path)}" alt="${esc(ev.id)}"></a></details>`
+      : har ? `<pre class="har-summary">${esc(harSummary(har))}</pre><details><summary>HAR（已脱敏）</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
+      : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>（空）</em>"}</pre>`;
     return `<figure data-type="${esc(ev.type)}" data-prov="${ev.executedBy === "agent" ? "agent" : "core"}">${meta}${body}</figure>`;
   }).join("\n");
   const srcOf = (sid?: string) => (sid ? w.sources.find((x) => x.id === sid) : undefined);
@@ -69,7 +72,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
   const rootCauseLine = (f: (typeof findings)[number]) => {
     const step = rootStep(f);
     const src = srcOf(step?.source_ref);
-    if (!src) return step ? esc(step.claim) : "<em>root cause not traced</em>";
+    if (!src) return step ? esc(step.claim) : "<em>根因未追到</em>";
     const code = core.sourceLine(src.file, src.line);
     return `<code class="loc">${esc(src.file)}:${src.line}</code> — ${esc(src.note ?? step?.claim ?? "")}${code ? `<div class="code"><code>${src.line} | ${esc(code)}</code></div>` : ""}`;
   };
@@ -87,10 +90,10 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
   const watches = w.alertWatches ?? [];
   const unmatchedAlerts = watches.flatMap((aw) => aw.unmatched.map((u) => ({ ...u, ev: aw.evidenceId })));
   const outcomeTxt = (aw: (typeof watches)[number]) => aw.outcome === "interrupted" ? "⚠ 盯守中断（数据不完整，不代表窗口内无告警）" : aw.outcome === "stopped_early" ? "窗口结束前已收取" : "窗口已走完";
-  const alertsBlock = watches.length ? `<div class="alerts-sum">${watches.map((aw) => `<div class="alert-window ${esc(aw.outcome)}" data-outcome="${esc(aw.outcome)}" data-firing="${aw.matched.length + aw.unmatched.length}">🔔 告警盯守 ${esc(aw.watchId)} ${t(aw.start)} → ${t(aw.end)} (${aw.polls} 次轮询，${esc(aw.evidenceId)}, ${esc(outcomeTxt(aw))}${aw.finalizedBy === "sign_off" ? "，签核时自动结束" : ""}): ${aw.matched.length + aw.unmatched.length ? `已关联 ${aw.matched.length}，未关联 ${aw.unmatched.length}` : aw.errors?.length && aw.errors.length && aw.polls === 0 ? "无轮询" : aw.outcome === "interrupted" ? "中断前未见触发的告警" : aw.errors?.length ? `轮询出错：${esc(aw.errors.join("; "))}` : "窗口内无告警"}</div>`).join("")}
+  const alertsBlock = watches.length ? `<div class="alerts-sum">${watches.map((aw) => `<div class="alert-window ${esc(aw.outcome)}" data-outcome="${esc(aw.outcome)}" data-firing="${aw.matched.length + aw.unmatched.length}">🔔 告警盯守 ${esc(aw.watchId)} ${t(aw.start)} → ${t(aw.end)} (${Array.isArray(aw.polls) ? aw.polls.length : aw.polls} 次轮询，${esc(aw.evidenceId)}, ${esc(outcomeTxt(aw))}${aw.finalizedBy === "sign_off" ? "，签核时自动结束" : ""}): ${aw.matched.length + aw.unmatched.length ? `已关联 ${aw.matched.length}，未关联 ${aw.unmatched.length}` : aw.errors?.length && aw.errors.length && aw.polls === 0 ? "无轮询" : aw.outcome === "interrupted" ? "中断前未见触发的告警" : aw.errors?.length ? `轮询出错：${esc(aw.errors.join("; "))}` : "窗口内无告警"}</div>`).join("")}
 ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unmatchedAlerts.length}"><b>未关联的告警</b>（没有检查的匹配规则命中，未挂到任何问题上）：<ul>${unmatchedAlerts.map((u) => `<li><span class="chip ${esc(u.severity)}">${esc(u.severity)}</span> ${esc(u.alertname)} <code>${esc(JSON.stringify(u.labels))}</code> <span class="meta">${esc(u.ev)}</span></li>`).join("")}</ul></div>` : ""}</div>` : "";
   const autoFin = w.signoff?.autoFinalizedWatches ?? [];
-  const autoFinNote = autoFin.length ? `<div class="auto-finalized" data-auto-finalized="${autoFin.length}">⚠ 签核时自动结束的告警盯守：${autoFin.map((a) => `<span class="aw ${esc(a.outcome)}" data-outcome="${esc(a.outcome)}">${esc(a.watchId)} (${a.outcome === "interrupted" ? "<b>interrupted</b> — 数据不完整" : esc(a.outcome)})</span>`).join(", ")}</div>` : "";
+  const autoFinNote = autoFin.length ? `<div class="auto-finalized" data-auto-finalized="${autoFin.length}">⚠ 签核时自动结束的告警盯守：${autoFin.map((a) => `<span class="aw ${esc(a.outcome)}" data-outcome="${esc(a.outcome)}">${esc(a.watchId)} (${a.outcome === "interrupted" ? "<b>已中断（interrupted）</b> — 数据不完整" : esc(OUTCOME_ZH[a.outcome] ?? a.outcome)})</span>`).join(", ")}</div>` : "";
   const sevRank = (x: string) => { const i = (SEV as readonly string[]).indexOf(x); return i < 0 ? 9 : i; };
   const ordered = [...findings].sort((x, y) => sevRank(x.severity) - sevRank(y.severity));
   const top = ordered[0];
@@ -116,6 +119,18 @@ ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unma
     ["needs-review", "需复核", (st) => st === "pass_needs_review"], ["none", "无结论", (st) => st !== "pass" && st !== "fail" && st !== "pass_needs_review"],
   ];
   const grouped = buckets.map(([key, label, f]) => ({ key, label, list: allChecks.filter((c) => f(statusOf(c.id))) }));
+  // Failed checks sharing one root cause = ONE problem: a failed check belongs to finding f if it is f's check or its
+  // result's evidence is part of f's evidence (the root-cause chain was built from it).
+  const failedIds = allChecks.filter((c) => statusOf(c.id) === "fail").map((c) => c.id);
+  const problems = ordered.map((f, i) => {
+    const ev = new Set(f.evidenceIds);
+    const ids = failedIds.filter((cid) => cid === f.checkId || (results.find((r) => r.checkId === cid)?.evidenceIds ?? []).some((e) => ev.has(e)));
+    return { n: i + 1, f, checkIds: ids };
+  });
+  const claimed = new Set(problems.flatMap((p) => p.checkIds));
+  const unattributed = failedIds.filter((cid) => !claimed.has(cid));
+  const checkLi = (cid: string) => { const c = allChecks.find((x) => x.id === cid); const r = results.find((x) => x.checkId === cid); return `<li data-check="${esc(cid)}"${r?.reasons.length ? ` title="${esc(r.reasons.join("; "))}"` : ""}><code>${esc(cid)}</code> ${esc(c?.intent ?? "")} <span class="chip fail-chip">失败</span></li>`; };
+  const problemHead = (p: (typeof problems)[number]) => `<h3 class="problem-title">问题 ${p.n} <span class="meta">（${p.checkIds.length} 项失败检查，同一根因）</span></h3>${p.checkIds.length ? `<ul class="problem-checks" data-checks="${p.checkIds.length}">${p.checkIds.map(checkLi).join("")}</ul>` : ""}`;
   const checkCounts = `<span class="check-counts" data-total="${allChecks.length}">检查 ${allChecks.length} 项：${grouped.map((g) => `<a class="cc cc-${g.key}" href="#checks-${g.key}" data-status="${g.key}" data-count="${g.list.length}"${g.key === "needs-review" ? ` data-needs-review="${g.list.length}"` : ""} onclick="var d=document.getElementById('checks-${g.key}');if(d)d.open=true">${g.list.length} ${g.label}</a>`).join(" · ")}</span>`;
   const checkLists = grouped.map((g) => `<details class="check-bucket" id="checks-${g.key}" data-status="${g.key}"><summary>${g.label}（${g.list.length}）</summary>${g.list.length ? `<ul>${g.list.map((c) => { const r = results.find((x) => x.checkId === c.id); return `<li data-check="${esc(c.id)}"><code>${esc(c.id)}</code> ${esc(c.intent)}${r?.reasons.length ? ` <span class="meta">— ${esc(r.reasons.join("; "))}</span>` : ""}</li>`; }).join("")}</ul>` : "<p class=\"meta\">无</p>"}</details>`).join("");
   const execRuns = w.runs.filter((r) => r.via);
@@ -129,13 +144,15 @@ ${execWarn}
 <div class="headline" data-findings="${findings.length}">${top
     ? `发现 <b>${findings.length}</b> 个问题：${sentence(top)}`
     : "未发现问题"}</div>
+${top && failedIds.length ? `<div class="headline-sub" data-failed="${failedIds.length}" data-problems="${findings.length}">${failedIds.length} 项检查失败，归为 ${findings.length} 个问题${unattributed.length ? `（另有 ${unattributed.length} 项失败未归入问题）` : ""}</div>` : ""}
 <div class="sev">${SEV.map((s) => `<span class="chip ${s}" data-sev="${s}">${s} ${sevCount(s)}</span>`).join("")}
 ${checkCounts}</div>
 ${blockedLine}
-${top ? `<div class="top-finding" data-finding="${esc(top.id)}"><h3>根因链 <span class="meta">（${esc(top.title)}）</span></h3>
+${top ? `<div class="top-finding problem" data-problem="1" data-finding="${esc(top.id)}" data-checks="${problems[0].checkIds.length}">${problemHead(problems[0])}<h4>根因链 <span class="meta">（${esc(top.title)}）</span></h4>
 ${firstChain(top)}
 <div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}</div>` : ""}
-${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f) => `<li data-finding="${esc(f.id)}"><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
+${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f, i) => `<li class="problem" data-problem="${i + 2}" data-finding="${esc(f.id)}" data-checks="${problems[i + 1].checkIds.length}">${problemHead(problems[i + 1])}<span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
+${unattributed.length ? `<details class="unattributed" data-unattributed="${unattributed.length}"><summary>未归入任何问题的失败检查（${unattributed.length}）</summary><ul>${unattributed.map(checkLi).join("")}</ul></details>` : ""}
 ${alertsBlock ? `<details class="alerts-more"><summary>告警盯守详情</summary>${alertsBlock}</details>` : ""}
 ${w.goal ? `<p class="goal meta">目标：${esc(w.goal)}</p>` : ""}
 <div class="signoff" data-prior="${esc(w.signoff?.decision ?? "")}">
@@ -159,18 +176,18 @@ ${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">已签核：<b>${w
         : prov === "core" ? '<span class="prov core" title="walkthrough 亲自执行得到的证据">walkthrough 执行</span> ' : "";
       return `<li class="step prov-${prov}" data-prov="${prov}">${provTag}<span class="badge ${esc(l.kind)}">${esc(l.kind)}</span> ${esc(l.claim)}${src ? ` → <code>${esc(src.file)}:${src.line}</code>` : ""}${l.evidence_ids.length ? ` <span class="meta">[${esc(l.evidence_ids.join(", "))}]</span>` : ""}${i < f.root_cause_chain.length - 1 ? " ↓" : ""}</li>`;
     }).join("");
-    return `<details class="finding" id="${esc(f.id)}"><summary><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${esc(f.title)}${f.checkId ? ' <span class="meta">(from ' + esc(f.checkId) + ")</span>" : ""}</summary>
-<p><b>Symptom:</b> ${esc(f.symptom)}</p>
-${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
-<p><b>Root-cause chain:</b></p><ol class="chain">${steps}</ol>
-<p><b>Evidence:</b></p>${f.evidenceIds.some((e) => w.evidence.find((x) => x.id === e)?.type === "screenshot") ? `<div class="evgrid ui-pair">${evidenceHtml(f.evidenceIds)}</div>` : evidenceHtml(f.evidenceIds)}
+    return `<details class="finding" id="${esc(f.id)}"><summary><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${esc(f.title)}${f.checkId ? ' <span class="meta">（来自 ' + esc(f.checkId) + "）</span>" : ""}</summary>
+<p><b>现象：</b> ${esc(f.symptom)}</p>
+${f.repro_steps.length ? `<p><b>复现：</b></p><ol>${f.repro_steps.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
+<p><b>根因链：</b></p><ol class="chain">${steps}</ol>
+<p><b>证据：</b></p>${f.evidenceIds.some((e) => w.evidence.find((x) => x.id === e)?.type === "screenshot") ? `<div class="evgrid ui-pair">${evidenceHtml(f.evidenceIds)}</div>` : evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
   const row = (c: NonNullable<typeof w.checks>[number]) => {
     const r = results.find((x) => x.checkId === c.id);
-    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加 after ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${t(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
+    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加，触发证据 ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${t(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r ? `${STATUS_ZH[r.status] ?? r.status}（${r.status}）` : "未执行")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
   };
-  const head = "<tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>";
+  const head = "<tr><th>检查</th><th>期望（由 walkthrough 判定）</th><th>结果</th><th>证据</th></tr>";
   const original = (w.checks ?? []).filter((c) => !c.appended), appended = (w.checks ?? []).filter((c) => c.appended);
   const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>检查明细（${results.length}）</summary>
 <h3>原始计划（${original.length})</h3><table class="plan-original">${head}${original.map(row).join("")}</table>
@@ -183,17 +200,17 @@ ${appended.length ? `<h3 class="appended">追查中追加（${appended.length})<
       return s ? `<li><code>${esc(s.file)}:${s.line}</code>${s.note ? ` — ${esc(s.note)}` : ""}</li>` : "";
     }).join("");
     const review = c.review
-      ? `<div class="review ${esc(c.review.decision)}">Review: <strong>${esc(c.review.decision)}</strong>${c.review.note ? ` — <span class="review-note">${esc(c.review.note)}</span>` : ""}</div>`
-      : `<div class="review none">Review: <em>pending</em></div>`;
+      ? `<div class="review ${esc(c.review.decision)}">复核：<strong>${esc(c.review.decision)}</strong>${c.review.note ? ` — <span class="review-note">${esc(c.review.note)}</span>` : ""}</div>`
+      : `<div class="review none">复核：<em>待复核</em></div>`;
     const prior = c.review ? ` data-prior="${esc(c.review.decision)}"` : "";
     return `<section class="claim" id="${esc(c.id)}" data-claim="${esc(c.id)}"${prior}>
 <h2>Q${i + 1}. ${esc(c.question)}</h2>
 <p>${localBadge}<span class="badge ${esc(c.kind)}">${esc(c.kind)}</span> ${esc(c.conclusion)}</p>
 ${sources ? `<ul class="sources">${sources}</ul>` : ""}
 ${review}
-${evidence || `<p class="none">No evidence attached (inferred).</p>`}
-<div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
-<input class="note" placeholder="note (optional)" value="${esc(c.review?.note ?? "")}"><span class="state"></span></div>
+${evidence || `<p class="none">未附证据（推断）。</p>`}
+<div class="actions"><button data-d="agree">认可</button><button data-d="flag">标记</button>
+<input class="note" placeholder="备注（可选）" value="${esc(c.review?.note ?? "")}"><span class="state"></span></div>
 </section>`;
   }).join("\n");
 
@@ -208,7 +225,7 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 .meta{font-size:.75rem;color:#666}.summary{display:flex;gap:1.5rem;background:#f6f8fa;padding:.75rem 1rem;border-radius:8px}
 .review{margin:.5rem 0;padding:.4rem .6rem;border-left:4px solid #999}.review.agree{border-color:#1a7f37}.review.flag{border-color:#cf222e;background:#fff5f5}
 .state{margin-left:.5rem;font-weight:bold}
-.verdict{border:2px solid #222;border-radius:10px;padding:1rem 1.25rem}.headline{font-size:1.6rem}
+.verdict{border:2px solid #222;border-radius:10px;padding:1rem 1.25rem}.headline{font-size:1.6rem}.headline-sub{font-size:.95rem;color:#555;margin-top:.2rem}.problem-title{margin:.6rem 0 .2rem}.problem-checks{margin:.2rem 0 .6rem;font-size:.92rem}.problem-checks li{margin:.1rem 0}.fail-chip{background:#cf222e;color:#fff;font-size:.75rem;padding:0 .4rem}.headline-sub{font-weight:600;color:#cf222e}
 .chip{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85rem;margin-right:.4rem;background:#eee;color:#222}
 .chip.critical{background:#82071e;color:#fff}.chip.high{background:#cf222e;color:#fff}.chip.medium{background:#bf8700;color:#fff}.chip.low{background:#57606a;color:#fff}
 .sev{margin:.5rem 0}.check-counts{color:#555;margin-left:.5rem}.cc{margin:0 .15rem}.cc-fail{color:#cf222e}.cc-needs-review{color:#7a4d00}.check-bucket{margin:.4rem 0;padding:.3rem .8rem}.finding-list li{margin:.6rem 0}.rc{margin:.2rem 0}.loc{background:#fff8c5;padding:1px 4px}

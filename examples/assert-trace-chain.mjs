@@ -24,6 +24,12 @@ const html = readFileSync(join(dirname(process.argv[2]), "index.html"), "utf8");
 const first = html.slice(html.indexOf('id="verdict"'), html.indexOf("</section>", html.indexOf('id="verdict"')));
 // 30-second first screen: one-sentence verdict, labelled root-cause chain, sign-off.
 if (!/<div class="headline" data-findings="1">发现 <b>1<\/b> 个问题：<code>\/api\/orders\/ord-3\/total<\/code> 返回 <b>500<\/b>，根因在 <code class="loc">pricing\.js:3<\/code><\/div>/.test(first)) fail("first screen lacks the one-sentence verdict");
+// The demo's failed checks share one root cause: ONE problem with all of them under it.
+const failedChecks = (w.checkResults ?? []).filter((r) => r.status === "fail").map((r) => r.checkId);
+if (failedChecks.length < 2) fail(`expected several failed checks in the demo, got ${failedChecks.length}`);
+if (!first.includes(`<div class="headline-sub" data-failed="${failedChecks.length}" data-problems="1">${failedChecks.length} 项检查失败，归为 1 个问题</div>`)) fail("first screen does not say the failures are 1 problem");
+if (!first.includes(`<h3 class="problem-title">问题 1 <span class="meta">（${failedChecks.length} 项失败检查，同一根因）</span></h3>`) || first.includes("问题 2")) fail("first screen lacks 「问题 1」 grouping");
+for (const c of failedChecks) if (!new RegExp(`<ul class="problem-checks"[^]*data-check="${c}"`).test(first)) fail(`failed check ${c} not listed under 问题 1`);
 const rc = [...first.matchAll(/<li class="rc-step" data-prov="(\w+)"><span class="prov \w+">([^<]+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
 if (rc.length !== f.root_cause_chain.length || rc[0] !== "core:walkthrough 执行" || !rc.includes("core:walkthrough 执行") || rc.at(-1) !== "core:walkthrough 执行") fail(`first-screen root-cause chain wrong: ${rc.join(" | ")}`);
 if (!/<div class="signoff"[\s\S]*name="signoff" value="accept"[\s\S]*name="signoff" value="reject"[\s\S]*id="export"/.test(first)) fail("sign-off area not on the first screen");
