@@ -142,6 +142,8 @@ export interface RunRecord {
   exitCode: number;
   output: string;
   createdAt: string;
+  /** exec only: ran in the sandbox ("exec") or was routed through run_cli's allowlist ("run_cli"). */
+  via?: "exec" | "run_cli";
 }
 
 export type SandboxBackend = "compose" | "local";
@@ -158,6 +160,8 @@ export interface SandboxConfig {
     /** Grace period between SIGTERM and SIGKILL on down() (default 5000 ms). */
     killTimeoutMs?: number;
   };
+  /** Enable run_in_sandbox exec (arbitrary commands). Default false; when true the report shows a red warning. */
+  allowExec?: boolean;
   /** Working directory for sandbox commands. */
   cwd: string;
   up: string;

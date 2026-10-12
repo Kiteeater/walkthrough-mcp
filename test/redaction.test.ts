@@ -16,8 +16,8 @@ describe("redaction", () => {
     const { core, root } = mockCore({ redactor: Redactor.fromEnv(), logs: `web | key=${SECRET}`, output: `booted with ${SECRET}` });
     const cfg: FlowConfig = {
       title: `Demo ${SECRET}`,
-      sandbox: { cwd: ".", up: `env TOKEN=${SECRET} docker compose up -d`, down: "docker compose down" },
-      exec: [`curl -H "Authorization: ${SECRET}" localhost`],
+      sandbox: { cwd: ".", up: `env TOKEN=${SECRET} docker compose up -d`, down: "docker compose down", allowExec: true },
+      exec: [`node fetch.js "Authorization: ${SECRET}" localhost`],
       captures: [
         { as: "home", type: "screenshot", url: `http://localhost:3000/?k=${SECRET}` },
         { as: "logs", type: "logs", service: "web" },

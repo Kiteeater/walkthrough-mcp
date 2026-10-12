@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
+import { execDecision } from "./execpolicy.js";
 import type { Capturer } from "./capture.js";
 import { Redactor } from "./redact.js";
 import {
@@ -167,14 +168,14 @@ export class WalkthroughCore {
   }
 
   runInSandbox(id: string, action: "up" | "down" | "exec", command?: string): Promise<RunRecord> {
+    if (action === "exec") return this.sandboxExec(id, command);
     return this.withLock(id, async () => {
     const w = this.load(id);
     const sb = this.deps.sandboxFactory(w.sandbox, w.id);
-    if (action === "exec" && !command) throw new Error("exec requires a command");
-    const res = action === "up" ? await sb.up() : action === "down" ? await sb.down() : await sb.exec(command!);
+    const res = action === "up" ? await sb.up() : await sb.down();
     const rec: RunRecord = {
       id: `run-${w.runs.length + 1}`,
-      command: this.redactor.text(action === "exec" ? command! : this.sandboxCommand(w, action)),
+      command: this.redactor.text(this.sandboxCommand(w, action)),
       exitCode: res.exitCode,
       output: this.redactor.text(res.output).slice(-20_000),
       createdAt: this.ts(),
@@ -182,6 +183,42 @@ export class WalkthroughCore {
     w.runs.push(rec);
     this.save(w);
     return rec;
+    });
+  }
+
+  /**
+   * run_in_sandbox exec (issue #8). Off unless sandbox.allowExec: true. A command naming a known credentialed CLI
+   * (aliyun, mqadmin, mongosh, …, by any path/case) never runs here: connector CLIs are routed through run_cli's
+   * allowlist, the rest are rejected; shells/wrappers are rejected. Spawned as file + args, never via a shell.
+   * Every exec is recorded (run record + hash-chained `sandbox_exec` log entry) and flagged red on the report.
+   */
+  private async sandboxExec(id: string, command?: string): Promise<RunRecord> {
+    if (!command) throw new Error("exec requires a command");
+    const w0 = this.load(id);
+    if (w0.signoff) throw new SignedOffError(`walkthrough ${id} is signed off; it is read-only now`); // re-checked under the lock
+    if (w0.sandbox.allowExec !== true) throw new CliRejectedError("run_in_sandbox exec is disabled (set sandbox.allowExec: true in the walkthrough config to enable arbitrary commands); use run_cli for CLIs");
+    const d = execDecision(command, process.env, this.deps.connectors ?? PRESET_CONNECTORS);
+    if (d.kind === "route") {
+      const r = await this.runCli(id, { connector: d.connector.name, argv: d.argv });
+      return this.withLock(id, () => {
+        const w = this.load(id);
+        const rec: RunRecord = { id: `run-${w.runs.length + 1}`, command: this.redactor.text(command), exitCode: r.exitCode, output: `routed to run_cli (${d.connector.name}), evidence ${r.evidence.id}`, createdAt: this.ts(), via: "run_cli" };
+        w.runs.push(rec);
+        this.save(w);
+        return rec;
+      });
+    }
+    return this.withLock(id, async () => {
+      const w = this.load(id);
+      const sb = this.deps.sandboxFactory(w.sandbox, w.id);
+      const res = await sb.exec([d.file, ...d.args]);
+      const rec: RunRecord = { id: `run-${w.runs.length + 1}`, command: this.redactor.text(command), exitCode: res.exitCode, output: this.redactor.text(res.output).slice(-20_000), createdAt: this.ts(), via: "exec" };
+      w.runs.push(rec);
+      const l = appendLogEntry(join(this.dir(id), "commands.jsonl"), { ts: rec.createdAt, walkthroughId: id, type: "sandbox_exec", runId: rec.id, command: rec.command, exitCode: rec.exitCode,
+        outputSha256: createHash("sha256").update(rec.output).digest("hex"), executedBy: "core" });
+      w.commandLogHead = { seq: l.seq, hash: l.hash };
+      this.save(w);
+      return rec;
     });
   }
 
@@ -662,6 +699,11 @@ export class WalkthroughCore {
           const ev2 = w.evidence.find((y) => y.id === x);
           if (!ev2 || !existsSync(join(this.dir(id), ev2.path)) || sha256File(join(this.dir(id), ev2.path)) !== ev2.sha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: evidence ${x} missing or modified` };
         }
+        continue;
+      }
+      if (e.type === "sandbox_exec") { // tie to the stored run record
+        const run = w.runs.find((x) => x.id === (e as unknown as { runId?: string }).runId);
+        if (!run || createHash("sha256").update(run.output).digest("hex") !== e.outputSha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: sandbox exec run missing or modified` };
         continue;
       }
       if (e.evidenceId === undefined && e.type === "alerts_poll") continue; // per-poll record; the watch entry carries the evidence

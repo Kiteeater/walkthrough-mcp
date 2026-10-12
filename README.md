@@ -120,7 +120,7 @@ and `walkthrough-html.png` (a screenshot of the rendered page).
 }
 ```
 
-Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `plan_checks`, `capture_evidence`
+Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec — exec only with `sandbox.allowExec: true`), `plan_checks`, `capture_evidence`
 (submit | screenshot | logs), `evaluate_check`, `record_finding`, `link_source` (file + line), `record_claim`
 (observed | inferred), `render_walkthrough`, `sign_off` (accept | reject).
 
@@ -269,9 +269,22 @@ truncated entries.
 - The hash chain is **unkeyed** (plain SHA-256, no secret). It detects accidental or partial tampering, not a
   deliberate rewrite: anyone who can write the walkthrough directory can recompute the whole log **and** the head in
   `walkthrough.json` together. Same limitation as evidence hashes. External anchoring is planned before PR #10.
-- `run_in_sandbox exec` is a separate, broader path: it runs arbitrary argv in the sandbox and **does not go through
-  the run_cli allowlist**, so it can still invoke e.g. `aliyun` with any flags if the binary and login state are
-  reachable. Tracking issue: [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8).
+- `run_in_sandbox exec` (fixed in [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8)) is **off by default**.
+  It runs only if the walkthrough's sandbox config sets `"allowExec": true`, and then:
+  - every exec is recorded (run record + hash-chained `sandbox_exec` entry in `commands.jsonl`), and the report and
+    sign-off area show a red **"沙箱任意命令已开启"** banner listing each command;
+  - a command whose program is a connector CLI (`aliyun`, `mqadmin`, …) is **routed through run_cli's allowlist**
+    instead of being spawned; `mongosh` needs run_cli's query template; other credentialed CLIs without a connector
+    (`mongo*`, `ossutil`, `kubectl`, `ssh`, `curl`, `wget`, …) are rejected;
+  - the program is matched by normalised name, so `/usr/bin/aliyun`, `./aliyun`, `ALIYUN`, `aliyun.exe` are all
+    caught (they must be called by name through run_cli);
+  - shells and wrappers (`sh`, `bash`, `env`, `sudo`, `xargs`, `timeout`, `nohup`, `busybox`, …), `VAR=value`
+    prefixes (PATH/LD_PRELOAD/credential env tricks) and any argument naming a credentialed CLI are rejected;
+  - commands are parsed to argv and spawned as `spawn(file, args)` — never through a shell; shell metacharacters
+    outside quotes and `$VAR` arguments are rejected.
+  - Limit: with exec enabled the command is still arbitrary code (`node -e …` can do anything it likes inside the
+    sandbox, including reading credential files that are reachable there). That is why it is off by default and
+    flagged red; keep credentials out of the sandbox.
 - The allowlist is only as safe as the flags it lists; review additions to `args` like code.
 
 ## UI evidence (screenshots, HAR) and replay

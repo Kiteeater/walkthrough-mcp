@@ -116,7 +116,10 @@ ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unma
   const grouped = buckets.map(([key, label, f]) => ({ key, label, list: allChecks.filter((c) => f(statusOf(c.id))) }));
   const checkCounts = `<span class="check-counts" data-total="${allChecks.length}">检查 ${allChecks.length} 项：${grouped.map((g) => `<a class="cc cc-${g.key}" href="#checks-${g.key}" data-status="${g.key}" data-count="${g.list.length}"${g.key === "needs-review" ? ` data-needs-review="${g.list.length}"` : ""} onclick="var d=document.getElementById('checks-${g.key}');if(d)d.open=true">${g.list.length} ${g.label}</a>`).join(" · ")}</span>`;
   const checkLists = grouped.map((g) => `<details class="check-bucket" id="checks-${g.key}" data-status="${g.key}"><summary>${g.label}（${g.list.length}）</summary>${g.list.length ? `<ul>${g.list.map((c) => { const r = results.find((x) => x.checkId === c.id); return `<li data-check="${esc(c.id)}"><code>${esc(c.id)}</code> ${esc(c.intent)}${r?.reasons.length ? ` <span class="meta">— ${esc(r.reasons.join("; "))}</span>` : ""}</li>`; }).join("")}</ul>` : "<p class=\"meta\">无</p>"}</details>`).join("");
+  const execRuns = w.runs.filter((r) => r.via);
+  const execWarn = w.sandbox.allowExec ? `<div class="exec-enabled" data-exec-runs="${execRuns.length}">⚠ 沙箱任意命令已开启（sandbox.allowExec: true）：run_in_sandbox exec 可执行任意命令，结论可信度需人工核对。已执行 ${execRuns.length} 次${execRuns.length ? `：<ul>${execRuns.map((r) => `<li><code>${esc(r.command)}</code> → exit ${r.exitCode}${r.via === "run_cli" ? "（已转交 run_cli 白名单）" : ""} <span class="meta">${esc(r.id)} · ${t(r.createdAt)}</span></li>`).join("")}</ul>` : ""}</div>` : "";
   const verdict = `<section class="verdict" id="verdict">
+${execWarn}
 <div class="headline" data-findings="${findings.length}">${top
     ? `发现 <b>${findings.length}</b> 个问题：${sentence(top)}`
     : "未发现问题"}</div>
@@ -129,6 +132,7 @@ ${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordere
 ${alertsBlock ? `<details class="alerts-more"><summary>告警盯守详情</summary>${alertsBlock}</details>` : ""}
 ${w.goal ? `<p class="goal meta">目标：${esc(w.goal)}</p>` : ""}
 <div class="signoff" data-prior="${esc(w.signoff?.decision ?? "")}">
+${w.sandbox.allowExec ? `<div class="exec-enabled signoff-warn">⚠ 沙箱任意命令已开启 — 签核前请核对上面列出的 ${execRuns.length} 条命令</div>` : ""}
 <b>签核：</b>
 <label><input type="radio" name="signoff" value="accept"${w.signoff?.decision === "accept" ? " checked" : ""}> 认可</label>
 <label><input type="radio" name="signoff" value="reject"${w.signoff?.decision === "reject" ? " checked" : ""}> 打回</label>
@@ -213,6 +217,7 @@ li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-
 .rc-chain{margin:.3rem 0 .3rem 1.2rem;padding:0}.rc-step{margin:.25rem 0}.prov.none{background:#eee;color:#555}.top-finding h3{margin:.6rem 0 .2rem;font-size:1.05rem}.headline code{font-size:1.4rem}
 .metric-confirm{margin:.2rem 0;padding:.2rem .5rem;background:#ddf4ff;border-left:4px solid #0969da}
 .evgrid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.evgrid figure{margin:0;min-width:0}
+.exec-enabled{background:#cf222e;color:#fff;padding:.5rem .8rem;border-radius:6px;margin:.4rem 0;font-weight:600}.exec-enabled code{background:#fff;color:#82071e}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}命令以宿主机子进程运行，没有隔离。</p>` : ""}
