@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { PlaywrightCapturer, type Capturer } from "./capture.js";
-import { ComposeSandbox } from "./sandbox.js";
+import { createSandboxFactory } from "./sandbox.js";
 import { WalkthroughCore } from "./walkthrough.js";
 
 export * from "./types.js";
@@ -14,7 +14,7 @@ export * from "./flow.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
 export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer()): WalkthroughCore {
-  return new WalkthroughCore({ root, sandboxFactory: (cfg) => new ComposeSandbox(cfg), capturer });
+  return new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer });
 }
 
 export function readJsonFile(path: string): unknown {

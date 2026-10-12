@@ -16,11 +16,15 @@ export interface FlowConfig {
   keepRunning?: boolean;
 }
 
-export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConfig, "up" | "down">> = {}): FlowConfig {
+export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConfig, "up" | "down" | "backend">> = {}): FlowConfig {
   const cfg = JSON.parse(readFileSync(path, "utf8")) as FlowConfig;
   cfg.sandbox.cwd = resolve(dirname(path), cfg.sandbox.cwd ?? ".");
   if (overrides.up) cfg.sandbox.up = overrides.up;
   if (overrides.down) cfg.sandbox.down = overrides.down;
+  if (overrides.backend) {
+    if (overrides.backend !== "local" && overrides.backend !== "compose") throw new Error(`unknown sandbox backend: ${overrides.backend}`);
+    cfg.sandbox.backend = overrides.backend;
+  }
   return cfg;
 }
 
@@ -45,10 +49,10 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
       const ev = await core.captureEvidence(w.id, cap.type === "screenshot" ? { type: "screenshot", url: cap.url } : { type: "logs", service: cap.service });
       names.set(cap.as, ev.id);
     }
-    for (const s of cfg.sources ?? []) names.set(s.as, core.linkSource(w.id, s).id);
+    for (const s of cfg.sources ?? []) names.set(s.as, (await core.linkSource(w.id, s)).id);
     const ref = (n: string) => names.get(n) ?? n;
     for (const c of cfg.claims) {
-      core.recordClaim(w.id, { ...c, evidenceIds: (c.evidence ?? []).map(ref), sourceIds: (c.sources ?? []).map(ref) });
+      await core.recordClaim(w.id, { ...c, evidenceIds: (c.evidence ?? []).map(ref), sourceIds: (c.sources ?? []).map(ref) });
     }
   } finally {
     if (!cfg.keepRunning) await core.runInSandbox(w.id, "down");

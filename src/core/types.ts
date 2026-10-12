@@ -44,8 +44,14 @@ export interface RunRecord {
   createdAt: string;
 }
 
+export type SandboxBackend = "compose" | "local";
+
 export interface SandboxConfig {
-  /** Working directory for compose commands. */
+  /** `compose` (default, isolated) or `local` (child processes on the host, NOT isolated). */
+  backend?: SandboxBackend;
+  /** Overrides used when backend is `local`: `up` is a long-running command whose stdout/stderr become the logs. */
+  local?: { up: string; down?: string };
+  /** Working directory for sandbox commands. */
   cwd: string;
   up: string;
   down: string;

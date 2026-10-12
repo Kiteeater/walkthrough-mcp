@@ -19,7 +19,8 @@ const id = z.string().describe("walkthrough id");
 
 server.tool("start_walkthrough", "Start a walkthrough with a Docker Compose sandbox config.", {
   title: z.string(), cwd: z.string(), up: z.string(), down: z.string(), logs: z.string().optional(),
-}, (a) => wrap(() => core.startWalkthrough({ title: a.title, sandbox: { cwd: a.cwd, up: a.up, down: a.down, logs: a.logs } }))());
+  sandbox: z.enum(["compose", "local"]).optional().describe("local = host child processes, NOT isolated"),
+}, (a) => wrap(() => core.startWalkthrough({ title: a.title, sandbox: { backend: a.sandbox, cwd: a.cwd, up: a.up, down: a.down, logs: a.logs } }))());
 
 server.tool("run_in_sandbox", "Bring the sandbox up/down or exec a command in its cwd.", {
   id, action: z.enum(["up", "down", "exec"]), command: z.string().optional(),

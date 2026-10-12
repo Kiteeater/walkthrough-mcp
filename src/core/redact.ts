@@ -21,8 +21,18 @@ export class Redactor {
     for (const v of this.secrets) s = s.split(v).join(MASK);
     return s;
   }
-  /** Deep-redact any JSON-serialisable value. */
+  /** Deep-redact a JSON-like value field by field (string values and object keys), so JSON escaping can't hide a secret. */
   value<T>(input: T): T {
-    return JSON.parse(this.text(JSON.stringify(input))) as T;
+    const walk = (v: unknown): unknown => {
+      if (typeof v === "string") return this.text(v);
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [k, x] of Object.entries(v)) if (x !== undefined) out[this.text(k)] = walk(x);
+        return out;
+      }
+      return v;
+    };
+    return walk(input) as T;
   }
 }

@@ -1,0 +1,108 @@
+{
+  "id": "wt-20261012184722-b5e090",
+  "title": "Sample change: greeting endpoint + home banner (local backend)",
+  "createdAt": "2026-10-12T18:47:22.922Z",
+  "sandbox": {
+    "backend": "local",
+    "cwd": "/workspace/walkthrough-mcp/examples/hello-service",
+    "up": "docker compose up -d",
+    "down": "docker compose down -v",
+    "local": {
+      "up": "exec node server.js"
+    }
+  },
+  "runs": [
+    {
+      "id": "run-1",
+      "command": "exec node server.js",
+      "exitCode": 0,
+      "output": "started pid 230387",
+      "createdAt": "2026-10-12T18:47:23.229Z"
+    },
+    {
+      "id": "run-2",
+      "command": "curl -fsS http://localhost:3000/api/greeting",
+      "exitCode": 0,
+      "output": "/home/box/.profile: line 30: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n/home/box/.us-env: line 3: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n{\"message\":\"Hello from the new greeting endpoint\",\"version\":2}",
+      "createdAt": "2026-10-12T18:47:23.302Z"
+    },
+    {
+      "id": "run-3",
+      "command": "kill local process group",
+      "exitCode": 0,
+      "output": "stopped local process\n",
+      "createdAt": "2026-10-12T18:47:24.413Z"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-1",
+      "type": "screenshot",
+      "path": "evidence/ev-1.png",
+      "sha256": "e1e09f6216cbfef3cc1755588dd12b3111669802100011d11b6e6910b9ba3d22",
+      "createdAt": "2026-10-12T18:47:24.404Z",
+      "source": "http://localhost:3000/"
+    },
+    {
+      "id": "ev-2",
+      "type": "logs",
+      "path": "evidence/ev-2.log",
+      "sha256": "ab926c0627c9c6517ebdc9e97bf50bed3cc6a1e5f27f1d93ca855bf79be6d1e1",
+      "createdAt": "2026-10-12T18:47:24.404Z",
+      "source": "local:web"
+    }
+  ],
+  "sources": [
+    {
+      "id": "src-1",
+      "file": "examples/hello-service/server.js",
+      "line": 7,
+      "note": "new greeting()"
+    },
+    {
+      "id": "src-2",
+      "file": "examples/hello-service/server.js",
+      "line": 15,
+      "note": "new /api/greeting route"
+    },
+    {
+      "id": "src-3",
+      "file": "examples/hello-service/server.js",
+      "line": 22,
+      "note": "new home banner"
+    }
+  ],
+  "claims": [
+    {
+      "id": "claim-1",
+      "question": "What does the change do to the home page and API when the service actually runs?",
+      "conclusion": "The home page renders the new greeting banner, and the service log shows the /api/greeting route being served.",
+      "kind": "observed",
+      "evidenceIds": [
+        "ev-1",
+        "ev-2"
+      ],
+      "sourceIds": [
+        "src-3",
+        "src-2"
+      ],
+      "review": {
+        "decision": "agree"
+      }
+    },
+    {
+      "id": "claim-2",
+      "question": "Does the change affect other callers of greeting()?",
+      "conclusion": "Probably not: greeting() is a new pure function only used by the two new code paths. Not exercised at runtime here.",
+      "kind": "inferred",
+      "evidenceIds": [],
+      "sourceIds": [
+        "src-1"
+      ],
+      "review": {
+        "decision": "flag",
+        "note": "inferred only; needs a runtime check"
+      }
+    }
+  ]
+}

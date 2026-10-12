@@ -8,6 +8,8 @@ const esc = (s: string) =>
 /** Render a static HTML walkthrough: one section per question. Returns the HTML path. */
 export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const w = core.load(id);
+  const local = w.sandbox.backend === "local";
+  const localBadge = local ? `<span class="badge local" title="local run, not isolated">本地运行、未隔离</span> ` : "";
   const sections = w.claims.map((c, i) => {
     const evidence = c.evidenceIds.map((evId) => {
       const ev = w.evidence.find((e) => e.id === evId);
@@ -25,7 +27,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
     const prior = c.review ? ` data-prior="${esc(c.review.decision)}"` : "";
     return `<section class="claim" id="${esc(c.id)}" data-claim="${esc(c.id)}"${prior}>
 <h2>Q${i + 1}. ${esc(c.question)}</h2>
-<p><span class="badge ${esc(c.kind)}">${esc(c.kind)}</span> ${esc(c.conclusion)}</p>
+<p>${localBadge}<span class="badge ${esc(c.kind)}">${esc(c.kind)}</span> ${esc(c.conclusion)}</p>
 ${sources ? `<ul class="sources">${sources}</ul>` : ""}
 ${evidence || `<p class="none">No evidence attached (inferred).</p>`}
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
@@ -39,11 +41,12 @@ ${evidence || `<p class="none">No evidence attached (inferred).</p>`}
 body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
 .claim{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:1.5rem 0}
 .badge{padding:2px 8px;border-radius:10px;font-size:.8rem;color:#fff}
-.badge.observed{background:#1a7f37}.badge.inferred{background:#9a6700}
+.badge.local{background:#cf222e}.badge.observed{background:#1a7f37}.badge.inferred{background:#9a6700}
 img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;overflow:auto;max-height:300px}
 .meta{font-size:.75rem;color:#666}.state{margin-left:.5rem;font-weight:bold}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
+${local ? `<p>${localBadge}Commands ran as host child processes without isolation.</p>` : ""}
 <p class="meta">walkthrough ${esc(w.id)} · ${w.claims.length} questions · ${w.evidence.length} evidence items</p>
 ${sections}
 <button id="export">Export review.json</button>

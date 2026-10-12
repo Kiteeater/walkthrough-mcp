@@ -15,7 +15,7 @@ export class ClaimRejectedError extends Error {
 export interface CoreDeps {
   /** Root directory that holds `.walkthrough/`. */
   root: string;
-  sandboxFactory: (cfg: SandboxConfig) => Sandbox;
+  sandboxFactory: (cfg: SandboxConfig, key?: string) => Sandbox;
   capturer: Capturer;
   redactor?: Redactor;
   now?: () => Date;
@@ -27,6 +27,17 @@ export class WalkthroughCore {
   readonly base: string;
   private readonly redactor: Redactor;
   private readonly now: () => Date;
+  private readonly locks = new Map<string, Promise<unknown>>();
+
+  /** Per-id serial lock (promise-chain mutex) around read-modify-write of walkthrough.json. */
+  private withLock<T>(id: string, fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.locks.get(id) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    const tail = next.catch(() => undefined);
+    this.locks.set(id, tail);
+    void tail.then(() => { if (this.locks.get(id) === tail) this.locks.delete(id); });
+    return next;
+  }
 
   constructor(private readonly deps: CoreDeps) {
     this.base = resolve(deps.root, ".walkthrough");
@@ -62,14 +73,15 @@ export class WalkthroughCore {
     return w;
   }
 
-  async runInSandbox(id: string, action: "up" | "down" | "exec", command?: string): Promise<RunRecord> {
+  runInSandbox(id: string, action: "up" | "down" | "exec", command?: string): Promise<RunRecord> {
+    return this.withLock(id, async () => {
     const w = this.load(id);
-    const sb = this.deps.sandboxFactory(w.sandbox);
+    const sb = this.deps.sandboxFactory(w.sandbox, w.id);
     if (action === "exec" && !command) throw new Error("exec requires a command");
     const res = action === "up" ? await sb.up() : action === "down" ? await sb.down() : await sb.exec(command!);
     const rec: RunRecord = {
       id: `run-${w.runs.length + 1}`,
-      command: this.redactor.text(action === "exec" ? command! : action === "up" ? w.sandbox.up : w.sandbox.down),
+      command: this.redactor.text(action === "exec" ? command! : this.sandboxCommand(w, action)),
       exitCode: res.exitCode,
       output: this.redactor.text(res.output).slice(-20_000),
       createdAt: this.ts(),
@@ -77,11 +89,13 @@ export class WalkthroughCore {
     w.runs.push(rec);
     this.save(w);
     return rec;
+    });
   }
 
-  async captureEvidence(
+  captureEvidence(
     id: string, input: { type: "screenshot"; url: string } | { type: "logs"; service: string },
   ): Promise<Evidence> {
+    return this.withLock(id, async () => {
     const w = this.load(id);
     const evId = `ev-${w.evidence.length + 1}`;
     let rel: string;
@@ -92,8 +106,8 @@ export class WalkthroughCore {
       await this.deps.capturer.screenshot(input.url, join(this.dir(id), rel));
     } else {
       rel = `evidence/${evId}.log`;
-      source = `docker:${input.service}`;
-      const raw = await this.deps.sandboxFactory(w.sandbox).logs(input.service);
+      source = w.sandbox.backend === "local" ? `local:${input.service}` : `docker:${input.service}`;
+      const raw = await this.deps.sandboxFactory(w.sandbox, w.id).logs(input.service);
       writeFileSync(join(this.dir(id), rel), this.redactor.text(raw));
     }
     const ev: Evidence = {
@@ -103,15 +117,23 @@ export class WalkthroughCore {
     w.evidence.push(ev);
     this.save(w);
     return ev;
+    });
   }
 
-  linkSource(id: string, input: { file: string; line: number; note?: string }): SourceLink {
+  private sandboxCommand(w: Walkthrough, action: "up" | "down"): string {
+    if (w.sandbox.backend === "local") return action === "up" ? (w.sandbox.local?.up ?? w.sandbox.up) : "kill local process group";
+    return action === "up" ? w.sandbox.up : w.sandbox.down;
+  }
+
+  linkSource(id: string, input: { file: string; line: number; note?: string }): Promise<SourceLink> {
+    return this.withLock(id, () => {
     if (!Number.isInteger(input.line) || input.line < 1) throw new Error("line must be a positive integer");
     const w = this.load(id);
     const link: SourceLink = { id: `src-${w.sources.length + 1}`, file: input.file, line: input.line, note: input.note };
     w.sources.push(link);
     this.save(w);
     return link;
+    });
   }
 
   /** Validate evidence references; throws ClaimRejectedError for unverifiable observed claims. */
@@ -130,7 +152,8 @@ export class WalkthroughCore {
 
   recordClaim(id: string, input: {
     question: string; conclusion: string; kind: ClaimKind; evidenceIds?: string[]; sourceIds?: string[];
-  }): Claim {
+  }): Promise<Claim> {
+    return this.withLock(id, () => {
     if (input.kind !== "observed" && input.kind !== "inferred") throw new ClaimRejectedError("kind must be observed or inferred");
     const w = this.load(id);
     const evidenceIds = input.evidenceIds ?? [];
@@ -144,15 +167,18 @@ export class WalkthroughCore {
     w.claims.push(claim);
     this.save(w);
     return claim;
+    });
   }
 
   /** Apply a downloaded review.json back into the walkthrough JSON. */
-  importReview(review: unknown): { id: string; applied: number } {
+  importReview(review: unknown): Promise<{ id: string; applied: number }> {
     const r = review as { walkthroughId?: string; decisions?: { claimId: string; decision: string; note?: string }[] };
-    if (!r || typeof r.walkthroughId !== "string" || !Array.isArray(r.decisions)) throw new Error("invalid review file");
-    const w = this.load(r.walkthroughId);
+    if (!r || typeof r.walkthroughId !== "string" || !Array.isArray(r.decisions)) return Promise.reject(new Error("invalid review file"));
+    const decisions = r.decisions;
+    return this.withLock(r.walkthroughId, () => {
+    const w = this.load(r.walkthroughId as string);
     let applied = 0;
-    for (const d of r.decisions) {
+    for (const d of decisions) {
       const c = w.claims.find((x) => x.id === d.claimId);
       if (!c) throw new Error(`unknown claim in review: ${d.claimId}`);
       if (d.decision !== "agree" && d.decision !== "flag") throw new Error(`invalid decision: ${d.decision}`);
@@ -161,6 +187,7 @@ export class WalkthroughCore {
     }
     this.save(w);
     return { id: w.id, applied };
+    });
   }
 
   readEvidenceText(w: Walkthrough, ev: Evidence): string {
