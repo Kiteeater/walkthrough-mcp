@@ -89,7 +89,7 @@ describe("page evidence: judging from HAR / DOM text", () => {
   });
   it("core page capture (method: ui fallback) is core-executed and judged normally", async () => {
     const { core, root } = mk({ allowHosts: ["demo.local"] }, async () => "93.184.216.34");
-    (core as unknown as { deps: { capturer: unknown } }).deps.capturer = { screenshot: async () => {}, page: async () => ({ screenshot: Buffer.from("png"), har: har(500), text: "Failed to load orders", navigations: [], subresources: ["GET http://cdn.example/x.js?token=SUBRESsecret"] }) };
+    (core as unknown as { deps: { capturer: unknown } }).deps.capturer = { screenshot: async () => {}, page: async () => ({ screenshot: Buffer.from("png"), har: har(500), text: "Failed to load orders", navigations: [], subresources: [{ url: "http://cdn.example/x.js?token=SUBRESsecret", method: "GET", type: "script", status: 200, ip: "127.0.0.1" }], blocked: [] }) };
     const w = core.startWalkthrough({ title: "t", sandbox: SB });
     await core.planChecks(w.id, { goal: "g", checks: [ui500] });
     const evs = await core.capturePage(w.id, { url: "http://demo.local/", checkId: "ui-500" });

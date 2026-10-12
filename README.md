@@ -285,6 +285,11 @@ truncated entries.
   - Limit: with exec enabled the command is still arbitrary code (`node -e …` can do anything it likes inside the
     sandbox, including reading credential files that are reachable there). That is why it is off by default and
     flagged red; keep credentials out of the sandbox.
+  - **Turning on `sandbox.allowExec` means allowing arbitrary commands.** The CLI-name checks above are a guard rail,
+    not a boundary: a renamed or copied binary (`cp $(which aliyun) ./x && ./x …`), `python -c`, `node -e`, or any
+    interpreter can do what a blocked CLI does. That is exactly why enabling it puts the red
+    "沙箱任意命令已开启" warning on the report's first screen and the sign-off area — the reviewer must treat every
+    exec as unchecked.
 - The allowlist is only as safe as the flags it lists; review additions to `args` like code.
 
 ## UI evidence (screenshots, HAR) and replay
@@ -311,17 +316,34 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
 - **Provenance**: agent-reported HAR/screenshots alone give at most `pass_needs_review`, same as other imports.
 - **No computer use on the host?** `capture_page(check_id, url)` makes walkthrough load the page with Playwright and
   store screenshot + HAR + DOM text as core-executed evidence (needs `npx playwright install chromium`; CI e2e has it).
-  It uses the **same policy as replay** (needs `replay.allowHosts`): the URL is pre-checked before a browser starts,
-  and every main-frame navigation, including each redirect hop, is intercepted (`route`) and fetched by walkthrough's
-  own fetcher (allowlist + IP rules, DNS resolved once, connection pinned to that IP), then handed to Chromium. So
-  the main document can't be redirected or DNS-rebound to a forbidden address. Navigations and sub-resources are
-  logged in the `capture_page` entry of `commands.jsonl`.
-  **Known gap:** sub-resources (scripts, images, XHR/fetch), iframe navigations, popups opened with `window.open`
-  (their main frame is a different page) and WebSockets (which don't go through `route` at all) are loaded by Chromium
-  itself with its own DNS: they are logged where visible, **not blocked**, and not pinned. `capture_page` sends no
-  test-account credentials. A page on an allowlisted host can make the browser request
-  internal addresses. Tracked in [#11](https://github.com/Kiteeater/walkthrough-mcp/issues/11); until then use
-  `capture_page` only against your own service inside the sandbox.
+  It uses the **same policy as replay** (needs `replay.allowHosts`) for **every request the page makes**
+  ([#11](https://github.com/Kiteeater/walkthrough-mcp/issues/11)):
+  - The URL is pre-checked before a browser starts. Every HTTP(S) request (main document and each redirect hop,
+    images, scripts, CSS, XHR/fetch, iframes and their navigations, requests from popups) is intercepted with
+    `route` and fetched by walkthrough's own fetcher (allowlist + IP rules: metadata always denied, private/loopback
+    only via explicit `allowCidrs`, IPv4-embedded IPv6 unpacked), then handed to Chromium. Redirects are followed by
+    walkthrough hop by hop, each hop re-checked. Chromium never opens a connection for these.
+  - **DNS pinning:** each host is resolved **once per capture**; that checked IP is used for every request in the
+    capture (a rebinding resolver can't move it later) and is also given to Chromium via
+    `--host-resolver-rules` (`MAP <allowed host> <checked IP>`, everything else `~NOTFOUND`), so even a request that
+    escaped interception could not resolve anything else.
+  - **WebSockets** are intercepted with `routeWebSocket` and closed (never connected): there's no IP-pinned
+    WebSocket proxy yet. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
+    **Popups / new windows** are closed at once; their requests still go through the checks above.
+  - Every blocked request is stored as core-executed evidence (`kind: blocked`: type, method, reason, URL with
+    **every query param value (any name), userinfo and token patterns redacted**). Those values are also treated as
+    secrets for the whole capture, so they are masked in the HAR (including page HTML that embeds them), DOM text,
+    command log and report. The report's first screen shows the count
+    ("🛡 capture_page 已拦截 N 个请求") with the table behind a `<details>`.
+  - **Read-only, like replay:** only `GET`/`HEAD` are forwarded. `POST`/`PUT`/`PATCH`/`DELETE`/… from the page
+    (form submits, fetch/XHR) are blocked ("read-only") and recorded; they never reach the server.
+  - **WebRTC** (ICE/STUN/TURN bypasses `route` and the resolver): Chromium runs with
+    `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, and an init script in every frame replaces
+    `RTCPeerConnection` / `webkitRTCPeerConnection` / `RTCDataChannel` with constructors that throw; attempts are
+    recorded (`type: webrtc`, with the ICE server URLs).
+  - Blocked-request evidence has its own evidence type `blocked`; `evaluate_check` never treats it as page content,
+    so it can't satisfy or fail a ui text/HAR expectation.
+  - `capture_page` sends no test-account credentials, and the browser's own cookies are not forwarded by the fetcher.
 - **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
   `?code=…` (e.g. a product or error code) shows up as `[REDACTED]`; judge on the status/body instead.
 
@@ -499,3 +521,7 @@ CI lives in `.github/workflows/ci.yml`: it runs unit tests plus the Docker Compo
 ## License
 
 MIT
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). CI has a test-count gate: new tests must bump `test/EXPECTED_TEST_COUNT`, and skipped tests fail CI.

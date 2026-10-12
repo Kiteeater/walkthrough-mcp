@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, exists
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
 import { execDecision } from "./execpolicy.js";
-import type { Capturer } from "./capture.js";
+import { BLOCKED_EVIDENCE, type Capturer, type NavigationGuard } from "./capture.js";
+import { isIP } from "node:net";
 import { Redactor } from "./redact.js";
 import {
   appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
@@ -15,8 +16,8 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
-import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, safeRegex } from "./har.js";
-import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
+import { checkHop, guardedGet, guardedRequest, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
 import {
   ALERTS_EVIDENCE, ALERT_WATCH_MAX_INTERVAL_S, ALERT_WATCH_MAX_POLLS, ALERT_WATCH_MAX_WINDOW_S, ALERT_WATCH_MIN_INTERVAL_S,
@@ -99,6 +100,33 @@ function nextActionFor(c: Check): NextAction {
 }
 
 export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
+
+/** Query values (any name) and userinfo of the given URLs, as extra secrets. */
+export function blockedUrlSecrets(urls: string[]): string[] {
+  const out = new Set<string>();
+  for (const u of urls) {
+    try {
+      const x = new URL(u);
+      for (const v of x.searchParams.values()) if (v.length >= 3) { out.add(v); out.add(encodeURIComponent(v)); }
+      if (x.username.length >= 3) out.add(decodeURIComponent(x.username));
+      if (x.password.length >= 3) out.add(decodeURIComponent(x.password));
+      if (x.search.length > 4) out.add(x.search.slice(1));
+    } catch { /* unparseable: regex fallback in maskAllQuery */ }
+  }
+  return [...out];
+}
+
+/** Mask every query parameter value (not only known secret names) and any userinfo. */
+export function maskAllQuery(u: string): string {
+  try {
+    const x = new URL(u);
+    for (const k of [...new Set(x.searchParams.keys())]) x.searchParams.set(k, "[REDACTED]");
+    if (x.username || x.password) { x.username = "[REDACTED]"; x.password = ""; }
+    return x.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+  } catch { return u.replace(/([?&;][^=&#\s]*)=[^&#\s]*/g, "$1=[REDACTED]"); }
+}
+
+const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
 
 export class WalkthroughCore {
   readonly base: string;
@@ -347,9 +375,13 @@ export class WalkthroughCore {
       const w = this.load(id);
       if (!(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
       // Pre-check gives a clear error before any browser starts; every navigation hop is re-checked by the guard.
-      await checkHop(cfg, new URL(input.url), this.deps.resolver);
-      const p = await this.deps.capturer.page(input.url, { fetch: (u) => guardedGet(cfg, u, { resolver: this.deps.resolver }) });
-      const src = this.redactor.text(`playwright:${input.url}`);
+      const guard = await this.pinnedGuard(cfg);
+      await checkHop(cfg, new URL(input.url), guard.resolver); // same pinned resolution the browser will use
+      const p = await this.deps.capturer.page(input.url, guard);
+      // Every query value / userinfo of a BLOCKED URL is treated as a secret for this capture, wherever it shows up
+      // (blocked evidence, HAR — incl. the page HTML that embeds it —, DOM text, command log, report).
+      const r = this.redactor.with(blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)));
+      const src = r.text(`playwright:${input.url}`);
       const out: Evidence[] = [];
       const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
         const id2 = `ev-${w.evidence.length + 1}`, rel = `evidence/${id2}.${ext}`;
@@ -358,18 +390,48 @@ export class WalkthroughCore {
         w.evidence.push(ev); out.push(ev);
       };
       add("screenshot", "screenshot", "png", p.screenshot);
-      add("har", "har", "har", redactHar(p.har, this.redactor));
-      add("response", "http", "txt", this.redactor.text(p.text));
+      add("har", "har", "har", redactHar(p.har, r));
+      add("response", "http", "txt", r.text(p.text));
+      // Blocked requests are evidence too: URL redacted (secret params, userinfo, token patterns), reason, type.
+      const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) }));
+      if (blocked.length) add("blocked", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
-        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, this.redactor) })),
-        subresources: p.subresources.slice(0, 200).map((u) => { const [m, ...r] = u.split(" "); return `${m} ${redactUrl(r.join(" "), this.redactor)}`; }),
+        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
+        subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: redactUrl(s.url, r) })),
+        blocked: blocked.length,
         evidenceIds: out.map((e) => e.id), executedBy: "core",
       });
       w.commandLogHead = { seq: log.seq, hash: log.hash };
       this.save(w);
       return out;
     });
+  }
+
+  /**
+   * Guard for capture_page: each host is resolved ONCE per capture and the checked IP is pinned for every request
+   * (our fetcher) and for Chromium itself (--host-resolver-rules); a rebinding resolver cannot move it later.
+   */
+  private async pinnedGuard(cfg: ReplayConfig): Promise<NavigationGuard & { resolver: Resolver }> {
+    const base = this.deps.resolver ?? (async (h: string) => (await import("node:dns/promises")).lookup(h).then((r) => r.address));
+    const pins = new Map<string, Promise<string>>();
+    const resolver = (h: string) => { const k = h.toLowerCase(); if (!pins.has(k)) pins.set(k, base(k)); return pins.get(k)!; };
+    const rules: string[] = [];
+    for (const h of new Set(cfg.allowHosts.map((x) => x.toLowerCase().split(/:(?=\d+$)/)[0]))) {
+      if (isIP(h.replace(/^\[|\]$/g, ""))) continue;
+      try {
+        const ip = await checkHop(cfg, new URL(`http://${h}/`), resolver).catch(() => checkHop(cfg, new URL(`https://${h}/`), resolver));
+        rules.push(`MAP ${h} ${isIP(ip) === 6 ? `[${ip}]` : ip}`);
+      } catch { /* not allowed / unresolvable: stays ~NOTFOUND for Chromium; our fetcher rejects it per request */ }
+    }
+    rules.push("MAP * ~NOTFOUND");
+    return {
+      resolver,
+      hostResolverRules: rules.join(", "),
+      fetch: (u) => guardedGet(cfg, u, { resolver }),
+      // Read-only like replay: only GET/HEAD are forwarded; anything else is blocked (and recorded) by the capturer.
+      request: (r) => { if (!READ_ONLY_METHODS.has(r.method.toUpperCase())) throw new ReplayRejectedError(`${r.method.toUpperCase()} blocked (read-only: capture_page forwards only GET/HEAD)`); return guardedRequest(cfg, r.url, { method: r.method, headers: r.headers, body: r.body, resolver, maxBodyBytes: 5 * 1024 * 1024 }); },
+    };
   }
 
   /**
@@ -826,12 +888,13 @@ export class WalkthroughCore {
       this.verifyEvidence(w, "inferred", evidenceIds);
       const evs = evidenceIds.map((e) => w.evidence.find((x) => x.id === e)!);
       for (const ev of evs) if (ev.checkId !== check.id) throw new ClaimRejectedError(`evidence ${ev.id} was not captured for ${check.id}`);
-      const texts = evs.filter((ev) => ev.type !== "screenshot").map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
+      // Screenshots are for humans; blocked-request evidence is a security record, never page content.
+      const judged = evs.filter((ev) => ev.type !== "screenshot" && ev.type !== "blocked");
+      const texts = judged.map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
       const j = await this.registry.verifier(check.verify?.type ?? "rule").verify(check, texts);
       // Provenance rule: any piece of evidence that fails the expectation → fail, whoever executed it. If everything
       // satisfies it: ≥1 core-executed evidence that passes on its own → pass; agent-reported only → pass_needs_review.
       // (`count` aggregates across evidence, so it is judged on the combined texts only.)
-      const judged = evs.filter((ev) => ev.type !== "screenshot");
       const per = check.expect.type === "count" || judged.length < 2 ? [] : await Promise.all(judged.map(async (ev, i) => ({ ev, j: await this.registry.verifier(check.verify?.type ?? "rule").verify(check, [texts[i]]) })));
       const failing = per.filter((x) => x.j.status === "fail");
       let status = j.status;

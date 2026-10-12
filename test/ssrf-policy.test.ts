@@ -54,7 +54,7 @@ const fakeBrowser: Capturer = {
       if (r.status >= 300 && r.status < 400 && r.headers.location) { u = new URL(r.headers.location, u).toString(); continue; }
       break;
     }
-    return { screenshot: Buffer.from("png"), har: JSON.stringify({ log: { entries: [] } }), text: "", navigations, subresources: [] };
+    return { screenshot: Buffer.from("png"), har: JSON.stringify({ log: { entries: [] } }), text: "", navigations, subresources: [], blocked: [] };
   },
 };
 

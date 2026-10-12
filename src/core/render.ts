@@ -1,3 +1,4 @@
+import type { Evidence } from "./types.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WalkthroughCore } from "./walkthrough.js";
@@ -47,6 +48,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
     const har = ev.type === "har" ? parseHar(core.readEvidenceText(w, ev)) : undefined;
     const alertDoc = ev.kind === "alert" ? (() => { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return j.format === ALERTS_EVIDENCE ? j : undefined; } catch { return undefined; } })() : undefined;
     if (alertDoc) return `<figure data-type="alert" data-prov="core">${meta}<pre class="alert-summary">${esc(alertDoc.note)} · 窗口 ${t(alertDoc.window.start)} → ${t(alertDoc.window.end)}${esc(` · ${alertDoc.polls} poll(s)`)}${(alertDoc.firing as { labels: Record<string, string>; annotations: Record<string, string> }[]).map((a) => esc(`\n🔔 ${a.labels.alertname ?? "?"} ${JSON.stringify(a.labels)} ${a.annotations.summary ?? ""}`)).join("")}</pre><details><summary>alerts (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details></figure>`;
+    if (ev.kind === "blocked") { try { const j = JSON.parse(core.readEvidenceText(w, ev)); return `<figure data-type="blocked" data-prov="core">${meta}<table class="blocked-table" data-count="${Number(j.count)}"><tr><th>type</th><th>request (redacted)</th><th>reason</th></tr>${(j.blocked as { url: string; method: string; type: string; reason: string }[]).map((b) => `<tr><td>${esc(b.type)}</td><td><code>${esc(b.method)} ${esc(b.url)}</code></td><td>${esc(b.reason)}</td></tr>`).join("")}</table></figure>`; } catch { /* fall through */ } }
     const met = ev.kind === "metric" ? metricSummary(core.readEvidenceText(w, ev)) : undefined;
     const body = met ? `<pre class="metric-summary">${esc(met.query)} = ${esc(String(met.value ?? (met.ok ? "(no single value)" : "(query failed)")))}</pre><details><summary>Prometheus response</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
       : ev.type === "screenshot"
@@ -118,6 +120,10 @@ ${unmatchedAlerts.length ? `<div class="unmatched-alerts" data-unmatched="${unma
   const checkLists = grouped.map((g) => `<details class="check-bucket" id="checks-${g.key}" data-status="${g.key}"><summary>${g.label}（${g.list.length}）</summary>${g.list.length ? `<ul>${g.list.map((c) => { const r = results.find((x) => x.checkId === c.id); return `<li data-check="${esc(c.id)}"><code>${esc(c.id)}</code> ${esc(c.intent)}${r?.reasons.length ? ` <span class="meta">— ${esc(r.reasons.join("; "))}</span>` : ""}</li>`; }).join("")}</ul>` : "<p class=\"meta\">无</p>"}</details>`).join("");
   const execRuns = w.runs.filter((r) => r.via);
   const execWarn = w.sandbox.allowExec ? `<div class="exec-enabled" data-exec-runs="${execRuns.length}">⚠ 沙箱任意命令已开启（sandbox.allowExec: true）：run_in_sandbox exec 可执行任意命令，结论可信度需人工核对。已执行 ${execRuns.length} 次${execRuns.length ? `：<ul>${execRuns.map((r) => `<li><code>${esc(r.command)}</code> → exit ${r.exitCode}${r.via === "run_cli" ? "（已转交 run_cli 白名单）" : ""} <span class="meta">${esc(r.id)} · ${t(r.createdAt)}</span></li>`).join("")}</ul>` : ""}</div>` : "";
+  const blockedEvs = w.evidence.filter((e) => e.kind === "blocked");
+  const blockedTable = (e: Evidence) => { try { const j = JSON.parse(core.readEvidenceText(w, e)); return `<table class="blocked-table" data-ev="${esc(e.id)}" data-count="${Number(j.count)}"><tr><th>类型</th><th>请求</th><th>原因</th></tr>${(j.blocked as { url: string; method: string; type: string; reason: string }[]).map((b) => `<tr><td>${esc(b.type)}</td><td><code>${esc(b.method)} ${esc(b.url)}</code></td><td>${esc(b.reason)}</td></tr>`).join("")}</table>`; } catch { return ""; } };
+  const blockedTotal = blockedEvs.reduce((n, e) => { try { return n + Number(JSON.parse(core.readEvidenceText(w, e)).count ?? 0); } catch { return n; } }, 0);
+  const blockedLine = blockedEvs.length ? `<div class="blocked-requests" data-blocked="${blockedTotal}">🛡 capture_page 已拦截 <b>${blockedTotal}</b> 个请求（不在白名单或 IP 规则不允许，均未发出）<details><summary>查看被拦截的请求（URL 已脱敏）</summary>${blockedEvs.map(blockedTable).join("")}</details></div>` : "";
   const verdict = `<section class="verdict" id="verdict">
 ${execWarn}
 <div class="headline" data-findings="${findings.length}">${top
@@ -125,6 +131,7 @@ ${execWarn}
     : "未发现问题"}</div>
 <div class="sev">${SEV.map((s) => `<span class="chip ${s}" data-sev="${s}">${s} ${sevCount(s)}</span>`).join("")}
 ${checkCounts}</div>
+${blockedLine}
 ${top ? `<div class="top-finding" data-finding="${esc(top.id)}"><h3>根因链 <span class="meta">（${esc(top.title)}）</span></h3>
 ${firstChain(top)}
 <div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}</div>` : ""}
@@ -218,6 +225,7 @@ li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-
 .metric-confirm{margin:.2rem 0;padding:.2rem .5rem;background:#ddf4ff;border-left:4px solid #0969da}
 .evgrid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.evgrid figure{margin:0;min-width:0}
 .exec-enabled{background:#cf222e;color:#fff;padding:.5rem .8rem;border-radius:6px;margin:.4rem 0;font-weight:600}.exec-enabled code{background:#fff;color:#82071e}
+.blocked-requests{background:#fff8c5;border-left:4px solid #bf8700;padding:.25rem .6rem;margin:.3rem 0}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}命令以宿主机子进程运行，没有隔离。</p>` : ""}
