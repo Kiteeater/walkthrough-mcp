@@ -147,8 +147,8 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     else {
       if (i + 1 >= rest.length) throw new CliRejectedError(`${c.name}: ${flag} needs a value`);
       value = rest[++i];
-      if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
     }
+    if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
     if (flag === "--region" && !(c.regions ?? []).includes(value)) throw new CliRejectedError(`${c.name}: region not in allowlist: ${JSON.stringify(value)}`);
   }
   return c.profile ? [...argv, "--profile", c.profile] : argv;

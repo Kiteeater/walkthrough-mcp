@@ -118,6 +118,8 @@ connector is registered there and its output is submitted and judged like everyt
 - **Env**: the child env is built from an allowlist only (`PATH`, `HOME`, `LANG`, `TMPDIR`, `TERM` + configured
   `passEnv`). `ALIBABA_CLOUD_*`, `ALICLOUD_*`, `ALIYUN_*`, `ACS_*` are always stripped, even if listed in `passEnv`;
   run_cli accepts no env from the caller.
+- **Credentials** are read only from the CLI's own profile config file (e.g. `~/.aliyun/config.json`); passing
+  credentials via env vars is not supported (env is stripped by design).
 - **mongosh** never takes agent argv: only fixed `find` / `aggregate` / `countDocuments` templates; `$out`, `$merge`,
   `$where`, `$function`, `$accumulator` are rejected at any depth.
 
