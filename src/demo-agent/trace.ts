@@ -19,7 +19,8 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function planTraceChecks(o: TraceOptions): Check[] {
   const base = o.baseUrl.replace(/\/$/, "");
   return o.orders.flatMap((ord, i): Check[] => [
-    { id: `chk-${i + 1}`, intent: `GET /api/orders/${ord}/total answers 2xx`, method: "http", target: `GET ${base}/api/orders/${ord}/total`, expect: { type: "status", value: [200, 299] }, severity_if_fail: "high" },
+    { id: `chk-${i + 1}`, intent: `GET /api/orders/${ord}/total answers 2xx`, method: "http", target: `GET ${base}/api/orders/${ord}/total`, expect: { type: "status", value: [200, 299] }, severity_if_fail: "high",
+      ...(o.metrics ? { alertMatchers: [{ route: "/api/orders/:id/total" }] } : {}) },
     { id: `chk-${i + 1}-logs`, intent: `no error alerts in ${o.service ?? "app"} logs for ${ord}`, method: "cli", target: `logs:${o.service ?? "app"}`, expect: { type: "absent", value: DEFAULT_ALERTS.map(esc).join("|") }, severity_if_fail: "high" },
   ]);
 }
@@ -90,4 +91,7 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       root_cause_chain: chain,
     });
   }
+  // Alerts: walkthrough watches Prometheus itself; a firing alert whose labels match a check's alertMatchers is attached
+  // to that check's finding (the traced 500); unrelated firing alerts are listed separately.
+  if (o.metrics) await core.watchAlerts(id, { windowS: 5, intervalS: 1 });
 }

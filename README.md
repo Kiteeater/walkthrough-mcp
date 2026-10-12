@@ -286,6 +286,34 @@ Demo: the trace demo (`examples/trace-demo`, part of `run-e2e.sh`) starts a mock
 "5xx ratio of `/api/orders/:id/total` over 5m > 0", walkthrough queries it (0.5 → pass) and the finding's chain reads
 HTTP 500 → Prometheus 5xx ratio → Langfuse trace → Mongo record → `pricing.js:3`.
 
+## Alert watching (read-only)
+
+`watch_alerts` (MCP) / `walkthrough watch-alerts <id> --window <s> [--interval <s>]` (CLI) make walkthrough poll
+Prometheus **`GET /api/v1/alerts`** itself over a bounded window. Same endpoint rules as `query_metrics`: base URL from
+`WALKTHROUGH_PROMETHEUS_URL`, host in `replay.allowHosts`, IP policy + pinned IP, every redirect hop re-checked and
+required to stay on `/api/v1/alerts`, token bound to the endpoint's origin and redacted, 1 MB / 10 s limits.
+
+- **Bounds**: `window_s` 1-900, `interval_s` 1-60 (default 15), at most 120 polls. By default the watch stops at the
+  first poll with a firing alert (`stop_on_firing: false` watches the whole window). The walkthrough is locked while
+  watching.
+- **Only `firing` alerts count**; `pending` ones are counted as "pending seen" and nothing else.
+- **Matching**: a check declares `alertMatchers` (e.g. `[{"alertname": "HighOrders5xx"}, {"route": "~/api/orders.*"}]`;
+  all labels of one matcher must match, a `~` value is a ReDoS-guarded full-match regex); `watch_alerts` can add
+  `matchers: [{check_id, labels}]`. A firing alert that matches is **attached to the existing finding** of a matched
+  check (as a chain step right after the symptom) or, if none of them has a finding yet, becomes a **new finding**
+  (severity from the `severity` label: critical/page → critical, warning → medium, info → low, else high).
+- **Unmatched firing alerts are listed separately** (audit view first screen, "未关联的告警"), never force-attached.
+- **Quiet window**: still stored as core-executed evidence (`kind: alert`, "no alerts in window" with start/end).
+- **Redaction** before anything derived from an alert is written: label/annotation values whose key looks secret are
+  masked, URLs get their secret query params masked (`token`, `sig`, `key`…), everything goes through generic +
+  env + token redaction.
+- Every poll (`alerts_poll`) and the result (`alerts_watch`, with evidence sha256 and what was attached where) are
+  appended to the hash-chained `commands.jsonl`.
+
+Demo: the trace demo's mock Prometheus fires `HighOrders5xx` (route `/api/orders/:id/total`, runbook URL with a
+token), an unrelated `DiskAlmostFull` and a pending `SlowCheckout`; the alert is attached to the traced 500's finding
+and shown on the first screen, `DiskAlmostFull` is listed as unmatched, the pending one is ignored.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:
