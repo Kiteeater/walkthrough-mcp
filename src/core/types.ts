@@ -1,7 +1,7 @@
 /** `response` = HTTP response / command output / MCP result submitted for a check. */
 export type EvidenceType = "screenshot" | "logs" | "response" | "har";
 /** Design-doc evidence kinds for capture_evidence. */
-export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric" | "alert";
+export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric" | "alert" | "blocked";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {

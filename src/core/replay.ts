@@ -172,7 +172,23 @@ export async function replayRequest(
   }
 }
 
-function send(url: URL, method: string, headers: Record<string, string>, ip: string, cfg: ReplayConfig): Promise<{ status: number; headers: Record<string, string>; body: string; truncated: boolean }> {
+async function send(url: URL, method: string, headers: Record<string, string>, ip: string, cfg: ReplayConfig): Promise<{ status: number; headers: Record<string, string>; body: string; truncated: boolean }> {
+  const r = await sendRaw(url, method, headers, ip, cfg);
+  return { status: r.status, headers: r.headers, body: r.body.toString("utf8"), truncated: r.truncated };
+}
+
+/**
+ * One policy-checked, IP-pinned request of any method with a raw body (capture_page sub-resources). No redirect
+ * following; the caller re-checks each hop. Throws ReplayRejectedError on a policy violation (nothing sent).
+ */
+export async function guardedRequest(cfg: ReplayConfig, url: string, o: { method?: string; headers?: Record<string, string>; body?: Buffer; resolver?: Resolver; maxBodyBytes?: number } = {}): Promise<{ status: number; headers: Record<string, string>; body: Buffer; ip: string; truncated: boolean }> {
+  const u = new URL(url);
+  const ip = await checkHop(cfg, u, o.resolver);
+  const r = await sendRaw(u, (o.method ?? "GET").toUpperCase(), o.headers ?? {}, ip, { ...cfg, maxBodyBytes: o.maxBodyBytes ?? cfg.maxBodyBytes }, o.body);
+  return { ...r, ip };
+}
+
+function sendRaw(url: URL, method: string, headers: Record<string, string>, ip: string, cfg: ReplayConfig, reqBody?: Buffer): Promise<{ status: number; headers: Record<string, string>; body: Buffer; truncated: boolean }> {
   const mod = url.protocol === "https:" ? https : http;
   const fam = isIP(ip);
   return new Promise((resolveP, reject) => {
@@ -191,7 +207,7 @@ function send(url: URL, method: string, headers: Record<string, string>, ip: str
         const h: Record<string, string> = {};
         for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h[k] = Array.isArray(v) ? v.join(", ") : v;
         clearTimeout(deadline);
-        resolveP({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks).toString("utf8"), truncated: n > cap });
+        resolveP({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks), truncated: n > cap });
       });
       res.on("error", reject);
     });
@@ -202,6 +218,6 @@ function send(url: URL, method: string, headers: Record<string, string>, ip: str
     const deadline = setTimeout(() => req.destroy(new Error(`request timed out after ${cfg.timeoutMs ?? 10_000} ms`)), cfg.timeoutMs ?? 10_000);
     req.on("close", () => clearTimeout(deadline));
     req.on("error", reject);
-    req.end();
+    req.end(reqBody);
   });
 }

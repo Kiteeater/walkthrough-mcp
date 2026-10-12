@@ -57,6 +57,11 @@ export function redactUrl(u: string, redactor: Redactor): string {
   return scrub(out, redactor);
 }
 
+/** Redact every http(s) URL inside free text (e.g. an error message that quotes the blocked URL). */
+export function redactUrlsIn(text: string, redactor: Redactor): string {
+  return text.replace(/\bhttps?:\/\/[^\s"'<>]+/g, (u) => redactUrl(u, redactor));
+}
+
 /** Redact a HAR: secret headers/cookies masked, secret query params masked, bodies through generic + env secret scrubbing. */
 export function redactHar(text: string, redactor: Redactor): string {
   const har = parseHar(text);
