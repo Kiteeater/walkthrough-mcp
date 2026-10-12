@@ -13,7 +13,7 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
-import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl } from "./har.js";
+import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, safeRegex } from "./har.js";
 import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
@@ -244,11 +244,14 @@ export class WalkthroughCore {
       const src = w.evidence.find((e) => e.id === input.evidenceId)!;
       if (src.type !== "har") throw new ClaimRejectedError(`${src.id} is not HAR evidence`);
       const har = parseHar(readFileSync(join(this.dir(id), src.path), "utf8"))!;
-      const re = input.urlMatch ? new RegExp(input.urlMatch) : undefined;
-      const entry = har.log.entries.find((e) => (!re || re.test(e.request.url)) && (!input.method || e.request.method.toUpperCase() === input.method.toUpperCase()));
+      const re = input.urlMatch ? safeRegex(input.urlMatch) : undefined;
+      const entry = har.log.entries.find((e) => (!re || re.test(String(e.request.url).slice(0, 2048))) && (!input.method || e.request.method.toUpperCase() === input.method.toUpperCase()));
       if (!entry) throw new ClaimRejectedError(`no HAR entry in ${src.id} matching ${input.urlMatch ?? "(any)"}`);
       // Only method + URL are taken from the HAR; its headers/cookies/body are never sent.
       const r = await replayRequest(cfg, { method: entry.request.method, url: entry.request.url }, { resolver: this.deps.resolver, env: this.deps.env });
+      // Everything written for this run is redacted with the account value too (its env name may not look secret).
+      const env = this.deps.env ?? process.env;
+      const red = this.redactor.with([...r.sentSecrets, cfg.auth ? env[cfg.auth.valueEnv] : undefined]);
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.har`;
       const out = { log: { version: "1.2", creator: { name: "walkthrough-replay", version: "1" }, entries: [{
@@ -256,16 +259,16 @@ export class WalkthroughCore {
         response: { status: r.status, headers: Object.entries(r.headers).map(([name, value]) => ({ name, value })), cookies: [], content: { mimeType: r.headers["content-type"] ?? "", text: r.body } },
         _hops: r.hops,
       }] } };
-      writeFileSync(join(this.dir(id), rel), redactHar(JSON.stringify(out), this.redactor));
+      writeFileSync(join(this.dir(id), rel), redactHar(JSON.stringify(out), red));
       const sha = sha256File(join(this.dir(id), rel));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "replay", checkId: input.checkId, fromEvidenceId: src.id,
-        method: r.method, url: this.redactor.text(r.url), hops: r.hops.map((h) => ({ ...h, url: this.redactor.text(h.url) })), status: r.status,
+        method: r.method, url: red.text(r.url), hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })), status: r.status,
         outputSha256: sha, evidenceId: evId, executedBy: "core",
       });
       w.commandLogHead = { seq: log.seq, hash: log.hash };
       const ev: Evidence = { id: evId, type: "har", kind: "har", path: rel, sha256: sha, createdAt: this.ts(), checkId: input.checkId, executedBy: "core",
-        source: this.redactor.text(`replay:${r.method} ${r.url} (from ${src.id})`) };
+        source: red.text(`replay:${r.method} ${r.url} (from ${src.id})`) };
       w.evidence.push(ev);
       this.save(w);
       return ev;

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ipProblem, Redactor, replayRequest, WalkthroughCore, type Check, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { authFor, ipProblem, Redactor, replayRequest, WalkthroughCore, type Check, type ReplayConfig, type Sandbox } from "../src/core/index.js";
 import { mkdtempSync } from "node:fs";
 import { SB } from "./helpers.js";
 
@@ -23,6 +23,8 @@ const har = (status = 500, url = "http://demo.local:PORT/api/orders") => JSON.st
   { request: { method: "GET", url: "http://demo.local/app.js", headers: [] }, response: { status: 200, headers: [], content: { text: "" } } },
 ] } });
 
+// Test-account value; env name deliberately does NOT look secret, so only explicit per-run redaction can hide it.
+const QA = "qaACCOUNTvalue12345";
 const chk = (id: string, value: unknown): Check => ({ id, intent: id, method: "ui", target: "orders page", expect: { type: "ui", value } as never, severity_if_fail: "high" });
 const uiOk = chk("ui-ok", { har: { urlMatch: "/api/orders", status: [200, 299] } });
 const ui500 = chk("ui-500", { har: { urlMatch: "/api/orders", status: 500 } });
@@ -30,14 +32,14 @@ const text = chk("ui-text", { text: { contains: "Failed to load orders" } });
 const status = chk("st", { type: "status", value: 200 } as never);
 status.expect = { type: "status", value: 200 };
 
-function mk(replay?: ReplayConfig, resolver?: (h: string) => Promise<string>) {
+function mk(replay?: ReplayConfig, resolver?: (h: string) => Promise<string>, redactor: Redactor = new Redactor([])) {
   const root = mkdtempSync(join(tmpdir(), "wt-page-"));
   const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
-  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async (_u, o) => writeFileSync(o, "png") }, redactor: new Redactor([]), replay, resolver, env: { TEST_ACCOUNT_AUTH: "Bearer CONFIGtestACCOUNT" } });
+  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async (_u, o) => writeFileSync(o, "png") }, redactor, replay, resolver, env: { QA_LOGIN: QA } });
   return { core, root };
 }
-async function setup(replay?: ReplayConfig, resolver?: (h: string) => Promise<string>) {
-  const { core, root } = mk(replay, resolver);
+async function setup(replay?: ReplayConfig, resolver?: (h: string) => Promise<string>, redactor?: Redactor) {
+  const { core, root } = mk(replay, resolver, redactor);
   const w = core.startWalkthrough({ title: "ui", sandbox: SB });
   await core.planChecks(w.id, { goal: "g", checks: [uiOk, ui500, text, status] });
   const shot = (checkId: string) => core.captureEvidence(w.id, { type: "submit", checkId, kind: "screenshot", source: { tool: "computer-use" }, content: Buffer.from("PNG with text: Failed to load orders HTTP/1.1 200 \"status\": 200").toString("base64") });
@@ -145,7 +147,12 @@ describe("replay (core-executed)", () => {
   beforeAll(async () => {
     srv = http.createServer((req, res) => {
       seen.push(req.headers);
-      if (req.url?.startsWith("/api/orders")) { res.writeHead(500, { "content-type": "application/json", "set-cookie": "srv=SRVsecret" }); return res.end('{"error":"internal error"}'); }
+      if (req.url?.startsWith("/api/orders")) {
+        // Debug endpoint that echoes the session header back in a response header AND the body.
+        const echo = String(req.headers["x-qa-session"] ?? "");
+        res.writeHead(500, { "content-type": "application/json", "set-cookie": "srv=SRVsecret", "x-debug-echo": echo });
+        return res.end(JSON.stringify({ error: "internal error", debug: `session was ${echo}` }));
+      }
       if (req.url === "/redir-evil") { res.writeHead(302, { location: "http://evil.example/steal" }); return res.end(); }
       if (req.url === "/redir-meta") { res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/" }); return res.end(); }
       if (req.url === "/redir-self") { res.writeHead(302, { location: `http://demo.local:${port}/api/orders` }); return res.end(); }
@@ -155,12 +162,12 @@ describe("replay (core-executed)", () => {
     port = (srv.address() as AddressInfo).port;
   });
   afterAll(() => srv.close());
-  const cfg = (): ReplayConfig => ({ allowHosts: [`demo.local:${port}`], allowCidrs: ["127.0.0.1/32"], auth: { header: "Authorization", valueEnv: "TEST_ACCOUNT_AUTH" } });
+  const cfg = (): ReplayConfig => ({ allowHosts: [`demo.local:${port}`], allowCidrs: ["127.0.0.1/32"], auth: { header: "X-QA-Session", valueEnv: "QA_LOGIN" } });
   const local = async () => "127.0.0.1";
   const url = (p: string) => `http://demo.local:${port}${p}`;
 
   it("replays the HAR's GET, never forwards HAR cookies/auth, logs to the hash chain; check judges a normal fail/pass", async () => {
-    const { core, root, id, harEv, shot } = await setup(cfg(), local);
+    const { core, root, id, harEv, shot } = await setup(cfg(), local, Redactor.fromEnv(process.env)); // real env redactor
     const a = await harEv("ui-ok", har(500, url("/api/orders")));
     const s = await shot("ui-ok");
     seen.length = 0;
@@ -169,14 +176,24 @@ describe("replay (core-executed)", () => {
     expect(seen).toHaveLength(1);
     const h = JSON.stringify(seen[0]);
     expect(h).not.toContain("COOKIEsecret123"); expect(h).not.toContain(S.bearer); expect(seen[0].cookie).toBeUndefined();
-    expect(seen[0].authorization).toBe("Bearer CONFIGtestACCOUNT"); // configured test account, not the HAR's
+    expect(seen[0].authorization).toBeUndefined();
+    expect(seen[0]["x-qa-session"]).toBe(QA); // configured test account, not the HAR's
     const res = await core.evaluateCheck(id, { checkId: "ui-ok", evidenceIds: [a.id, s.id, r.id] });
     expect(res.status).toBe("fail");
     const log = readFileSync(join(core.dir(id), "commands.jsonl"), "utf8");
     expect(log).toMatch(/"type":"replay"/); expect(log).toMatch(/"executedBy":"core"/);
     expect(core.verifyCommandLog(id).ok).toBe(true);
     const all = allArtifacts(join(root, ".walkthrough"));
-    expect(all).not.toContain("SRVsecret"); expect(all).not.toContain("CONFIGtestACCOUNT");
+    const { renderWalkthrough } = await import("../src/core/index.js");
+    await core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: [{ claim: "500", kind: "observed", evidence_ids: [r.id] }], check_id: "ui-ok" });
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).toContain("session was [REDACTED]"); // the echo is there, masked
+    expect(html).not.toContain(QA);
+    expect(JSON.stringify(core.load(id))).not.toContain(QA);
+    const files = readdirSync(join(root, ".walkthrough"), { recursive: true, withFileTypes: true }).filter((d) => d.isFile());
+    expect(files.length).toBeGreaterThan(4);
+    expect(allArtifacts(join(root, ".walkthrough"))).not.toContain(QA);
+    expect(all).not.toContain("SRVsecret"); expect(all).not.toContain(QA);
     // a matching expectation backed by a core replay is a normal pass, not needs-review
     const b = await harEv("ui-500", har(500, url("/api/orders")));
     const r2 = await core.replayHar(id, { checkId: "ui-500", evidenceId: b.id });
@@ -224,6 +241,47 @@ describe("replay (core-executed)", () => {
     expect(ipProblem("127.0.0.1", ["127.0.0.1/32"])).toBeUndefined();
     expect(ipProblem("::ffff:127.0.0.1", ["127.0.0.1/32"])).toBeUndefined();
   });
+  it("cross-origin redirect (A → B, both allowlisted): B gets none of A's credentials; HAR cookies never sent", async () => {
+    const got: http.IncomingHttpHeaders[] = [];
+    const b = http.createServer((req, res) => { got.push(req.headers); res.writeHead(200); res.end("b"); });
+    await new Promise<void>((r) => b.listen(0, "127.0.0.1", r));
+    const bport = (b.address() as AddressInfo).port;
+    const a = http.createServer((req, res) => { seen.push(req.headers); res.writeHead(302, { location: `http://other.local:${bport}/x`, "set-cookie": "a=1" }); res.end(); });
+    await new Promise<void>((r) => a.listen(0, "127.0.0.1", r));
+    const aport = (a.address() as AddressInfo).port;
+    try {
+      seen.length = 0;
+      const c: ReplayConfig = { allowHosts: [`demo.local:${aport}`, `other.local:${bport}`, `demo.local:${bport}`], allowCidrs: ["127.0.0.1/32"], auth: { header: "X-QA-Session", valueEnv: "QA_LOGIN" } };
+      const r = await replayRequest(c, { method: "GET", url: `http://demo.local:${aport}/start` }, { resolver: local, env: { QA_LOGIN: QA } });
+      expect(r.status).toBe(200);
+      expect(seen[0]["x-qa-session"]).toBe(QA);           // origin A: account attached
+      expect(got[0]["x-qa-session"]).toBeUndefined();      // origin B: stripped
+      expect(got[0].cookie).toBeUndefined(); expect(got[0].authorization).toBeUndefined();
+      expect(r.sentSecrets).toEqual([QA]);
+      // same host, different port → different origin → stripped too
+      const a2 = http.createServer((req, res) => { res.writeHead(302, { location: `http://demo.local:${bport}/y` }); res.end(); });
+      await new Promise<void>((r2) => a2.listen(0, "127.0.0.1", r2));
+      const a2port = (a2.address() as AddressInfo).port;
+      got.length = 0;
+      await replayRequest({ ...c, allowHosts: [...c.allowHosts, `demo.local:${a2port}`] }, { method: "GET", url: `http://demo.local:${a2port}/` }, { resolver: local, env: { QA_LOGIN: QA } });
+      expect(got[0]["x-qa-session"]).toBeUndefined();
+      a2.close();
+      // an origin explicitly bound in config gets the account re-attached
+      got.length = 0;
+      await replayRequest({ ...c, auth: { ...c.auth!, origins: [`http://demo.local:${aport}`, `http://other.local:${bport}`] } }, { method: "GET", url: `http://demo.local:${aport}/start` }, { resolver: local, env: { QA_LOGIN: QA } });
+      expect(got[0]["x-qa-session"]).toBe(QA);
+    } finally { a.close(); b.close(); }
+  });
+  it("authFor: https → http downgrade, other port, other host all drop the account", () => {
+    const c: ReplayConfig = { allowHosts: [], auth: { header: "X-QA-Session", valueEnv: "QA_LOGIN" } };
+    const env = { QA_LOGIN: QA };
+    const first = "https://shop.example";
+    expect(authFor(c, new URL("https://shop.example/a"), first, env)).toEqual({ "x-qa-session": QA });
+    expect(authFor(c, new URL("https://shop.example:443/a"), first, env)).toEqual({ "x-qa-session": QA });
+    expect(authFor(c, new URL("http://shop.example/a"), first, env)).toEqual({});        // downgrade
+    expect(authFor(c, new URL("https://shop.example:8443/a"), first, env)).toEqual({});  // other port
+    expect(authFor(c, new URL("https://evil.example/a"), first, env)).toEqual({});       // other host
+  });
   it("DNS rebinding: each hop resolves once and is pinned; a second resolution to a forbidden IP is rejected", async () => {
     const answers = ["127.0.0.1", "169.254.169.254"];
     let calls = 0;
@@ -232,5 +290,23 @@ describe("replay (core-executed)", () => {
     expect(calls).toBe(2); // one lookup per hop; http itself never re-resolves
     const answers2 = ["127.0.0.1", "10.0.0.9"]; let c2 = 0;
     await expect(replayRequest(cfg(), { method: "GET", url: url("/redir-self") }, { resolver: async () => answers2[Math.min(c2++, 1)] })).rejects.toThrow(/denied/);
+  });
+});
+
+describe("name-pattern redaction and ReDoS guard", () => {
+  it("secret header names by pattern; param names anchored to the last segment", async () => {
+    const { SECRET_HEADER, SECRET_PARAM } = await import("../src/core/index.js");
+    for (const h of ["X-Access-Token", "Api-Key", "X-Goog-Api-Key", "X-Session-Id", "Set-Cookie", "Proxy-Authorization", "X-CSRF-Token"]) expect(SECRET_HEADER.test(h), h).toBe(true);
+    for (const h of ["Accept", "Content-Type", "User-Agent", "Cache-Control"]) expect(SECRET_HEADER.test(h), h).toBe(false);
+    for (const n of ["access_token", "api_key", "X-Amz-Signature", "sid", "jwt", "ticket", "code", "client_secret"]) expect(SECRET_PARAM.test(n), n).toBe(true);
+    for (const n of ["barcode", "zipcode", "monkey", "page", "sort"]) expect(SECRET_PARAM.test(n), n).toBe(false);
+  });
+  it("agent regexes: nested quantifiers, backrefs and over-long patterns are rejected", async () => {
+    const { safeRegex } = await import("../src/core/index.js");
+    for (const p of ["(a+)+$", "(a*)*", "(\\w+\\s?)+$", "(a|aa)+", "(.*){2,}", "(a)\\1", "x".repeat(201)]) expect(() => safeRegex(p), p).toThrow();
+    expect(safeRegex("/api/orders$").test("http://x/api/orders")).toBe(true);
+    const { core } = mk();
+    const w = core.startWalkthrough({ title: "t", sandbox: SB });
+    await expect(core.planChecks(w.id, { goal: "g", checks: [chk("r", { har: { urlMatch: "(a+)+$", status: 200 } })] })).rejects.toThrow(/ReDoS/);
   });
 });

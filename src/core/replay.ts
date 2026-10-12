@@ -14,8 +14,12 @@ export interface ReplayConfig {
    * Cloud metadata addresses are denied regardless.
    */
   allowCidrs?: string[];
-  /** Test-account auth, taken from config/env only (never from the HAR): header name + env var holding the value. */
-  auth?: { header: string; valueEnv: string };
+  /**
+   * Test-account auth, taken from config/env only (never from the HAR): header name + env var holding the value.
+   * Bound to origins (scheme://host:port): `origins` if given, else only the origin of the replayed URL. It is never
+   * sent to any other origin, so a redirect to another host, port or scheme (incl. https→http) drops it.
+   */
+  auth?: { header: string; valueEnv: string; origins?: string[] };
   maxRedirects?: number;
   timeoutMs?: number;
   maxBodyBytes?: number;
@@ -92,6 +96,17 @@ export function ipProblem(ipRaw: string, allowCidrs: string[] = []): string | un
 export interface ReplayHop { url: string; ip: string; status: number }
 export interface ReplayResult {
   method: string; url: string; status: number; headers: Record<string, string>; body: string; hops: ReplayHop[];
+  /** Credential values actually sent (callers must redact them from anything they store). */
+  sentSecrets: string[];
+}
+
+/** Auth headers for one hop: only when the hop's origin is one the account is bound to. Never cookies. */
+export function authFor(cfg: ReplayConfig, hop: URL, firstOrigin: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (!cfg.auth) return {};
+  const allowed = (cfg.auth.origins?.length ? cfg.auth.origins : [firstOrigin]).map((o) => new URL(o).origin);
+  if (!allowed.includes(hop.origin)) return {};
+  const v = env[cfg.auth.valueEnv];
+  return v ? { [cfg.auth.header.toLowerCase()]: v } : {};
 }
 
 function hostAllowed(u: URL, cfg: ReplayConfig): boolean {
@@ -134,10 +149,14 @@ export async function replayRequest(
   const max = cfg.maxRedirects ?? 3;
   const hops: ReplayHop[] = [];
   let url = new URL(input.url);
+  const first = url.origin;
+  const sent: string[] = [];
   for (let i = 0; ; i++) {
     const ip = await checkHop(cfg, url, resolver);
-    const headers: Record<string, string> = { "user-agent": "walkthrough-replay/1", accept: "*/*" };
-    if (cfg.auth) { const v = (opts.env ?? process.env)[cfg.auth.valueEnv]; if (v) headers[cfg.auth.header.toLowerCase()] = v; }
+    // Fresh headers per hop: nothing carries over; the account is attached only for its own origin(s).
+    const auth = authFor(cfg, url, first, opts.env);
+    sent.push(...Object.values(auth));
+    const headers: Record<string, string> = { "user-agent": "walkthrough-replay/1", accept: "*/*", ...auth };
     const r = await send(url, method, headers, ip, cfg);
     hops.push({ url: url.toString(), ip, status: r.status });
     const loc = r.headers.location;
@@ -146,7 +165,7 @@ export async function replayRequest(
       url = new URL(loc, url); // next hop goes through the same allowlist + IP checks
       continue;
     }
-    return { method, url: input.url, status: r.status, headers: r.headers, body: r.body, hops };
+    return { method, url: input.url, status: r.status, headers: r.headers, body: r.body, hops, sentSecrets: [...new Set(sent)] };
   }
 }
 

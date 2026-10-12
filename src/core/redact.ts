@@ -16,6 +16,11 @@ export class Redactor {
   static fromEnv(env: NodeJS.ProcessEnv = process.env): Redactor {
     return new Redactor(secretValues(env));
   }
+  /** A redactor that also masks `extra` values (e.g. a credential we send for this run only). */
+  with(extra: (string | undefined)[]): Redactor {
+    const add = extra.filter((v): v is string => !!v && v.length >= 4);
+    return new Redactor([...new Set([...this.secrets, ...add])].sort((a, b) => b.length - a.length));
+  }
   text(input: string): string {
     let s = input;
     for (const v of this.secrets) s = s.split(v).join(MASK);
