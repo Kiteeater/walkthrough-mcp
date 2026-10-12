@@ -319,7 +319,7 @@ The built-in `mqadmin` connector only runs query subcommands. Each one has its o
 | `topicStatus` | `-n`, `-t`, `-c` |
 | `topicRoute`, `topicClusterList` | `-n`, `-t` |
 | `consumerProgress` | `-n`, `-g`, `-t`, `-s`, `-c` |
-| `consumerStatus` | `-n`, `-g`, `-i`, `-b` |
+| `consumerStatus` | `-n`, `-g`, `-i` |
 | `brokerStatus` | `-n`, `-b`, `-c` |
 | `queryMsgById` | `-n`, `-t`, `-i`, `-c` |
 | `queryMsgByKey` | `-n`, `-t`, `-k`, `-b`, `-m`, `-c`, `-l` |
@@ -354,8 +354,21 @@ unavailable, because they collide with the global credential/eval flag denylist.
   itself does.
 - **Credentials** (ACL access and secret keys) come only from mqadmin's own tools config file. They are never taken
   from env or argv, and all output goes through the Redactor.
-- **Message bodies** printed by `queryMsgById`, `queryMsgByKey` and `queryMsgByUniqueKey` are redacted first, then cut
-  to `messageBody.maxChars` (default 2048) with a `…[truncated N chars]` marker, before being saved as evidence.
+- **Message bodies.** mqadmin 5.5.1 doesn't print bodies. `queryMsgById` and `queryMsgByUniqueKey` write each body raw
+  to `/tmp/rocketmq/msgbodys/<msgId>` on the host and print `Message Body Path: <file>`. After the call, the core
+  reads each such file, redacts it, cuts it to `messageBody.maxChars` (default 2048, with a `…[truncated N chars]`
+  marker), stores it in the evidence on one line (newlines escaped), and deletes the original. A file is read and
+  deleted only if all of these hold:
+  - It sits directly in that directory, under a hex id name.
+  - It belongs to this query's `-i` (or to the `UNIQ_KEY` of a message whose `OffsetID` was asked for).
+  - It was written during this call.
+  - It is a regular file: symlinks are refused, the file is opened with `O_NOFOLLOW`, and dev/inode must match
+    between lstat, open and unlink.
+
+  `-i` must be hex message id(s), so path syntax is rejected before anything runs. Anything else is left in place and
+  marked `[not read: …]`. `queryMsgByKey` prints only a msgId/offset table and writes no body file.
+- **Known gaps (tracked in #25, #26):** `brokerStatus -b` and the IP:port encoded in a `queryMsgById` offset msgId both
+  make mqadmin connect directly to a broker, so they are exceptions to "no pivot".
 - `profile` (optional) is a label recorded in the command log alongside the CLI name, version and output sha256. It
   is not passed to mqadmin, which has no profile flag (`appendProfile: false`).
 

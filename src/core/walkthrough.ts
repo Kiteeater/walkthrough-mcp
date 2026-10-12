@@ -9,7 +9,7 @@ import { Redactor } from "./redact.js";
 import {
   appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
-  CLI_ENV_DENY, capMessageBodies,
+  CLI_ENV_DENY, collectMessageBodies, requestedMsgIds,
 } from "./runcli.js";
 import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
@@ -722,8 +722,11 @@ export class WalkthroughCore {
       for (const n of Object.keys(env)) if (CLI_ENV_DENY.test(n)) delete env[n];
       const version = await this.cliVersion(c, env, cwd);
       const timeoutMs = Math.min(Math.max(1, input.timeoutS ?? 60), 600) * 1000;
+      const startedMs = Date.now();
       const res = await run(c.binary, argv, { cwd, env, timeoutMs });
-      if (c.messageBody?.subcommands.includes(argv[0])) res.output = capMessageBodies(res.output, c.messageBody.maxChars, (t) => this.redactor.text(t));
+      if (c.messageBody?.subcommands.includes(argv[0])) {
+        res.output = collectMessageBodies(res.output, { dir: c.messageBody.dir, maxChars: c.messageBody.maxChars, sinceMs: startedMs, ids: requestedMsgIds(argv) }, (t) => this.redactor.text(t));
+      }
       const shown = argv.map((a) => this.redactor.text(a));
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.txt`;

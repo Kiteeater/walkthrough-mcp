@@ -8,7 +8,8 @@
  *    name+version+profile name). Credentials are never logged: they stay in the CLI's own local login state.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
+import { basename, dirname, resolve as resolvePath } from "node:path";
 
 export class CliRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "CliRejectedError"; }
@@ -42,8 +43,13 @@ export interface ConnectorConfig {
    * list is non-empty, the first entry is appended by us. Default: none, so any `-n` is rejected (no pivot to other hosts).
    */
   namesrvs?: string[];
-  /** Message-body capping for subcommands that print message bodies: bodies are redacted, then cut to `maxChars`. */
-  messageBody?: { subcommands: string[]; maxChars: number };
+  /**
+   * Message bodies. mqadmin 5.5.1 `queryMsgById` / `queryMsgByUniqueKey` do not print the body; they write it raw to
+   * `<dir>/<msgId>` (UniqueKey: `<msgId>_<n>` for n>0) and print `Message Body Path: <file>`. The core reads each such
+   * file (only directly under `dir`, hex-id name, regular file, written during this call), redacts it, cuts it to
+   * `maxChars`, puts it in the evidence, and deletes the original. Default dir: /tmp/rocketmq/msgbodys (hardcoded upstream).
+   */
+  messageBody?: { subcommands: string[]; maxChars: number; dir?: string };
   /** Append `--profile <profile>` to argv (default true). False for CLIs without a profile flag; the name is still logged. */
   appendProfile?: boolean;
   /** Host env var names passed to the CLI in addition to the sandbox defaults. */
@@ -87,14 +93,15 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
       topicRoute: ["-n", "-t"],
       topicClusterList: ["-n", "-t"],
       consumerProgress: ["-n", "-g", "-t", "-s", "-c"],
-      consumerStatus: ["-n", "-g", "-i", "-b"],
+      consumerStatus: ["-n", "-g", "-i"], // no -b: it connects straight to the given broker, bypassing the fixed name server
       brokerStatus: ["-n", "-b", "-c"],
       queryMsgById: ["-n", "-t", "-i", "-c"],
       queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"],
       queryMsgByUniqueKey: ["-n", "-i", "-t", "-c", "-s"],
     },
     namesrvs: [], // set in config: the fixed name server address(es) the agent may query
-    messageBody: { subcommands: ["queryMsgById", "queryMsgByKey", "queryMsgByUniqueKey"], maxChars: 2048 },
+    // queryMsgByKey prints only a msgId/queue/offset table (QueryMsgByKeySubCommand L134-145) and writes no body file.
+    messageBody: { subcommands: ["queryMsgById", "queryMsgByUniqueKey"], maxChars: 2048, dir: "/tmp/rocketmq/msgbodys" },
     appendProfile: false,
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
@@ -181,6 +188,8 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     }
     if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
     if (flag === "--region" && !(c.regions ?? []).includes(value)) throw new CliRejectedError(`${c.name}: region not in allowlist: ${JSON.stringify(value)}`);
+    if (flag === "-i" && c.messageBody?.subcommands.includes(prefix[0]) && !value.split(",").every((x) => MSG_ID.test(x.trim())))
+      throw new CliRejectedError(`${c.name} ${prefix[0]}: -i must be hex message id(s): ${JSON.stringify(value)}`);
     if (c.namesrvs && flag === "-n") {
       if (!c.namesrvs.includes(value)) throw new CliRejectedError(`${c.name}: -n name server not in allowlist: ${JSON.stringify(value)}`);
       sawNamesrv = true;
@@ -252,4 +261,72 @@ export function capMessageBodies(output: string, maxChars: number, redact: (s: s
     const r = redact(body);
     return r.length <= maxChars ? head + r : `${head}${r.slice(0, maxChars)}…[truncated ${r.length - maxChars} chars]`;
   });
+}
+
+export const MSG_BODY_DIR = "/tmp/rocketmq/msgbodys";
+/** A message id as accepted for `-i` and as a body file name: hex only, so no `/`, `..` or other path syntax. */
+export const MSG_ID = /^[0-9A-Fa-f]{16,64}$/;
+const BODY_NAME = /^([0-9A-Fa-f]{16,64})(?:_(\d{1,2}))?$/;
+const BODY_READ_MAX = 1_000_000;
+
+/** The ids this call asked for (`-i a,b` or `-i=a`), upper-cased. */
+export function requestedMsgIds(argv: string[]): Set<string> {
+  const ids = new Set<string>();
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i] === "-i" ? argv[i + 1] : argv[i].startsWith("-i=") ? argv[i].slice(3) : undefined;
+    for (const x of (v ?? "").split(",")) if (x.trim()) ids.add(x.trim().toUpperCase());
+  }
+  return ids;
+}
+
+/**
+ * Replace each `Message Body Path: <file>` line (format `%-20s %s%n`, QueryMsgByIdSubCommand L142-145 /
+ * QueryMsgByUniqueKeySubCommand L102) with the redacted, capped body read from that file, then delete the file.
+ * A file is read only if ALL hold: it sits directly in `dir`; its name is `<hexId>` or `<hexId>_<n>`; it belongs to
+ * this query (hexId is one of `ids`; or the block's `OffsetID:` is one of `ids` and hexId equals that block's
+ * `UNIQ_KEY` property: queryMsgById names the file after msg.getMsgId(), i.e. the unique key, which can differ
+ * from the offset id that was asked for); lstat says regular file (not a symlink),
+ * written during this call; and the fd opened with O_NOFOLLOW has the same dev/inode. It is unlinked only if a
+ * second lstat still shows that dev/inode. Anything else is left untouched. Newlines in the body are escaped.
+ */
+export function collectMessageBodies(output: string, o: { dir?: string; maxChars: number; sinceMs: number; ids: Set<string> }, redact: (s: string) => string): string {
+  const dir = resolvePath(o.dir ?? MSG_BODY_DIR);
+  const label = "Message Body:".padEnd(20);
+  let offsetId = "";
+  let uniqKey = "";
+  return output.split("\n").map((line) => {
+    const off = /^OffsetID:[ \t]+([0-9A-Fa-f]+)\s*$/.exec(line);
+    if (off) { offsetId = off[1].toUpperCase(); uniqKey = ""; return line; }
+    const props = /^Properties:[ \t].*\bUNIQ_KEY=([0-9A-Fa-f]+)/.exec(line);
+    if (props) { uniqKey = props[1].toUpperCase(); return line; }
+    const m = /^Message Body Path:[ \t]+(\S[^\r]*?)[ \t]*\r?$/.exec(line);
+    if (!m) return line;
+    const raw = m[1];
+    const p = resolvePath(raw);
+    const name = BODY_NAME.exec(basename(p));
+    const skip = (why: string) => `${line}\n${label} [not read: ${why}]`;
+    if (raw.includes("..") || dirname(p) !== dir || !name) return skip("unexpected path");
+    const fileId = name[1].toUpperCase();
+    const ours = o.ids.has(fileId) || (o.ids.has(offsetId) && fileId === uniqKey);
+    offsetId = ""; uniqKey = ""; // one body path per printed message block
+    if (!ours) return skip("not this query's message id");
+    let st;
+    try { st = lstatSync(p); } catch { return skip("file missing"); }
+    if (st.isSymbolicLink() || !st.isFile()) return skip("not a regular file");
+    if (st.mtimeMs < o.sinceMs - 2000) return skip("file predates this call");
+    let fd: number;
+    try { fd = openSync(p, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { return skip("open refused"); }
+    let buf: Buffer;
+    try {
+      const f = fstatSync(fd);
+      if (f.dev !== st.dev || f.ino !== st.ino || !f.isFile()) return skip("file changed between lstat and open");
+      buf = Buffer.alloc(Math.min(f.size, BODY_READ_MAX));
+      readSync(fd, buf, 0, buf.length, 0);
+    } finally { closeSync(fd); }
+    try { const again = lstatSync(p); if (again.dev === st.dev && again.ino === st.ino) unlinkSync(p); } catch { /* already gone */ }
+    const r = redact(buf.toString("utf8"));
+    const extra = r.length - o.maxChars + Math.max(0, st.size - BODY_READ_MAX);
+    const body = (extra <= 0 ? r : `${r.slice(0, o.maxChars)}…[truncated ${extra} chars]`).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    return `${"Message Body Path:".padEnd(20)} ${redact(p)} [read by core, original deleted]\n${label} ${body}`;
+  }).join("\n");
 }
