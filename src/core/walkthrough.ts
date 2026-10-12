@@ -13,8 +13,8 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
-import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar } from "./har.js";
-import { replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl } from "./har.js";
+import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
   Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
@@ -279,9 +279,13 @@ export class WalkthroughCore {
   capturePage(id: string, input: { url: string; checkId: string }): Promise<Evidence[]> {
     return this.withLock(id, async () => {
       if (!this.deps.capturer.page) throw new Error("page capture is not available (no Playwright capturer)");
+      const cfg = this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("capture_page needs replay.allowHosts (same policy as replay)");
       const w = this.load(id);
       if (!(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
-      const p = await this.deps.capturer.page(input.url);
+      // Pre-check gives a clear error before any browser starts; every navigation hop is re-checked by the guard.
+      await checkHop(cfg, new URL(input.url), this.deps.resolver);
+      const p = await this.deps.capturer.page(input.url, { fetch: (u) => guardedGet(cfg, u, { resolver: this.deps.resolver }) });
       const src = this.redactor.text(`playwright:${input.url}`);
       const out: Evidence[] = [];
       const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
@@ -293,6 +297,13 @@ export class WalkthroughCore {
       add("screenshot", "screenshot", "png", p.screenshot);
       add("har", "har", "har", redactHar(p.har, this.redactor));
       add("response", "http", "txt", this.redactor.text(p.text));
+      const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+        ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
+        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, this.redactor) })),
+        subresources: p.subresources.slice(0, 200).map((u) => { const [m, ...r] = u.split(" "); return `${m} ${redactUrl(r.join(" "), this.redactor)}`; }),
+        evidenceIds: out.map((e) => e.id), executedBy: "core",
+      });
+      w.commandLogHead = { seq: log.seq, hash: log.hash };
       this.save(w);
       return out;
     });

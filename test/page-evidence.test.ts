@@ -86,8 +86,8 @@ describe("page evidence: judging from HAR / DOM text", () => {
     expect((await core.evaluateCheck(id, { checkId: "ui-text", evidenceIds: [t.id] })).status).toBe("pass_needs_review");
   });
   it("core page capture (method: ui fallback) is core-executed and judged normally", async () => {
-    const { core, root } = mk();
-    (core as unknown as { deps: { capturer: unknown } }).deps.capturer = { screenshot: async () => {}, page: async () => ({ screenshot: Buffer.from("png"), har: har(500), text: "Failed to load orders" }) };
+    const { core, root } = mk({ allowHosts: ["demo.local"] }, async () => "93.184.216.34");
+    (core as unknown as { deps: { capturer: unknown } }).deps.capturer = { screenshot: async () => {}, page: async () => ({ screenshot: Buffer.from("png"), har: har(500), text: "Failed to load orders", navigations: [], subresources: ["GET http://cdn.example/x.js?token=SUBRESsecret"] }) };
     const w = core.startWalkthrough({ title: "t", sandbox: SB });
     await core.planChecks(w.id, { goal: "g", checks: [ui500] });
     const evs = await core.capturePage(w.id, { url: "http://demo.local/", checkId: "ui-500" });
@@ -95,6 +95,8 @@ describe("page evidence: judging from HAR / DOM text", () => {
     expect((await core.evaluateCheck(w.id, { checkId: "ui-500", evidenceIds: evs.map((e) => e.id) })).status).toBe("pass");
     const all = allArtifacts(join(root, ".walkthrough"));
     for (const v of Object.values(S)) expect(all).not.toContain(v);
+    expect(all).not.toContain("SUBRESsecret");
+    expect(readFileSync(join(core.dir(w.id), "commands.jsonl"), "utf8")).toMatch(/"type":"capture_page".*cdn\.example/);
   });
 });
 
