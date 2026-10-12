@@ -328,10 +328,12 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     `--host-resolver-rules` (`MAP <allowed host> <checked IP>`, everything else `~NOTFOUND`), so even a request that
     escaped interception could not resolve anything else.
   - **WebSockets** are intercepted with `routeWebSocket` and closed (never connected): there's no IP-pinned
-    WebSocket proxy yet. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`).
+    WebSocket proxy yet. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
     **Popups / new windows** are closed at once; their requests still go through the checks above.
-  - Every blocked request is stored as core-executed evidence (`kind: blocked`: type, method, reason, URL **with
-    secret query params, userinfo and token patterns redacted**). The report's first screen shows the count
+  - Every blocked request is stored as core-executed evidence (`kind: blocked`: type, method, reason, URL with
+    **every query param value (any name), userinfo and token patterns redacted**). Those values are also treated as
+    secrets for the whole capture, so they are masked in the HAR (including page HTML that embeds them), DOM text,
+    command log and report. The report's first screen shows the count
     ("🛡 capture_page 已拦截 N 个请求") with the table behind a `<details>`.
   - `capture_page` sends no test-account credentials, and the browser's own cookies are not forwarded by the fetcher.
 - **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
@@ -511,3 +513,7 @@ CI lives in `.github/workflows/ci.yml`: it runs unit tests plus the Docker Compo
 ## License
 
 MIT
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). CI has a test-count gate: new tests must bump `test/EXPECTED_TEST_COUNT`, and skipped tests fail CI.

@@ -5,3 +5,4 @@ dist/
 .env
 e2e-output/
 examples/.generated.*.json
+vitest-report.json

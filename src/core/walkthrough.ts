@@ -101,6 +101,31 @@ function nextActionFor(c: Check): NextAction {
 
 export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
+/** Query values (any name) and userinfo of the given URLs, as extra secrets. */
+export function blockedUrlSecrets(urls: string[]): string[] {
+  const out = new Set<string>();
+  for (const u of urls) {
+    try {
+      const x = new URL(u);
+      for (const v of x.searchParams.values()) if (v.length >= 3) { out.add(v); out.add(encodeURIComponent(v)); }
+      if (x.username.length >= 3) out.add(decodeURIComponent(x.username));
+      if (x.password.length >= 3) out.add(decodeURIComponent(x.password));
+      if (x.search.length > 4) out.add(x.search.slice(1));
+    } catch { /* unparseable: regex fallback in maskAllQuery */ }
+  }
+  return [...out];
+}
+
+/** Mask every query parameter value (not only known secret names) and any userinfo. */
+export function maskAllQuery(u: string): string {
+  try {
+    const x = new URL(u);
+    for (const k of [...new Set(x.searchParams.keys())]) x.searchParams.set(k, "[REDACTED]");
+    if (x.username || x.password) { x.username = "[REDACTED]"; x.password = ""; }
+    return x.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+  } catch { return u.replace(/([?&;][^=&#\s]*)=[^&#\s]*/g, "$1=[REDACTED]"); }
+}
+
 export class WalkthroughCore {
   readonly base: string;
   private readonly redactor: Redactor;
@@ -351,7 +376,10 @@ export class WalkthroughCore {
       const guard = await this.pinnedGuard(cfg);
       await checkHop(cfg, new URL(input.url), guard.resolver); // same pinned resolution the browser will use
       const p = await this.deps.capturer.page(input.url, guard);
-      const src = this.redactor.text(`playwright:${input.url}`);
+      // Every query value / userinfo of a BLOCKED URL is treated as a secret for this capture, wherever it shows up
+      // (blocked evidence, HAR — incl. the page HTML that embeds it —, DOM text, command log, report).
+      const r = this.redactor.with(blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)));
+      const src = r.text(`playwright:${input.url}`);
       const out: Evidence[] = [];
       const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
         const id2 = `ev-${w.evidence.length + 1}`, rel = `evidence/${id2}.${ext}`;
@@ -360,15 +388,15 @@ export class WalkthroughCore {
         w.evidence.push(ev); out.push(ev);
       };
       add("screenshot", "screenshot", "png", p.screenshot);
-      add("har", "har", "har", redactHar(p.har, this.redactor));
-      add("response", "http", "txt", this.redactor.text(p.text));
+      add("har", "har", "har", redactHar(p.har, r));
+      add("response", "http", "txt", r.text(p.text));
       // Blocked requests are evidence too: URL redacted (secret params, userinfo, token patterns), reason, type.
-      const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: redactUrl(b.url, this.redactor), method: b.method, type: b.type, reason: this.redactor.text(redactUrlsIn(b.reason, this.redactor)) }));
-      if (blocked.length) add("response", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, this.redactor), count: (p.blocked ?? []).length, blocked }, null, 2));
+      const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) }));
+      if (blocked.length) add("response", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
-        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, this.redactor) })),
-        subresources: p.subresources.slice(0, 200).map((r) => ({ ...r, url: redactUrl(r.url, this.redactor) })),
+        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
+        subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: redactUrl(s.url, r) })),
         blocked: blocked.length,
         evidenceIds: out.map((e) => e.id), executedBy: "core",
       });

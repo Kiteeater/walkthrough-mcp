@@ -25,7 +25,10 @@ jobs:
       - run: npm run build
       - run: npx vitest run --reporter=verbose test/ssrf-policy.test.ts
         env: { REQUIRE_CHROMIUM: "1" }
-      - run: npm test
+      # Full suite through the count gate: fails on any skipped/todo test or if fewer than
+      # test/EXPECTED_TEST_COUNT tests executed (catches unmatched/missing test files).
+      - run: node scripts/test-gate.mjs
+        env: { REQUIRE_CHROMIUM: "1" }
 
   e2e:
     runs-on: ubuntu-latest

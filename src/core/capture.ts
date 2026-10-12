@@ -75,6 +75,15 @@ export class PlaywrightCapturer implements Capturer {
     try {
       // Service workers can fetch outside page.route: blocked. Downloads off.
       const ctx = await browser.newContext({ recordHar: { path: harPath, content: "embed" }, serviceWorkers: "block", acceptDownloads: false });
+      // serviceWorkers:"block" alone did not stop registration on a secure-context origin (test/capture-blocking):
+      // also make register() reject in every frame before any page script runs, and record the attempt.
+      await ctx.exposeBinding("__wtSwBlocked", (_s, u: string) => block(String(u), "GET", "serviceworker", "service workers are blocked in capture_page"));
+      await ctx.addInitScript(() => {
+        const sw = (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker;
+        if (!sw) return;
+        const reject = (u: unknown) => { void (window as unknown as { __wtSwBlocked?: (u: string) => void }).__wtSwBlocked?.(new URL(String(u), location.href).href); return Promise.reject(new DOMException("service workers are blocked by walkthrough", "SecurityError")); };
+        try { Object.defineProperty(sw, "register", { value: reject, configurable: false, writable: false }); } catch { /* ignore */ }
+      });
       const page = await ctx.newPage();
       // Popups / extra windows: closed at once (their requests are still routed and recorded below).
       ctx.on("page", (p) => { if (p !== page) { block(p.url() || "about:blank", "GET", "popup", "popups/new windows are not allowed in capture_page"); void p.close().catch(() => undefined); } });

