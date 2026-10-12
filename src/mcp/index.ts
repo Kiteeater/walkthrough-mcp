@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
-  captureEvidenceShape, captureInput, QUERY_METRICS_DESC, queryMetricsShape, WATCH_ALERTS_DESC, watchAlertsShape, watchInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
+  captureEvidenceShape, captureInput, QUERY_METRICS_DESC, queryMetricsShape, START_WATCH_DESC, startWatchShape, COLLECT_WATCH_DESC, collectWatchShape, watchInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
 } from "../core/index.js";
 
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
@@ -44,7 +44,7 @@ server.tool("replay_request", "walkthrough re-sends ONE GET/HEAD request from a 
 }, (a) => wrap(() => core.replayHar(a.id, { checkId: a.check_id, evidenceId: a.evidence_id, urlMatch: a.url_match, method: a.method }))());
 
 server.tool("query_metrics", QUERY_METRICS_DESC, queryMetricsShape, (a) => wrap(() => core.queryMetrics(a.id, { query: a.query, checkId: a.check_id, time: a.time }))());
-server.tool("watch_alerts", WATCH_ALERTS_DESC, watchAlertsShape, (a) => wrap(() => core.watchAlerts(a.id, watchInput(a)))());
+server.tool("start_watch", START_WATCH_DESC, startWatchShape, (a) => wrap(() => core.startWatch(a.id, { ...watchInput(a), background: "in-process" }))()); server.tool("collect_watch", COLLECT_WATCH_DESC, collectWatchShape, (a) => wrap(() => core.collectWatch(a.watch_id))());
 server.tool("link_source", "Link a source file and line.", {
   id, file: z.string(), line: z.number().int(), note: z.string().optional(),
 }, (a) => wrap(() => core.linkSource(a.id, a))());

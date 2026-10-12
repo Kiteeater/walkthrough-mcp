@@ -2,16 +2,18 @@
 // http_requests_total for the orders total route shows a 5xx spike (ratio 0.5 over 5m). No Grafana.
 import http from "node:http";
 
-export function startMockPrometheus(port, token) {
-  const srv = http.createServer((req, res) => {
+export function startMockPrometheus(port, token, serviceUrl = "http://127.0.0.1:3200") {
+  const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x");
     const json = (code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.method === "GET" && u.pathname === "/api/v1/alerts") {
       if (req.headers.authorization !== `Bearer ${token}`) return json(401, { status: "error", errorType: "unauthorized", error: "bad token" });
       const activeAt = new Date(Date.now() - 4 * 60_000).toISOString();
+      // HighOrders5xx fires only once the service has actually answered a 500 (activeAt = that moment).
+      const stats = await fetch(`${serviceUrl}/metrics.json`).then((r) => r.json()).catch(() => ({ orders5xx: 0 }));
       return json(200, { status: "success", data: { alerts: [
         // Firing, related to the orders total route (the traced 500). The runbook URL carries a token that must be redacted.
-        { labels: { alertname: "HighOrders5xx", route: "/api/orders/:id/total", severity: "critical" }, annotations: { summary: "5xx ratio on /api/orders/:id/total above 10% for 2m", runbook_url: `https://runbook.example/orders-5xx?token=${token}&v=2` }, state: "firing", activeAt, value: "0.5" },
+        ...(stats.orders5xx > 0 ? [{ labels: { alertname: "HighOrders5xx", route: "/api/orders/:id/total", severity: "critical" }, annotations: { summary: "5xx ratio on /api/orders/:id/total above 10% for 2m", runbook_url: `https://runbook.example/orders-5xx?token=${token}&v=2` }, state: "firing", activeAt: stats.first5xxAt, value: "0.5" }] : []),
         // Firing but unrelated to any check: listed separately, never attached.
         { labels: { alertname: "DiskAlmostFull", instance: "mongo-1", severity: "warning" }, annotations: { summary: "disk 91% full" }, state: "firing", activeAt, value: "0.91" },
         // Pending: not counted.

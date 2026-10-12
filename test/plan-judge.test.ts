@@ -74,9 +74,8 @@ describe("evaluate_check: the core judges, the agent cannot override", () => {
     await core.recordFinding(id, { title: "t", severity: "low", symptom: "s", root_cause_chain: [{ claim: "it passed really", kind: "inferred", evidence_ids: [] }] });
     await core.signOff(id, { decision: "accept" });
     expect(core.load(id).checkResults![0].status).toBe("fail");
-    // re-evaluating replaces the result only with another core judgement
-    const ok = await submit("a", "GET /\nHTTP 200 OK");
-    expect((await core.evaluateCheck(id, { checkId: "a", evidenceIds: [ok.id] })).status).toBe("pass_needs_review") // agent-submitted evidence only (PR #7);
+    // after sign-off nothing can be re-evaluated (read-only, PR #13)
+    await expect(core.evaluateCheck(id, { checkId: "a", evidenceIds: [ev.id] })).rejects.toThrow(/signed off/);
     expect(core.load(id).checkResults).toHaveLength(1);
   });
 

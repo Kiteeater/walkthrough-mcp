@@ -84,13 +84,15 @@ export const queryMetricsShape = {
   check_id: z.string().optional(), time: z.string().optional().describe("unix seconds or RFC3339; default now"),
 };
 
-export const WATCH_ALERTS_DESC = "walkthrough watches Prometheus alerts itself (GET /api/v1/alerts only, same endpoint rules as query_metrics) over a bounded window. Firing alerts matching a check's alertMatchers (or the matchers given here) become findings / are attached to that check's finding; unmatched firing alerts are listed separately; a quiet window is recorded as evidence with start/end.";
-export const watchAlertsShape = {
+export const ALERT_WATCH_DEFAULT_WINDOW_S = 60;
+export const START_WATCH_DESC = "Start watching Prometheus alerts (GET /api/v1/alerts only, same endpoint rules as query_metrics) in the BACKGROUND over a bounded window; returns a watch id at once, other tools stay usable. Trigger your action, then call collect_watch.";
+export const startWatchShape = {
   id: z.string(),
-  window_s: z.number().int().min(1).max(900).describe("watch window in seconds (max 900)"),
+  window_s: z.number().int().min(1).max(900).optional().describe("watch window in seconds (default 60, max 900)"),
   interval_s: z.number().int().min(1).max(60).optional().describe("poll interval in seconds (1-60, default 15)"),
   matchers: z.array(z.object({ check_id: z.string(), labels: z.record(z.string()) })).optional().describe("extra matchers mapping alerts to checks"),
-  stop_on_firing: z.boolean().optional().describe("stop at the first poll with a firing alert (default true)"),
 };
-type Watch = { window_s: number; interval_s?: number; matchers?: { check_id: string; labels: Record<string, string> }[]; stop_on_firing?: boolean };
-export const watchInput = (a: Watch) => ({ windowS: a.window_s, intervalS: a.interval_s, stopOnFiring: a.stop_on_firing, matchers: a.matchers?.map((m) => ({ checkId: m.check_id, labels: m.labels })) });
+export const COLLECT_WATCH_DESC = "Stop a watch and turn what it saw into evidence/findings: firing alerts matching a check's alertMatchers are attached to that check's finding (or become one); unmatched ones are listed separately; a quiet window is recorded with start/end; a dead poller is reported as interrupted.";
+export const collectWatchShape = { watch_id: z.string().regex(/^w_[0-9a-f]{16}$/).describe("id returned by start_watch") };
+type Watch = { window_s?: number; interval_s?: number; matchers?: { check_id: string; labels: Record<string, string> }[] };
+export const watchInput = (a: Watch) => ({ windowS: a.window_s ?? ALERT_WATCH_DEFAULT_WINDOW_S, intervalS: a.interval_s, matchers: a.matchers?.map((m) => ({ checkId: m.check_id, labels: m.labels })) });

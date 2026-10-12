@@ -120,6 +120,8 @@ export interface Finding {
   symptom: string;
   repro_steps: string[];
   root_cause_chain: RootCauseLink[];
+  /** Signals observed at the same time (e.g. firing alerts). Supporting context only, never part of the causal chain. */
+  corroborating?: { kind: "alert"; claim: string; evidence_ids: string[]; alertname: string; activeAt?: string; firstSeenAt?: string; alsoMatched: string[] }[];
   /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
   /** observed only if every chain step is observed. */
@@ -130,6 +132,8 @@ export interface Finding {
 export interface SignOff {
   decision: "accept" | "reject";
   comment?: string;
+  /** Watches still open at sign-off, auto-finalized with what was observed so far. */
+  autoFinalizedWatches?: { watchId: string; outcome: string }[];
 }
 
 export interface RunRecord {
@@ -183,8 +187,13 @@ export interface Walkthrough {
 }
 
 export interface AlertWatch {
-  evidenceId: string; start: string; end: string; polls: number;
-  matched: { alertname: string; checkIds: string[]; findingId: string; attached: boolean }[];
-  unmatched: { alertname: string; labels: Record<string, string>; severity: string }[];
+  watchId: string; evidenceId: string; start: string; end: string; polls: number;
+  /** completed = window ran out; stopped_early = collected before the deadline; interrupted = poller died (partial data). */
+  outcome: "completed" | "stopped_early" | "interrupted";
+  finalizedBy: "collect" | "sign_off";
+  /** Distinct poll errors (endpoint/policy rejections, non-success responses). A window with only errors is NOT quiet. */
+  errors?: string[];
+  matched: { alertname: string; checkIds: string[]; findingId: string; attached: boolean; activeAt?: string; firstSeenAt?: string }[];
+  unmatched: { alertname: string; labels: Record<string, string>; severity: string; activeAt?: string; firstSeenAt?: string }[];
   pendingSeen: number;
 }

@@ -30,6 +30,12 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
   const plan = planTraceChecks(o);
   await core.planChecks(id, { goal: o.goal, checks: plan });
   await core.captureEvidence(id, { type: "logs", service, delta: true });
+  // Alerts: start a background watch BEFORE acting (it does not lock the walkthrough), wait for a baseline poll,
+  // then act; collect at the end. A firing alert whose labels match a check's alertMatchers is attached to that
+  // check's finding (the traced 500); unrelated firing alerts are listed separately.
+  const watch = o.metrics ? await core.startWatch(id, { windowS: 60, intervalS: 1 }) : undefined;
+  if (watch) await until(() => core.readWatch(watch.id).polls.length >= 1, 5000);
+  const actedAt = new Date().toISOString();
   for (const main of plan.filter((c) => /^chk-\d+$/.test(c.id))) {
     const [method, url] = main.target.split(" ");
     const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never });
@@ -91,7 +97,12 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       root_cause_chain: chain,
     });
   }
-  // Alerts: walkthrough watches Prometheus itself; a firing alert whose labels match a check's alertMatchers is attached
-  // to that check's finding (the traced 500); unrelated firing alerts are listed separately.
-  if (o.metrics) await core.watchAlerts(id, { windowS: 5, intervalS: 1 });
+  if (watch) {
+    await until(() => core.readWatch(watch.id).polls.some((p) => p.at > actedAt && p.firing.length > 0), 5000);
+    await core.collectWatch(watch.id);
+  }
+}
+
+async function until(cond: () => boolean, ms: number): Promise<void> {
+  for (const end = Date.now() + ms; Date.now() < end && !cond();) await new Promise((r) => setTimeout(r, 100));
 }

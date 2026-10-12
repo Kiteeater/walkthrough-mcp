@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Redactor, renderWalkthrough, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { Redactor, renderWalkthrough, MAX_ACTIVE_WATCHES, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
 import { SB } from "./helpers.js";
 
 const TOKEN = "promWATCHlogin4242";
@@ -37,7 +37,7 @@ afterAll(() => srv.close());
 const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
 const orders: Check = { id: "orders", intent: "GET /api/orders 2xx", method: "http", target: "GET /api/orders", expect: { type: "status", value: 200 }, severity_if_fail: "high", alertMatchers: [{ alertname: "HighOrders5xx" }, { route: "~/api/orders.*" }] };
 const other: Check = { id: "health", intent: "health", method: "http", target: "GET /health", expect: { type: "status", value: 200 }, severity_if_fail: "low" };
-function mk(o: { prom?: Partial<PrometheusConfig>; replay?: ReplayConfig } = {}) {
+function mk(o: { prom?: Partial<PrometheusConfig>; replay?: ReplayConfig; realTime?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "wt-alerts-"));
   const sleeps: number[] = [];
   let t = Date.parse("2026-10-12T20:00:00Z");
@@ -45,7 +45,7 @@ function mk(o: { prom?: Partial<PrometheusConfig>; replay?: ReplayConfig } = {})
     root, sandboxFactory: () => sandbox, capturer: { screenshot: async (_u, out) => writeFileSync(out, "png") },
     redactor: Redactor.fromEnv(process.env), replay: o.replay ?? { allowHosts: [`prom.local:${port}`], allowCidrs: ["127.0.0.1/32"] },
     resolver: async () => "127.0.0.1", env: { PROM_LOGIN: TOKEN }, prometheus: { url: `http://prom.local:${port}`, tokenEnv: "PROM_LOGIN", timeoutMs: 2000, ...o.prom },
-    now: () => new Date(t), sleep: async (ms) => { sleeps.push(ms); t += ms; },
+    ...(o.realTime ? {} : { now: () => new Date(t), sleep: async (ms: number) => { sleeps.push(ms); t += ms; } }),
   });
   return { core, root, sleeps };
 }
@@ -69,7 +69,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     expect(r.findings).toHaveLength(1);
     expect(r.findings[0]).toMatchObject({ title: "Alert HighOrders5xx firing", severity: "critical", checkId: "orders", kind: "observed" });
     expect(r.watch.unmatched.map((u) => u.alertname)).toEqual(["DiskAlmostFull"]);
-    expect(r.watch.matched).toEqual([{ alertname: "HighOrders5xx", checkIds: ["orders"], findingId: r.findings[0].id, attached: false }]);
+    expect(r.watch.matched).toEqual([expect.objectContaining({ alertname: "HighOrders5xx", checkIds: ["orders"], findingId: r.findings[0].id, attached: false })]);
     expect(r.watch.pendingSeen).toBe(1);
     const w = core.load(id);
     expect(w.findings).toHaveLength(1); // DiskAlmostFull NOT force-attached
@@ -91,8 +91,23 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     expect(r.findings).toHaveLength(0);
     expect(r.watch.matched[0]).toMatchObject({ findingId: f.id, attached: true });
     const after = core.load(id).findings![0];
-    expect(after.root_cause_chain[1].evidence_ids).toEqual([r.evidence.id]);
-    expect(after.root_cause_chain[1].claim).toMatch(/alert HighOrders5xx firing/);
+    expect(after.root_cause_chain).toEqual(f.root_cause_chain); // chain unchanged by the alert
+    expect(after.corroborating).toEqual([expect.objectContaining({ kind: "alert", alertname: "HighOrders5xx", evidence_ids: [r.evidence.id], alsoMatched: [] })]);
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).toMatch(/class="corroborating" data-corroborating="1"><b>同时观测到的信号/);
+  });
+  it("an alert matching several checks shows 'also matched X, Y'", async () => {
+    mode = "firing";
+    const { core } = mk();
+    const c2 = { ...other, id: "orders-list", alertMatchers: [{ alertname: "HighOrders5xx" }] };
+    const c3 = { ...other, id: "orders-admin", alertMatchers: [{ route: "/api/orders" }] };
+    const id = await planned(core, [orders, c2, c3]);
+    const ev = await core.captureEvidence(id, { type: "submit", checkId: "orders", kind: "http", source: { tool: "t" }, content: "HTTP/1.1 500" });
+    await core.recordFinding(id, { title: "500", severity: "high", symptom: "s", check_id: "orders", root_cause_chain: [{ claim: "500", kind: "observed", evidence_ids: [ev.id] }] });
+    await core.watchAlerts(id, { windowS: 1, intervalS: 1 });
+    expect(core.load(id).findings![0].corroborating![0].alsoMatched).toEqual(["orders-list", "orders-admin"]);
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).toContain('<span class="also-matched" data-also="orders-list,orders-admin">also matched orders-list, orders-admin</span>');
   });
   it("quiet window → core-executed 'no alerts in window' evidence with start/end; polls bounded by window/interval", async () => {
     mode = "quiet";
@@ -141,7 +156,9 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     mode = "redir-admin";
     const { core } = mk();
     const id = await planned(core);
-    await expect(core.watchAlerts(id, { windowS: 5, intervalS: 5 })).rejects.toThrow(/only \/api\/v1\/alerts is allowed/);
+    const rr = await core.watchAlerts(id, { windowS: 5, intervalS: 5 }); // poll errors are recorded, never a quiet window
+    expect(rr.watch.errors?.[0]).toMatch(/only \/api\/v1\/alerts is allowed/);
+    expect(JSON.parse(readFileSync(join(core.dir(id), rr.evidence.path), "utf8")).note).toMatch(/no successful poll.*NOT a quiet window/);
     await expect(core.watchAlerts(id, { windowS: 5, intervalS: 5, matchers: [{ checkId: "orders", labels: { route: "~(a+)+" } }] })).rejects.toThrow(/ReDoS/);
     const w = core.startWalkthrough({ title: "t", sandbox: SB });
     await expect(core.planChecks(w.id, { goal: "g", checks: [{ ...orders, alertMatchers: [{}] }] })).rejects.toThrow(/matcher/);
@@ -149,7 +166,11 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
   it("non-success alerts response is an error, not 'no alerts'", async () => {
     mode = "error";
     const { core } = mk();
-    await expect(core.watchAlerts(await planned(core), { windowS: 5, intervalS: 5 })).rejects.toThrow(/status error \(HTTP 503\)/);
+    const id = await planned(core);
+    const r = await core.watchAlerts(id, { windowS: 5, intervalS: 5 });
+    expect(r.watch.errors?.join()).toMatch(/error|503/);
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).not.toContain("no alerts in window · 窗口内无告警");
   });
   it("labels/annotations redacted (secret keys, URL query tokens, bearer, generic keys) + echoed token: absent from all artifacts and HTML", async () => {
     mode = "secrets";
@@ -162,5 +183,94 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     for (const [k, v] of Object.entries({ ...S, TOKEN })) { expect(html, k).not.toContain(v); expect(all, k).not.toContain(v); }
     expect(all).toContain("page=1"); expect(all).toContain("org=1"); // non-secret params survive
     expect(all).toContain("HighOrders5xx");
+  });
+});
+
+describe("start_watch / collect_watch: background polling, no long lock", () => {
+  it("evaluate_check during an active watch is not blocked; concurrent log writes keep the hash chain valid", async () => {
+    mode = "firing";
+    const { core } = mk({ realTime: true });
+    const id = await planned(core);
+    const s = await core.startWatch(id, { windowS: 6, intervalS: 1 });
+    expect(s.id).toMatch(/^w_[0-9a-f]{16}$/);
+    const t0 = Date.now();
+    const ev = await core.captureEvidence(id, { type: "submit", checkId: "orders", kind: "http", source: { tool: "t" }, content: "HTTP/1.1 500" });
+    const r = await core.evaluateCheck(id, { checkId: "orders", evidenceIds: [ev.id] });
+    expect(r.status).toBe("fail");
+    // more log writers while the poller runs: append-only plan entries
+    await core.planChecks(id, { goal: "g", append: true, triggeringEvidenceId: ev.id, checks: [{ ...other, id: "extra-1", alertMatchers: undefined }] });
+    await new Promise((res) => setTimeout(res, 1200));
+    await core.planChecks(id, { goal: "g", append: true, triggeringEvidenceId: ev.id, checks: [{ ...other, id: "extra-2", alertMatchers: undefined }] });
+    expect(Date.now() - t0).toBeLessThan(3000); // well before the 6 s window ends
+    expect(core.readWatch(s.id).polls.length).toBeGreaterThanOrEqual(1);
+    const out = await core.collectWatch(s.id);
+    expect(out.watch.outcome).toBe("stopped_early");
+    expect(out.watch.polls).toBeGreaterThanOrEqual(2);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(core.verifyCommandLog(id).error).toBeUndefined();
+    await expect(core.collectWatch(s.id)).rejects.toThrow(/already collected/);
+  }, 15_000);
+  it("records poll timestamps, activeAt and first-seen time", async () => {
+    mode = "firing";
+    const { core } = mk();
+    const id = await planned(core);
+    const r = await core.watchAlerts(id, { windowS: 2, intervalS: 1 });
+    expect(r.watch.matched[0]).toMatchObject({ activeAt: "2026-10-12T20:00:00Z", firstSeenAt: "2026-10-12T20:00:00.000Z" });
+    const doc = JSON.parse(readFileSync(join(core.dir(id), r.evidence.path), "utf8"));
+    expect(doc.polls.map((p: { at: string }) => p.at)).toEqual(["2026-10-12T20:00:00.000Z", "2026-10-12T20:00:01.000Z", "2026-10-12T20:00:02.000Z"]);
+  });
+  it("dead poller → 'interrupted' with partial polls, never 'no alerts in window'; marked in the report", async () => {
+    mode = "quiet";
+    const { core, root } = mk();
+    const id = await planned(core);
+    const s = await core.startWatch(id, { windowS: 60, intervalS: 5, background: "none" }); // no poller runs
+    const f = join(root, ".walkthrough", "watches", `${s.id}.json`);
+    const st = JSON.parse(readFileSync(f, "utf8"));
+    st.polls.push({ at: "2026-10-12T20:00:00.000Z", httpStatus: 200, firing: [], pending: 0 });
+    st.pid = 2 ** 22 + 12345; // a pid that is not alive
+    writeFileSync(f, JSON.stringify(st));
+    const r = await core.collectWatch(s.id);
+    expect(r.watch.outcome).toBe("interrupted");
+    const doc = JSON.parse(readFileSync(join(core.dir(id), r.evidence.path), "utf8"));
+    expect(doc.note).toMatch(/^interrupted: poller stopped after 1 poll/);
+    expect(doc.note).not.toMatch(/no alerts in window/);
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).toMatch(/class="alert-window interrupted" data-outcome="interrupted"/);
+    expect(html).not.toContain("no alerts in window · 窗口内无告警");
+  });
+  it("sign_off auto-finalizes open watches; interrupted ones are visible on the sign-off panel", async () => {
+    mode = "firing";
+    const { core, root } = mk({ realTime: true });
+    const id = await planned(core);
+    const live = await core.startWatch(id, { windowS: 30, intervalS: 1 });
+    const dead = await core.startWatch(id, { windowS: 30, intervalS: 1, background: "none" });
+    const f = join(root, ".walkthrough", "watches", `${dead.id}.json`);
+    const st = JSON.parse(readFileSync(f, "utf8")); st.pid = 2 ** 22 + 54321; writeFileSync(f, JSON.stringify(st));
+    await new Promise((res) => setTimeout(res, 300));
+    const so = await core.signOff(id, { decision: "reject", comment: "c" });
+    expect(so.autoFinalizedWatches).toEqual(expect.arrayContaining([{ watchId: live.id, outcome: "stopped_early" }, { watchId: dead.id, outcome: "interrupted" }]));
+    expect(core.readWatch(live.id).status).toBe("finalized");
+    expect(core.readWatch(dead.id).status).toBe("finalized");
+    const w = core.load(id);
+    expect(w.alertWatches!.map((a) => a.finalizedBy)).toEqual(["sign_off", "sign_off"]);
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    const panel = html.slice(html.indexOf('class="signoff"'), html.indexOf("</section>", html.indexOf('class="signoff"')));
+    expect(panel).toMatch(/class="auto-finalized" data-auto-finalized="2"/);
+    expect(panel).toMatch(new RegExp(`class="aw interrupted" data-outcome="interrupted">${dead.id} \\(<b>interrupted</b>`));
+    expect(core.verifyCommandLog(id).error).toBeUndefined();
+  }, 15_000);
+  it("watch ids are core-generated and strictly validated (no path traversal)", async () => {
+    const { core } = mk();
+    for (const bad of ["../../etc/passwd", "/etc/passwd", "w_../x", "w_0123456789abcdeg", "W_0123456789abcdef", "w_0123456789abcdef/../x", ""])
+      await expect(core.collectWatch(bad), bad).rejects.toThrow(/invalid watch id/);
+    await expect(core.collectWatch("w_0123456789abcdef")).rejects.toThrow(/watch not found/);
+  });
+  it(`at most ${MAX_ACTIVE_WATCHES} active watches`, async () => {
+    mode = "quiet";
+    const { core } = mk();
+    const id = await planned(core);
+    const ids = [];
+    for (let i = 0; i < MAX_ACTIVE_WATCHES; i++) ids.push((await core.startWatch(id, { windowS: 60, intervalS: 5, background: "none" })).id);
+    await expect(core.startWatch(id, { windowS: 60, intervalS: 5, background: "none" })).rejects.toThrow(/too many active watches \(4\/4\)/);
   });
 });

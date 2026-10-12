@@ -118,8 +118,8 @@ describe("audit view + sign-off", () => {
     expect(html).toContain('value="reject" checked');
     expect(html).toContain("fix &lt;b&gt;lib&lt;/b&gt; first");
     await expect(core.importReview({ walkthroughId: w.id, signoff: { decision: "approve" } })).rejects.toThrow(/sign-off/);
-    expect(await core.signOff(w.id, { decision: "accept" })).toEqual({ decision: "accept" });
-    await expect(core.signOff(w.id, { decision: "maybe" })).rejects.toThrow(/accept\|reject/);
-    expect(readFileSync(renderWalkthrough(core, w.id), "utf8")).toContain('value="accept" checked');
+    // signed off → read-only (PR #13): no second signature
+    await expect(core.signOff(w.id, { decision: "accept" })).rejects.toThrow(/signed off; it is read-only/);
+    expect(readFileSync(renderWalkthrough(core, w.id), "utf8")).toContain('value="reject" checked');
   });
 });
