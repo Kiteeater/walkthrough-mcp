@@ -1,6 +1,6 @@
 {
   "format": "walkthrough.metric/v1",
-  "endpoint": "http://127.0.0.1:40479/api/v1/query",
+  "endpoint": "http://127.0.0.1:45299/api/v1/query",
   "query": "sum(rate(http_requests_total{route=\"/api/orders/:id/total\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{route=\"/api/orders/:id/total\"}[5m]))",
   "time": null,
   "httpStatus": 200,
@@ -12,7 +12,7 @@
         {
           "metric": {},
           "value": [
-            1791848201.691,
+            1791849284.985,
             "0.5"
           ]
         }

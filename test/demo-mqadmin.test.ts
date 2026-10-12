@@ -9,12 +9,12 @@ const dir = join(__dirname, "..", "examples", "output-trace");
 const w = JSON.parse(readFileSync(join(dir, "walkthrough.json"), "utf8"));
 const html = readFileSync(join(dir, "index.html"), "utf8");
 const f = w.findings.find((x: { severity: string }) => x.severity === "high");
+const mqItem = () => f.ruled_out.find((r: { claim: string }) => /排除 MQ 问题/.test(r.claim));
 const ev = (id: string) => w.evidence.find((e: { id: string }) => e.id === id);
 
 describe("demo: RocketMQ backlog is checked through the real mqadmin preset and ruled out", () => {
   it("ruled-out item is backed by core mqadmin consumerProgress evidence whose sha256 matches the file", () => {
-    expect(f.ruled_out).toHaveLength(1);
-    const r = f.ruled_out[0];
+    const r = mqItem();
     expect(r.claim).toMatch(/^查过消息堆积，消费正常，排除 MQ 问题/);
     const e = ev(r.evidence_ids[0]);
     expect(e).toMatchObject({ kind: "cli_output", executedBy: "core" });
@@ -29,8 +29,8 @@ describe("demo: RocketMQ backlog is checked through the real mqadmin preset and 
   });
 
   it("the report page shows the exclusion with the full sha256", () => {
-    const e = ev(f.ruled_out[0].evidence_ids[0]);
-    expect(html).toContain('<div class="ruled-out" data-ruled-out="1"><b>已排除</b>');
+    const e = ev(mqItem().evidence_ids[0]);
+    expect(html).toContain('<div class="ruled-out" data-ruled-out="2"><b>已排除</b>');
     expect(html).toContain(`data-evidence="${e.id}"`);
     expect(html).toContain(`<code class="sha256" data-sha256="${e.sha256}">${e.sha256}</code>`);
   });
@@ -41,9 +41,10 @@ describe("demo: RocketMQ backlog is checked through the real mqadmin preset and 
     }).join("+"));
     expect(kinds).toEqual(["har+http", "metric", "mcp_result:langfuse", "mcp_result:mongodb", "log"]);
     expect(f.root_cause_chain.at(-1).claim).toMatch(/pricing\.js:3/);
-    const mq = f.ruled_out[0].evidence_ids[0];
+    const mq = mqItem().evidence_ids[0];
     expect(f.evidenceIds).not.toContain(mq);
-    expect(JSON.stringify(f.root_cause_chain)).not.toMatch(/mqadmin|MQ/);
+    expect(JSON.stringify(f.root_cause_chain)).not.toMatch(/mqadmin|MQ|aliyun|SLS/);
+    expect(f.root_cause_chain).toHaveLength(5);
   });
 });
 

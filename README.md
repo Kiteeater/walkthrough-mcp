@@ -75,12 +75,13 @@ MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthro
 ```
 
 **Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus, a **mock**
-`mqadmin` binary (output in the rocketmq-all-5.5.1 format, `examples/trace-demo/mock-mqadmin.mjs`) and the buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
+`mqadmin` binary (output in the rocketmq-all-5.5.1 format, `examples/trace-demo/mock-mqadmin.mjs`), a **mock** `aliyun`
+CLI (`sls GetLogs` with the real JSON response shape, `examples/trace-demo/mock-aliyun.mjs`) and the buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
 connected, and none is needed. For the five company sources only the integration seams exist, and all five are
 supported:
 - Prometheus: `query_metrics` and alert watches.
 - Langfuse and MongoDB: through their own MCP servers plus `import_mcp_result`.
-- Aliyun: the `run_cli` read-only allowlist. The demo doesn't exercise cloud logs yet.
+- Aliyun: the `run_cli` read-only allowlist. The demo uses `sls GetLogs` to rule out infrastructure errors, described below.
 - RocketMQ: `run_cli` read-only `mqadmin` queries with a fixed name server; see
   [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo uses it to rule out a message
   backlog, described below.
@@ -105,8 +106,14 @@ the finding's `ruled_out`; they are never root-cause steps and are not in the fi
 walkthrough runs `mqadmin consumerProgress -g order-pricing-consumer -t ORDER_CREATED` itself through the real mqadmin
 preset: the allowlist applies, the name server is a random loopback port fixed in `namesrvs`, the output goes through
 the Redactor, and the command is hash-chained in `commands.jsonl`. `Consume Diff Total: 0` shows there is no backlog,
-so the page shows 「查过消息堆积，消费正常，排除 MQ 问题」 together with that evidence's full sha256. The root-cause chain
-(HTTP 500 → metric → Langfuse → MongoDB → `pricing.js:3`) is unchanged.
+so the page shows 「查过消息堆积，消费正常，排除 MQ 问题」 together with that evidence's full sha256.
+
+The same block covers cloud logs. Walkthrough runs `aliyun sls GetLogs --project demo-prod-logs --logstore infra --from
+<5 min before the action> --to <now> --query "layer: infra and level: ERROR"` through the real aliyun preset (the
+`sls GetLogs` argument allowlist applies, and `--profile demo-readonly` is appended from config). The result is `[]`,
+so the page shows 「查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题」 with that evidence's sha256. The demo
+therefore has evidence from all four read-only sources: MongoDB, Langfuse, RocketMQ and cloud logs. The root-cause
+chain (HTTP 500 → metric → Langfuse → MongoDB → `pricing.js:3`) is unchanged.
 
 ![audit page first screen](docs/audit-page.png)
 

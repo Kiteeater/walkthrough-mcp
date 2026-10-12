@@ -79,5 +79,17 @@ const mqEv = ro && ev(ro.evidence_ids[0]);
 if (!ro || !mqEv || mqEv.kind !== "cli_output" || mqEv.executedBy !== "core" || !/^run_cli:mqadmin consumerProgress /.test(mqEv.source) || !/^[0-9a-f]{64}$/.test(mqEv.sha256)) fail("no ruled-out MQ item backed by core mqadmin consumerProgress evidence");
 if (!/Consume Diff Total: 0\b/.test(readFileSync(join(dirname(process.argv[2]), mqEv.path), "utf8"))) fail("mqadmin evidence does not show zero backlog");
 if (f.root_cause_chain.some((l) => l.evidence_ids.includes(mqEv.id)) || f.evidenceIds.includes(mqEv.id)) fail("mqadmin evidence spliced into the root-cause chain");
-if (!first.includes(`<div class="ruled-out" data-ruled-out="1"><b>已排除</b>`) || !first.includes(`data-evidence="${mqEv.id}"`) || !first.includes(`data-sha256="${mqEv.sha256}"`)) fail("first screen lacks the ruled-out MQ item with its sha256");
+if (!first.includes(`<div class="ruled-out" data-ruled-out="2"><b>已排除</b>`) || !first.includes(`data-evidence="${mqEv.id}"`) || !first.includes(`data-sha256="${mqEv.sha256}"`)) fail("first screen lacks the ruled-out MQ item with its sha256");
+// Cloud logs: infra errors checked by walkthrough (aliyun sls GetLogs via run_cli, aliyun preset) and RULED OUT.
+const rs = (f.ruled_out ?? []).find((r) => /排除基础设施问题/.test(r.claim));
+const slsEv = rs && ev(rs.evidence_ids[0]);
+if (!rs || !slsEv || slsEv.kind !== "cli_output" || slsEv.executedBy !== "core" || !/^run_cli:aliyun sls GetLogs /.test(slsEv.source) || !/^[0-9a-f]{64}$/.test(slsEv.sha256)) fail("no ruled-out infra item backed by core aliyun sls GetLogs evidence");
+if (!/^exit 0\n\n\[\]$/m.test(readFileSync(join(dirname(process.argv[2]), slsEv.path), "utf8"))) fail("sls evidence does not show an empty result");
+if (f.root_cause_chain.some((l) => l.evidence_ids.includes(slsEv.id)) || f.evidenceIds.includes(slsEv.id)) fail("sls evidence spliced into the root-cause chain");
+if (!first.includes(`data-evidence="${slsEv.id}"`) || !first.includes(`data-sha256="${slsEv.sha256}"`)) fail("first screen lacks the ruled-out infra item with its sha256");
+// All four read-only sources contributed evidence: MongoDB, Langfuse, RocketMQ, cloud logs.
+const has = { mongodb: w.evidence.some((e) => e.mcpCall?.connector === "mongodb"), langfuse: w.evidence.some((e) => e.mcpCall?.connector === "langfuse"),
+  rocketmq: w.evidence.some((e) => /^run_cli:mqadmin /.test(e.source ?? "")), cloudlogs: w.evidence.some((e) => /^run_cli:aliyun sls /.test(e.source ?? "")) };
+if (Object.values(has).some((x) => !x)) fail(`missing read-only source evidence: ${JSON.stringify(has)}`);
+if (f.root_cause_chain.length !== 5) fail(`root-cause chain should have 5 steps, has ${f.root_cause_chain.length}`);
 console.log(`asserted cross-source chain (+ corroborating alert HighOrders5xx fired after the action): HTTP 500 → prometheus 5xx ratio → langfuse.${t.mcpCall.tool} → mongodb.${d.mcpCall.tool} → ${src.file}:${src.line}`);

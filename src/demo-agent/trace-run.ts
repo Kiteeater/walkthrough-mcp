@@ -30,13 +30,17 @@ async function main(): Promise<void> {
   const svc = new URL(a.baseUrl);
   const hosts = [svc.host, ...(prom ? [prom.host] : [])];
   // RocketMQ (read-only, optional): the demo points the real mqadmin preset at a mock binary and fixes the name server.
-  const mqBin = process.env.WALKTHROUGH_DEMO_MQADMIN, mqNs = process.env.WALKTHROUGH_DEMO_NAMESRV;
-  const connectors: ConnectorConfig[] | undefined = mqBin && mqNs
-    ? PRESET_CONNECTORS.map((c) => (c.name === "mqadmin" ? { ...c, binary: mqBin, namesrvs: [mqNs], profile: "demo-readonly" } : c))
+  // Cloud logs (read-only, optional): the real aliyun preset (sls GetLogs allowlist) pointed at a mock binary.
+  const mqBin = process.env.WALKTHROUGH_DEMO_MQADMIN, mqNs = process.env.WALKTHROUGH_DEMO_NAMESRV, slsBin = process.env.WALKTHROUGH_DEMO_ALIYUN;
+  const useMq = !!(mqBin && mqNs), useSls = !!slsBin;
+  const connectors: ConnectorConfig[] | undefined = useMq || useSls
+    ? PRESET_CONNECTORS.map((c) => (useMq && c.name === "mqadmin" ? { ...c, binary: mqBin!, namesrvs: [mqNs!], profile: "demo-readonly" }
+      : useSls && c.name === "aliyun" ? { ...c, binary: slsBin!, profile: "demo-readonly" } : c))
     : undefined;
   const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: [svc, ...(prom ? [prom] : [])].some((u) => u.hostname === "127.0.0.1") ? ["127.0.0.1/32"] : [] }, connectors);
   try {
-    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true, ...(connectors ? { mq: { group: "order-pricing-consumer", topic: "ORDER_CREATED" } } : {}) }) });
+    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true, ...(useMq ? { mq: { group: "order-pricing-consumer", topic: "ORDER_CREATED" } } : {}),
+      ...(useSls ? { sls: { project: "demo-prod-logs", logstore: "infra" } } : {}) }) });
     console.log(JSON.stringify(r));
   } finally { await mongo.close(); }
 }

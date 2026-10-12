@@ -1,19 +1,19 @@
 {
   "format": "walkthrough.alerts/v1",
-  "watchId": "w_01ddf3741879bceb",
-  "endpoint": "http://127.0.0.1:40479/api/v1/alerts",
+  "watchId": "w_7e7b85d1de45c2f2",
+  "endpoint": "http://127.0.0.1:45299/api/v1/alerts",
   "outcome": "stopped_early",
   "finalizedBy": "collect",
   "window": {
-    "start": "2026-10-12T23:36:40.864Z",
-    "end": "2026-10-12T23:36:41.940Z",
-    "deadline": "2026-10-12T23:37:40.864Z",
+    "start": "2026-10-12T23:54:44.153Z",
+    "end": "2026-10-12T23:54:45.230Z",
+    "deadline": "2026-10-12T23:55:44.153Z",
     "requestedS": 60,
     "intervalS": 1
   },
   "polls": [
     {
-      "at": "2026-10-12T23:36:40.865Z",
+      "at": "2026-10-12T23:54:44.154Z",
       "httpStatus": 200,
       "error": null,
       "firing": [
@@ -22,7 +22,7 @@
       "pending": 1
     },
     {
-      "at": "2026-10-12T23:36:41.940Z",
+      "at": "2026-10-12T23:54:45.230Z",
       "httpStatus": 200,
       "error": null,
       "firing": [
@@ -43,9 +43,9 @@
         "summary": "disk 91% full"
       },
       "state": "firing",
-      "activeAt": "2026-10-12T23:32:40.871Z",
+      "activeAt": "2026-10-12T23:50:44.160Z",
       "value": "0.91",
-      "firstSeenAt": "2026-10-12T23:36:40.865Z"
+      "firstSeenAt": "2026-10-12T23:54:44.154Z"
     },
     {
       "labels": {
@@ -58,9 +58,9 @@
         "runbook_url": "https://runbook.example/orders-5xx?token=[REDACTED]&v=2"
       },
       "state": "firing",
-      "activeAt": "2026-10-12T23:36:41.313Z",
+      "activeAt": "2026-10-12T23:54:44.610Z",
       "value": "0.5",
-      "firstSeenAt": "2026-10-12T23:36:41.940Z"
+      "firstSeenAt": "2026-10-12T23:54:45.230Z"
     }
   ],
   "pendingSeen": 1,

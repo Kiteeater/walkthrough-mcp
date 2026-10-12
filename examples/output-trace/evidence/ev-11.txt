@@ -1,4 +1,4 @@
-$ mqadmin ["consumerProgress","-g","order-pricing-consumer","-t","ORDER_CREATED","-n","127.0.0.1:45265"]
+$ mqadmin ["consumerProgress","-g","order-pricing-consumer","-t","ORDER_CREATED","-n","127.0.0.1:46721"]
 exit 0
 
 #Topic                                                            #Broker Name                      #QID  #Broker Offset        #Consumer Offset      #Diff                #Inflight           #LastTime
