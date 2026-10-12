@@ -102,6 +102,39 @@ verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use` r
 execution seam the agent uses (the demo agent sends its HTTP requests through `http`), so a new read-only
 connector is registered there and its output is submitted and judged like everything else.
 
+## run_cli and verify_command_log
+
+`run_cli` lets the agent ask the core to run a **read-only, allowlisted** CLI on its behalf. The core executes it
+(`executedBy: "core"`), stores the redacted output as evidence and appends one line to `commands.jsonl`.
+
+- **argv only**: spawned as `spawn(binary, args)` with `shell: false`; arguments containing shell syntax (`;`, `|`, `$()`, …) are rejected.
+- **Subcommand allowlist** per connector (e.g. `aliyun sls GetLogs`, `mqadmin topicStatus`).
+- **Per-subcommand argument allowlist** (`args` in the connector config): after the subcommand, only listed flags are
+  accepted, as `--flag value` or `--flag=value`, matched exactly (case-sensitive). Everything else is rejected,
+  including global flags such as `--endpoint`, `--insecure`, `--body-file`, `--config-path`, `--profile` and credential flags.
+- `--region` is rejected unless the subcommand lists it **and** the value is in the connector's `regions` allowlist
+  (default: none, the profile's own region is used).
+- `--profile` is appended by us from config; the agent can never choose a profile or pass credentials.
+- **Env**: the child env is built from an allowlist only (`PATH`, `HOME`, `LANG`, `TMPDIR`, `TERM` + configured
+  `passEnv`). `ALIBABA_CLOUD_*`, `ALICLOUD_*`, `ALIYUN_*`, `ACS_*` are always stripped, even if listed in `passEnv`;
+  run_cli accepts no env from the caller.
+- **mongosh** never takes agent argv: only fixed `find` / `aggregate` / `countDocuments` templates; `$out`, `$merge`,
+  `$where`, `$function`, `$accumulator` are rejected at any depth.
+
+`verify_command_log` recomputes the hash chain of `commands.jsonl` (each entry hashes its content plus the previous
+hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or
+truncated entries.
+
+### Threat model / limits
+
+- The hash chain is **unkeyed** (plain SHA-256, no secret). It detects accidental or partial tampering, not a
+  deliberate rewrite: anyone who can write the walkthrough directory can recompute the whole log **and** the head in
+  `walkthrough.json` together. Same limitation as evidence hashes. External anchoring is planned before PR #10.
+- `run_in_sandbox exec` is a separate, broader path: it runs arbitrary argv in the sandbox and **does not go through
+  the run_cli allowlist**, so it can still invoke e.g. `aliyun` with any flags if the binary and login state are
+  reachable. Tracking issue: TODO (see PR description).
+- The allowlist is only as safe as the flags it lists; review additions to `args` like code.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:

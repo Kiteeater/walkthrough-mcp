@@ -2,6 +2,7 @@
  * run_cli: a thin, read-only, whitelisted CLI executor (design doc §PR #6).
  *  - argv only, spawned as spawn(binary, args) with shell disabled; no string is ever handed to a shell.
  *  - each connector allows a fixed set of subcommand prefixes; credential flags and shell syntax are rejected.
+ *  - each subcommand also has a flag ALLOWLIST (`args`); unlisted flags (e.g. --endpoint, --insecure) are rejected.
  *  - mongosh never takes agent argv: only fixed query templates (find / aggregate / countDocuments) that we render.
  *  - every call appends one hash-chained line to commands.jsonl (redacted argv, exit code, output sha256, cli
  *    name+version+profile name). Credentials are never logged: they stay in the CLI's own local login state.
@@ -20,7 +21,16 @@ export interface ConnectorConfig {
   kind?: "cli" | "mongo";
   /** Allowed subcommand prefixes (argv after the binary). Ignored for kind=mongo. */
   allow?: string[][];
-  /** Extra denied flags (matched as `--flag` or `--flag=…`). */
+  /**
+   * Per-subcommand flag ALLOWLIST, keyed by the subcommand prefix joined with a space (e.g. "sls GetLogs").
+   * After the subcommand, argv must be `<flag> <value>` or `<flag>=<value>` pairs whose flag is listed here
+   * (exact, case-sensitive). Anything else, including global flags such as --endpoint/--insecure, is rejected.
+   * A subcommand with no entry accepts no extra arguments.
+   */
+  args?: Record<string, string[]>;
+  /** Values accepted for `--region` (only if the subcommand allowlists it). Default: none, the profile's region is used. */
+  regions?: string[];
+  /** Extra denied flags (matched as `--flag` or `--flag=…`). Defence in depth only; the allowlist is what decides. */
   denyArgs?: string[];
   /** Name of the CLI's own local profile to use (`--profile <name>`); the name is logged, never its secrets. */
   profile?: string;
@@ -38,10 +48,25 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
       ["sls", "GetLogs"], ["sls", "GetHistograms"], ["sls", "ListLogStores"], ["sls", "ListProject"],
       ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],
     ],
+    args: {
+      "sls GetLogs": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
+      "sls GetHistograms": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
+      "sls ListLogStores": ["--project", "--logstoreName", "--offset", "--size"],
+      "sls ListProject": ["--projectName", "--offset", "--size"],
+      "cms DescribeAlertLogList": ["--StartTime", "--EndTime", "--Namespace", "--MetricName", "--GroupId", "--RuleName", "--Level", "--PageNumber", "--PageSize"],
+      "cms DescribeMetricList": ["--Namespace", "--MetricName", "--Dimensions", "--StartTime", "--EndTime", "--Period", "--Length", "--NextToken"],
+      "cms DescribeMetricLast": ["--Namespace", "--MetricName", "--Dimensions", "--Period", "--Length", "--NextToken"],
+      "cms DescribeAlertHistoryList": ["--StartTime", "--EndTime", "--RuleName", "--GroupId", "--State", "--Status", "--Page", "--PageSize"],
+    },
   },
   {
     name: "mqadmin", binary: "mqadmin",
     allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["consumerProgress"], ["consumerStatus"], ["queryMsgById"], ["queryMsgByKey"], ["brokerStatus"]],
+    args: {
+      clusterList: ["-n"], topicList: ["-n"], topicStatus: ["-n", "-t"], topicRoute: ["-n", "-t"],
+      consumerProgress: ["-n", "-g"], consumerStatus: ["-n", "-g", "-i"], queryMsgById: ["-n", "-i"],
+      queryMsgByKey: ["-n", "-t", "-k"], brokerStatus: ["-n", "-b", "-c"],
+    },
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
 ];
@@ -108,8 +133,24 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     const flag = a.split("=")[0];
     if ([...CRED_FLAGS, ...(c.denyArgs ?? [])].includes(flag)) throw new CliRejectedError(`flag not allowed: ${flag}`);
   }
-  const ok = (c.allow ?? []).some((p) => p.length <= argv.length && p.every((x, i) => argv[i] === x));
-  if (!ok) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
+  const prefix = (c.allow ?? []).filter((p) => p.length <= argv.length && p.every((x, i) => argv[i] === x)).sort((a, b) => b.length - a.length)[0];
+  if (!prefix) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
+  const allowed = c.args?.[prefix.join(" ")] ?? [];
+  const rest = argv.slice(prefix.length);
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const eq = a.startsWith("-") ? a.indexOf("=") : -1;
+    const flag = eq > 0 ? a.slice(0, eq) : a;
+    if (!allowed.includes(flag)) throw new CliRejectedError(`${c.name} ${prefix.join(" ")}: argument not in allowlist: ${JSON.stringify(flag)}`);
+    let value: string;
+    if (eq > 0) value = a.slice(eq + 1);
+    else {
+      if (i + 1 >= rest.length) throw new CliRejectedError(`${c.name}: ${flag} needs a value`);
+      value = rest[++i];
+      if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
+    }
+    if (flag === "--region" && !(c.regions ?? []).includes(value)) throw new CliRejectedError(`${c.name}: region not in allowlist: ${JSON.stringify(value)}`);
+  }
   return c.profile ? [...argv, "--profile", c.profile] : argv;
 }
 
@@ -149,3 +190,6 @@ export function verifyCommandLog(file: string, head?: { seq: number; hash: strin
   if (head && (head.seq !== lines.length || head.hash !== prev)) return { ok: false, entries: lines.length, error: `head mismatch: expected seq ${head.seq}, log has ${lines.length} (truncated or replaced)` };
   return { ok: true, entries: lines.length };
 }
+
+/** Env vars that would redirect or re-credential a cloud CLI (endpoint, region, keys). Never passed to run_cli children. */
+export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_)/i;
