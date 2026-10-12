@@ -188,10 +188,16 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
 - **Screenshots are never judged.** They are for human audit only: the audit view shows them next to the network
   evidence. A check backed only by a screenshot is `inconclusive`, whatever the expectation.
 - **`expect.type: "ui"`** judges network or text: `{"har": {"urlMatch": "/api/orders$", "status": [200, 299], "bodyMatch?": "...", "method?": "GET"}}`
-  reads HAR entries; `{"text": {"contains": "..."}}` reads DOM text. Exactly one of the two.
-- **HAR redaction** before anything is stored: `Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`… header values and
-  all cookie values are masked; secret-looking query params (`token`, `access_token`, `key`, `api_key`, `secret`, `sig`,
-  `signature`, `password`, `session`, `code`…) are masked in URLs and `queryString`; request and response bodies (and
+  reads HAR entries; `{"text": {"contains": "..."}}` reads DOM text. Exactly one of the two. Agent-supplied regexes
+  (`urlMatch`, `bodyMatch`, `replay_request.url_match`) get a ReDoS guard: ≤ 200 chars, no backreferences, no nested
+  or alternation quantifiers like `(a+)+` / `(a|aa)*`; matched against at most 2 KB of URL / 64 KB of body. Other
+  expect patterns are capped at 500 chars.
+- **HAR redaction** before anything is stored: header values are masked when the header NAME matches a credential
+  pattern (`authorization`, `cookie`, `token`, `api-key`, `secret`, `session`, `auth`, `csrf`, `signature`, `jwt`… so
+  `X-Access-Token`, `X-Goog-Api-Key`, `X-Session-Id`, `Set-Cookie` are covered) and all cookie values are masked;
+  query/form params are masked when the whole name or its last `-`/`_`/`.` segment is a credential word (`token`,
+  `access_token`, `key`, `api_key`, `secret`, `sig`, `signature`, `password`, `session`, `sid`, `jwt`, `ticket`, `code`…;
+  `barcode`, `zipcode`, `monkey` are kept); request and response bodies (and
   every other string) go through the generic secret patterns plus env-secret redaction.
 - **HAR/screenshot by `path`**: the file must resolve (realpath, so symlinks are followed) to a regular file inside
   `.walkthrough/`; HAR ≤ 5 MB, screenshot ≤ 10 MB. Content submitted inline has the same caps.
@@ -203,8 +209,10 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
   own fetcher (allowlist + IP rules, DNS resolved once, connection pinned to that IP), then handed to Chromium. So
   the main document can't be redirected or DNS-rebound to a forbidden address. Navigations and sub-resources are
   logged in the `capture_page` entry of `commands.jsonl`.
-  **Known gap:** sub-resources (scripts, images, XHR/fetch, iframes, websockets) are loaded by Chromium itself with its
-  own DNS: they are logged, **not blocked**, and not pinned. A page on an allowlisted host can make the browser request
+  **Known gap:** sub-resources (scripts, images, XHR/fetch), iframe navigations, popups opened with `window.open`
+  (their main frame is a different page) and WebSockets (which don't go through `route` at all) are loaded by Chromium
+  itself with its own DNS: they are logged where visible, **not blocked**, and not pinned. `capture_page` sends no
+  test-account credentials. A page on an allowlisted host can make the browser request
   internal addresses. Tracked in [#11](https://github.com/Kiteeater/walkthrough-mcp/issues/11); until then use
   `capture_page` only against your own service inside the sandbox.
 - **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
@@ -224,7 +232,12 @@ Configure it in `walkthrough.config.json` (no `replay` block → replay is disab
 ```
 
 - Only `GET` / `HEAD`. Only the method and URL come from the HAR; its cookies, `Authorization` and other headers and
-  body are never sent. If the target needs auth, the test-account value comes from the env var named in config.
+  body are never sent. If the target needs auth, the test-account value comes from the env var named in config
+  (`auth.valueEnv`). It is bound to origins (scheme://host:port): `auth.origins` if given, else only the origin of the
+  replayed URL. Headers are rebuilt per hop, so a redirect to another host, port or scheme (including https → http)
+  carries no account and no cookies; only an origin listed in `auth.origins` gets the account again.
+- The account value is added to the redactor for that run before anything is written (HAR, `commands.jsonl`, evidence
+  source, HTML), even when its env name doesn't look secret, so a server that echoes it back can't leak it.
 - Host must be in `allowHosts` (optionally `host:port`). Redirects are not followed automatically: each hop goes
   through the allowlist and IP checks again (max 3).
 - IP policy, checked on the address actually connected to (DNS resolved once per hop, connection pinned to that IP and

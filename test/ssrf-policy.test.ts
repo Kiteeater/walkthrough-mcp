@@ -101,6 +101,7 @@ describe("capture_page uses the replay policy for the main page", () => {
 
   // Real Chromium (runs where `npx playwright install chromium` was done, e.g. locally and in CI e2e; skipped otherwise).
   const hasChromium = (() => { try { return existsSync(require("playwright").chromium.executablePath()); } catch { return false; } })();
+  if (process.env.REQUIRE_CHROMIUM && !hasChromium) throw new Error("REQUIRE_CHROMIUM is set but Chromium is not installed");
   it.skipIf(!hasChromium)("real Playwright: redirect hop to 169.254.169.254 is blocked; main document comes from the pinned fetcher", async () => {
     const core = coreWith(cfg(), local, new PlaywrightCapturer());
     const id = await planned(core);
