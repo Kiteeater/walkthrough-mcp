@@ -18,7 +18,7 @@ dir=".walkthrough/$id"
 html="$dir/index.html"
 
 grep -q 'class="badge observed"' "$html"
-grep -q 'Export review.json' "$html"
+grep -q '导出 review.json' "$html"
 grep -q 'id="verdict"' "$html"
 ls "$dir"/evidence/*.png >/dev/null
 # Assert what the agent FOUND, not just page markers.
