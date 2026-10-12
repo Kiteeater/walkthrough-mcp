@@ -132,7 +132,7 @@ truncated entries.
   `walkthrough.json` together. Same limitation as evidence hashes. External anchoring is planned before PR #10.
 - `run_in_sandbox exec` is a separate, broader path: it runs arbitrary argv in the sandbox and **does not go through
   the run_cli allowlist**, so it can still invoke e.g. `aliyun` with any flags if the binary and login state are
-  reachable. Tracking issue: TODO (see PR description).
+  reachable. Tracking issue: [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8).
 - The allowlist is only as safe as the flags it lists; review additions to `args` like code.
 
 ## Evidence format
