@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { createServer, type AddressInfo } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,31 +33,55 @@ function makeService(bug: "a" | "b" | null) {
 const lib = require("./lib");
 http.createServer((req, res) => {
   try {
-    if (req.url === "/health") return res.end("ok");
+    if (req.url === "/health") { res.setHeader("x-wt-nonce", process.env.WT_AUDIT_NONCE || ""); return res.end("ok"); }
     if (req.url === "/a") return res.end(lib.a());
     if (req.url === "/b") return res.end(lib.b());
     res.statusCode = 404; res.end();
   } catch (err) { console.error(err.stack); res.statusCode = 500; res.end("internal error"); }
-}).listen(Number(process.env.PORT), () => console.log("listening"));`);
+}).listen(Number(process.env.PORT), "127.0.0.1", () => console.log("listening"));`);
   return { root, svc };
+}
+
+function freePort(): Promise<number> {
+  return new Promise((res, rej) => { const s = createServer(); s.once("error", rej); s.listen(0, "127.0.0.1", () => { const p = (s.address() as AddressInfo).port; s.close(() => res(p)); }); });
+}
+async function waitForOurService(port: number, nonce: string, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  let last = "no response";
+  while (Date.now() < end) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) });
+      if (r.ok && r.headers.get("x-wt-nonce") === nonce) return;
+      last = `HTTP ${r.status}, nonce ${r.headers.get("x-wt-nonce") ?? "missing"} (another process on port ${port}?)`;
+    } catch (e) { last = String((e as Error).message); }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`test service on 127.0.0.1:${port} not ready after ${ms} ms: ${last}`);
 }
 
 async function runReal(bug: "a" | "b" | null) {
   const { root, svc } = makeService(bug);
-  const port = 40000 + Math.floor(Math.random() * 20000);
+  // Root cause of the old flake: a random port in 40000-59999 sits inside Linux's ephemeral range, where other test
+  // files' listen(0) servers live. On a collision our service died with EADDRINUSE, the health poll got "200" from
+  // the OTHER server, and the agent judged that server → wrong statuses. Now: an OS-assigned free port, and
+  // readiness only counts when /health answers with this run's nonce (fails loudly otherwise).
+  const port = await freePort();
+  const nonce = randomBytes(8).toString("hex");
   process.env.WT_AUDIT_PORT = String(port);
+  process.env.WT_AUDIT_NONCE = nonce;
   const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: fakeCapturer, redactor: new Redactor([]) });
   const w = await core.startWalkthrough({
-    title: "audit", sandbox: { backend: "local", cwd: svc, up: "", down: "", local: { up: "PORT=$WT_AUDIT_PORT exec node server.js", passEnv: ["WT_AUDIT_PORT"], killTimeoutMs: 1000 } },
+    title: "audit", sandbox: { backend: "local", cwd: svc, up: "", down: "", local: { up: "PORT=$WT_AUDIT_PORT exec node server.js", passEnv: ["WT_AUDIT_PORT", "WT_AUDIT_NONCE"], killTimeoutMs: 1000 } },
   });
   await core.runInSandbox(w.id, "up");
   try {
-    for (let i = 0; i < 50; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((r) => setTimeout(r, 100)); }
+    await waitForOurService(port, nonce, 15_000);
     const results = await runDemoAgent(core, w.id, ROUTES, { goal: "all routes work", baseUrl: `http://127.0.0.1:${port}`, service: "app", settleMs: 150 });
     return { core, w: core.load(w.id), results };
   } finally {
     await core.runInSandbox(w.id, "down");
     delete process.env.WT_AUDIT_PORT;
+    delete process.env.WT_AUDIT_NONCE;
   }
 }
 const rootCauseOf = (w: Walkthrough, i = 0) => {
