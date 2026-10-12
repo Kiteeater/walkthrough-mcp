@@ -1,6 +1,7 @@
 import { withDeadline } from "./settle.js";
 import { evaluateExpect } from "./checks.js";
 import { Registry } from "./registry.js";
+import { MCP_IMPORT_PRESETS, mcpImportSource } from "./imports.js";
 import type { Check, CommandAction, HttpAction, LogObserve } from "./types.js";
 
 export const httpSource = {
@@ -41,7 +42,9 @@ export const logSource = {
 
 export const ruleVerifier = { type: "rule", verify: async (check: Check, texts: string[]) => evaluateExpect(check.expect, texts) };
 
-/** Built-in sources. PR 5 adds `connector:<name>` action/observe sources via the same registry. */
+/** Built-in sources, plus one `connector:<name>` import source per read-only MCP preset (mongodb, langfuse, aliyun). */
 export function defaultRegistry(): Registry {
-  return new Registry().registerAction(httpSource).registerAction(commandSource).registerObserver(logSource).registerVerifier(ruleVerifier);
+  const r = new Registry().registerAction(httpSource).registerAction(commandSource).registerObserver(logSource).registerVerifier(ruleVerifier);
+  for (const c of MCP_IMPORT_PRESETS) r.registerAction(mcpImportSource(c));
+  return r;
 }

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Trace a 500 across HTTP → Langfuse → MongoDB → source</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
+.claim{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:1.5rem 0}
+.badge{padding:2px 8px;border-radius:10px;font-size:.8rem;color:#fff}
+.badge.local{background:#cf222e}.badge.observed{background:#1a7f37}.badge.inferred{background:#9a6700}
+img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;overflow:auto;max-height:300px}
+.meta{font-size:.75rem;color:#666}.summary{display:flex;gap:1.5rem;background:#f6f8fa;padding:.75rem 1rem;border-radius:8px}
+.review{margin:.5rem 0;padding:.4rem .6rem;border-left:4px solid #999}.review.agree{border-color:#1a7f37}.review.flag{border-color:#cf222e;background:#fff5f5}
+.state{margin-left:.5rem;font-weight:bold}
+.verdict{border:2px solid #222;border-radius:10px;padding:1rem 1.25rem}.headline{font-size:1.6rem}
+.chip{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85rem;margin-right:.4rem;background:#eee;color:#222}
+.chip.critical{background:#82071e;color:#fff}.chip.high{background:#cf222e;color:#fff}.chip.medium{background:#bf8700;color:#fff}.chip.low{background:#57606a;color:#fff}
+.sev{margin:.5rem 0}.checks-sum{color:#555;margin-left:.5rem}.finding-list li{margin:.6rem 0}.rc{margin:.2rem 0}.loc{background:#fff8c5;padding:1px 4px}
+.code code{display:block;background:#f6f8fa;padding:.3rem .5rem;margin-top:.2rem;white-space:pre-wrap}
+.signoff{margin-top:1rem;padding-top:.75rem;border-top:1px solid #ddd}.signoff textarea{width:100%;height:3rem;margin:.4rem 0}
+details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0}summary{cursor:pointer;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}tr.pass_needs_review td{background:#fff3cd}
+.prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
+li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
+</style></head><body>
+<h1>Trace a 500 across HTTP → Langfuse → MongoDB → source</h1>
+<p><span class="badge local" title="local run, not isolated">本地运行、未隔离</span> Commands ran as host child processes without isolation.</p>
+<p class="meta">walkthrough wt-20261012195308-f71472 · 1 findings · 6 checks · 0 claims · 7 evidence items</p>
+<section class="verdict" id="verdict">
+<div class="headline" data-findings="1">发现 <b>1</b> 个问题 · 1 finding</div>
+<div class="sev"><span class="chip critical" data-sev="critical">critical 0</span><span class="chip high" data-sev="high">high 1</span><span class="chip medium" data-sev="medium">medium 0</span><span class="chip low" data-sev="low">low 0</span>
+<span class="checks-sum">checks: 2/6 passed</span> <span class="chip needs-review" data-needs-review="1" title="passed only on agent-reported evidence">⚠ 1 pass needs review（仅 agent 自报证据）: chk-1</span></div>
+<p class="goal">Goal: Every order&#39;s total endpoint answers 2xx; if not, trace the failure to its root cause across sources</p>
+<ol class="finding-list"><li data-finding="finding-1"><span class="chip high">high</span> <span class="badge observed">observed</span> <b>GET /api/orders/ord-3/total → 500: order document without line items</b>
+<div class="rc">Root cause: <code class="loc">examples/trace-demo/service/pricing.js:3</code> — TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)<div class="code"><code>3 | return order.items.reduce((sum, item) =&gt; sum + item.price * item.qty, 0);</code></div></div><a href="#finding-1" onclick="document.getElementById('finding-1').open=true">evidence chain ▸</a></li></ol>
+<div class="signoff" data-prior="">
+<b>报告签核 Sign-off:</b>
+<label><input type="radio" name="signoff" value="accept"> 认可</label>
+<label><input type="radio" name="signoff" value="reject"> 打回</label>
+<textarea id="signoff-comment" placeholder="comment"></textarea>
+<button id="export">Export review.json</button>
+
+</div>
+</section>
+<h2>Findings — evidence chain</h2>
+<details class="finding" id="finding-1"><summary><span class="chip high">high</span> GET /api/orders/ord-3/total → 500: order document without line items <span class="meta">(from chk-2)</span></summary>
+<p><b>Symptom:</b> GET http://localhost:3200/api/orders/ord-3/total answered 500 (trace 1a411552-763b-45c6-8370-b39a5977be50)</p>
+<p><b>Repro:</b></p><ol><li><code>curl -i -X GET &quot;http://localhost:3200/api/orders/ord-3/total&quot;</code></li><li><code>langfuse.get_trace({traceId: &quot;1a411552-763b-45c6-8370-b39a5977be50&quot;})</code></li><li><code>mongodb.find(orders, {_id: ord-3})</code></li></ol>
+<p><b>Root-cause chain:</b></p><ol class="chain"><li class="step prov-agent" data-prov="agent"><span class="prov agent" title="backed only by evidence the agent reported">agent 自报 · lower trust</span> <span class="badge observed">observed</span> GET /api/orders/ord-3/total answered 500 (status 500, expected 200-299) <span class="meta">[ev-4]</span> ↓</li><li class="step prov-agent" data-prov="agent"><span class="prov agent" title="backed only by evidence the agent reported">agent 自报 · lower trust</span> <span class="badge observed">observed</span> Langfuse trace 1a411552-763b-45c6-8370-b39a5977be50: observation &quot;orderTotal&quot; is ERROR (Cannot read properties of undefined (reading &#39;reduce&#39;)) for orders ord-3 — fail <span class="meta">[ev-6]</span> ↓</li><li class="step prov-agent" data-prov="agent"><span class="prov agent" title="backed only by evidence the agent reported">agent 自报 · lower trust</span> <span class="badge observed">observed</span> MongoDB shop.orders {_id: &quot;ord-3&quot;} has fields [_id, customer, legacyTotal] but no &quot;items&quot; — fail <span class="meta">[ev-7]</span> ↓</li><li class="step prov-core" data-prov="core"><span class="prov core" title="backed by evidence walkthrough executed itself">我们执行</span> <span class="badge observed">observed</span> the service&#39;s stack trace points at examples/trace-demo/service/pricing.js:3 (TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)): the code assumes every order has items → <code>examples/trace-demo/service/pricing.js:3</code> <span class="meta">[ev-5]</span></li></ol>
+<p><b>Evidence:</b></p><figure><div class="meta">ev-4 · http · <span class="prov agent">reported by agent · agent 自报</span> · agent:fetch curl -i -X GET &quot;http://localhost:3200/api/orders/ord-3/total&quot; · sha256 d581e0dabf78… · 2026-10-12T19:53:09.349Z</div><pre>GET http://localhost:3200/api/orders/ord-3/total
+HTTP 500 Internal Server Error
+
+{&quot;error&quot;:&quot;internal error&quot;,&quot;traceId&quot;:&quot;1a411552-763b-45c6-8370-b39a5977be50&quot;}</pre></figure>
+<figure><div class="meta">ev-6 · mcp_result · <span class="prov agent">reported by agent · agent 自报</span> · connector:langfuse · <code class="mcpcall">langfuse.get_trace({&quot;traceId&quot;:&quot;1a411552-763b-45c6-8370-b39a5977be50&quot;})</code> · linked ev-4 by &quot;1a411552-763b-45c6-8370-b39a5977be50&quot; · sha256 57e098b00e15… · 2026-10-12T19:53:09.360Z</div><pre># reported by agent: langfuse.get_trace({&quot;traceId&quot;:&quot;1a411552-763b-45c6-8370-b39a5977be50&quot;})
+
+{
+  &quot;id&quot;: &quot;1a411552-763b-45c6-8370-b39a5977be50&quot;,
+  &quot;name&quot;: &quot;GET /api/orders/:id/total&quot;,
+  &quot;metadata&quot;: {
+    &quot;db&quot;: &quot;shop&quot;,
+    &quot;collection&quot;: &quot;orders&quot;,
+    &quot;orderId&quot;: &quot;ord-3&quot;
+  },
+  &quot;observations&quot;: [
+    {
+      &quot;name&quot;: &quot;orderTotal&quot;,
+      &quot;level&quot;: &quot;ERROR&quot;,
+      &quot;statusMessage&quot;: &quot;Cannot read properties of undefined (reading &#39;reduce&#39;)&quot;
+    }
+  ],
+  &quot;timestamp&quot;: &quot;2026-10-12T19:53:09.039Z&quot;
+}</pre></figure>
+<figure><div class="meta">ev-7 · mcp_result · <span class="prov agent">reported by agent · agent 自报</span> · connector:mongodb · <code class="mcpcall">mongodb-mcp-server.find({&quot;database&quot;:&quot;shop&quot;,&quot;collection&quot;:&quot;orders&quot;,&quot;filter&quot;:{&quot;_id&quot;:&quot;ord-3&quot;}})</code> · linked ev-6 by &quot;ord-3&quot; · sha256 3b7d8d480720… · 2026-10-12T19:53:09.383Z</div><pre># reported by agent: mongodb-mcp-server.find({&quot;database&quot;:&quot;shop&quot;,&quot;collection&quot;:&quot;orders&quot;,&quot;filter&quot;:{&quot;_id&quot;:&quot;ord-3&quot;}})
+
+[
+  {
+    &quot;_id&quot;: &quot;ord-3&quot;,
+    &quot;customer&quot;: &quot;kai&quot;,
+    &quot;legacyTotal&quot;: 12
+  }
+]</pre></figure>
+<figure><div class="meta">ev-5 · log · <span class="prov core">executed by walkthrough · 我们执行</span> · local:app · sha256 0822a5ad67d5… · 2026-10-12T19:53:09.349Z</div><pre>GET /api/orders/ord-3/total
+request failed: GET /api/orders/ord-3/total trace=1a411552-763b-45c6-8370-b39a5977be50
+TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)
+    at orderTotal (/workspace/wm-pr7/examples/trace-demo/service/pricing.js:3:22)
+    at Server.&lt;anonymous&gt; (/workspace/wm-pr7/examples/trace-demo/service/server.js:27:51)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+</pre></figure>
+</details>
+<details class="checks"><summary>Checks the agent ran (6)</summary>
+<h3>原始计划 Original plan (4)</h3><table class="plan-original"><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr><tr class="pass_needs_review"><td>chk-1 GET /api/orders/ord-1/total answers 2xx<div class="meta">http: GET http://localhost:3200/api/orders/ord-1/total</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>pass_needs_review: no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review</td><td>ev-2</td></tr><tr class="pass"><td>chk-1-logs no error alerts in app logs for ord-1<div class="meta">cli: logs:app</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>pass</td><td>ev-3</td></tr><tr class="fail"><td>chk-2 GET /api/orders/ord-3/total answers 2xx<div class="meta">http: GET http://localhost:3200/api/orders/ord-3/total</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>fail: status 500, expected 200-299</td><td>ev-4</td></tr><tr class="fail"><td>chk-2-logs no error alerts in app logs for ord-3<div class="meta">cli: logs:app</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>fail: found /Error:|Unhandled|FATAL/: &quot;Error:&quot;</td><td>ev-5</td></tr></table>
+<h3 class="appended">追查中追加 Appended while tracing (2)</h3><table class="plan-appended" data-appended="2"><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr><tr class="fail"><td>chk-2-trace Langfuse trace 1a411552-763b-45c6-8370-b39a5977be50 has no ERROR observation<div class="meta">mcp: langfuse.get_trace(1a411552-763b-45c6-8370-b39a5977be50) · 追查中追加 after ev-4 (log #1, 2026-10-12T19:53:09.357Z)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;\&quot;level\&quot;: \&quot;ERROR\&quot;&quot;}</code></td><td>fail: found /&quot;level&quot;: &quot;ERROR&quot;/: &quot;\&quot;level\&quot;: \&quot;ERROR\&quot;&quot;</td><td>ev-6</td></tr><tr class="fail"><td>chk-2-doc shop.orders ord-3 has line items<div class="meta">mcp: mongodb.find(orders, {_id: ord-3}) · 追查中追加 after ev-4 (log #2, 2026-10-12T19:53:09.357Z)</div></td><td><code>{&quot;type&quot;:&quot;regex&quot;,&quot;value&quot;:&quot;\&quot;items\&quot;\\s*:&quot;}</code></td><td>fail: no match for /&quot;items&quot;\s*:/</td><td>ev-7</td></tr></table></details>
+<details class="claims"><summary>Per-claim review (optional, 0 claims)</summary>
+<div class="summary" id="summary">
+<span>observed: <b data-count="observed">0</b></span>
+<span>inferred: <b data-count="inferred">0</b></span>
+<span>agreed: <b data-count="agreed">0</b></span>
+<span>flagged: <b data-count="flagged">0</b></span>
+</div>
+
+</details>
+<script>
+const WID="wt-20261012195308-f71472";const decisions={};
+document.querySelectorAll(".claim").forEach(s=>{
+  const st=s.querySelector(".state");if(s.dataset.prior){decisions[s.dataset.claim]=s.dataset.prior;st.textContent=s.dataset.prior;}
+  s.querySelectorAll("button[data-d]").forEach(b=>b.onclick=()=>{decisions[s.dataset.claim]=b.dataset.d;st.textContent=b.dataset.d;});
+});
+document.getElementById("export").onclick=()=>{
+  const out={walkthroughId:WID,decisions:Object.entries(decisions).map(([claimId,decision])=>{
+    const note=document.querySelector('[data-claim="'+claimId+'"] .note').value;return note?{claimId,decision,note}:{claimId,decision};})};
+  const so=document.querySelector('input[name="signoff"]:checked');const comment=document.getElementById("signoff-comment").value;
+  if(so)out.signoff=comment?{decision:so.value,comment}:{decision:so.value};
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));
+  a.download="review.json";a.click();
+};
+</script></body></html>

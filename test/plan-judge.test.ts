@@ -76,7 +76,7 @@ describe("evaluate_check: the core judges, the agent cannot override", () => {
     expect(core.load(id).checkResults![0].status).toBe("fail");
     // re-evaluating replaces the result only with another core judgement
     const ok = await submit("a", "GET /\nHTTP 200 OK");
-    expect((await core.evaluateCheck(id, { checkId: "a", evidenceIds: [ok.id] })).status).toBe("pass");
+    expect((await core.evaluateCheck(id, { checkId: "a", evidenceIds: [ok.id] })).status).toBe("pass_needs_review") // agent-submitted evidence only (PR #7);
     expect(core.load(id).checkResults).toHaveLength(1);
   });
 
@@ -134,7 +134,7 @@ describe("connector seam", () => {
     core.registry.registerAction({ type: "connector:fake", run: async () => ({ body: "", evidenceText: "row\nrow\nrow", repro: "probe fake" }) });
     const out = await core.registry.action("connector:fake").run({ type: "connector:fake" }, { walkthrough: core.load(id), sandbox: undefined as never });
     const ev = await submit("k", out.evidenceText, "cli_output");
-    expect((await core.evaluateCheck(id, { checkId: "k", evidenceIds: [ev.id] })).status).toBe("pass");
+    expect((await core.evaluateCheck(id, { checkId: "k", evidenceIds: [ev.id] })).status).toBe("pass_needs_review") // agent-submitted evidence only (PR #7);
     expect(() => core.registry.action("connector:missing")).toThrow(/no action source/);
   });
 });

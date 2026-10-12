@@ -34,5 +34,22 @@ node dist/cli/index.js render "$id" --root . >/dev/null
 grep -q '"decision": "flag"' "$dir/walkthrough.json"
 grep -q '"decision": "reject"' "$dir/walkthrough.json"
 
-mkdir -p e2e-output && cp -r "$dir" e2e-output/
+# PR #7: trace a 500 across sources — real MongoDB (mongodb-memory-server) + mock Langfuse, imported as agent-reported evidence.
+set +x
+: "${LANGFUSE_SECRET_KEY:=sk-lf-e2e-$RANDOM$RANDOM}"
+export LANGFUSE_SECRET_KEY
+set -x
+tresult="$(node examples/trace-demo/run.mjs . | tail -1)"
+tid="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$tresult")"
+tdir=".walkthrough/$tid"
+node examples/assert-trace-chain.mjs "$tdir/walkthrough.json"
+grep -q 'class="step prov-agent"' "$tdir/index.html"
+grep -q 'class="step prov-core"' "$tdir/index.html"
+grep -q 'data-needs-review=' "$tdir/index.html"
+grep -q '追查中追加' "$tdir/index.html"
+set +x
+if grep -rqF "$LANGFUSE_SECRET_KEY" "$tdir"; then echo "langfuse secret leaked into output" >&2; exit 1; fi
+set -x
+
+mkdir -p e2e-output && cp -r "$dir" "$tdir" e2e-output/
 echo "E2E OK: $html"

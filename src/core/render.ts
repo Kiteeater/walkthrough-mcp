@@ -20,7 +20,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const evidenceHtml = (ids: string[]) => ids.map((evId) => {
     const ev = w.evidence.find((e) => e.id === evId);
     if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
-    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? "reported by agent" : "captured by walkthrough"} · ${esc(ev.source)} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
+    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">reported by agent · agent 自报</span>' : '<span class="prov core">executed by walkthrough · 我们执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
     const body = ev.type === "screenshot"
       ? `<img src="${esc(ev.path)}" alt="${esc(ev.id)}">`
       : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>(empty)</em>"}</pre>`;
@@ -43,12 +43,13 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
     return `<code class="loc">${esc(src.file)}:${src.line}</code> — ${esc(src.note ?? step?.claim ?? "")}${code ? `<div class="code"><code>${src.line} | ${esc(code)}</code></div>` : ""}`;
   };
   const passed = results.filter((r) => r.status === "pass").length;
+  const needsReview = results.filter((r) => r.status === "pass_needs_review");
   const verdict = `<section class="verdict" id="verdict">
 <div class="headline" data-findings="${findings.length}">${findings.length
     ? `发现 <b>${findings.length}</b> 个问题 · ${findings.length} finding${findings.length > 1 ? "s" : ""}`
     : "未发现问题 · no findings"}</div>
 <div class="sev">${SEV.map((s) => `<span class="chip ${s}" data-sev="${s}">${s} ${sevCount(s)}</span>`).join("")}
-<span class="checks-sum">checks: ${passed}/${results.length} passed</span></div>
+<span class="checks-sum">checks: ${passed + needsReview.length}/${results.length} passed</span>${needsReview.length ? ` <span class="chip needs-review" data-needs-review="${needsReview.length}" title="passed only on agent-reported evidence">⚠ ${needsReview.length} pass needs review（仅 agent 自报证据）: ${esc(needsReview.map((r) => r.checkId).join(", "))}</span>` : ""}</div>
 ${w.goal ? `<p class="goal">Goal: ${esc(w.goal)}</p>` : ""}
 <ol class="finding-list">${findings.map((f) => `<li data-finding="${esc(f.id)}"><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> <span class="badge ${esc(f.kind)}">${esc(f.kind)}</span> <b>${esc(f.title)}</b>
 <div class="rc">Root cause: ${rootCauseLine(f)}</div><a href="#${esc(f.id)}" onclick="document.getElementById('${esc(f.id)}').open=true">evidence chain ▸</a></li>`).join("\n")}</ol>
@@ -64,7 +65,11 @@ ${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">Signed: <b>${w.sig
   const findingDetails = findings.map((f) => {
     const steps = f.root_cause_chain.map((l, i) => {
       const src = srcOf(l.source_ref);
-      return `<li class="step"><span class="badge ${esc(l.kind)}">${esc(l.kind)}</span> ${esc(l.claim)}${src ? ` → <code>${esc(src.file)}:${src.line}</code>` : ""}${l.evidence_ids.length ? ` <span class="meta">[${esc(l.evidence_ids.join(", "))}]</span>` : ""}${i < f.root_cause_chain.length - 1 ? " ↓" : ""}</li>`;
+      const evs = l.evidence_ids.map((e) => w.evidence.find((x) => x.id === e)).filter(Boolean);
+      const prov = !evs.length ? "none" : evs.some((e) => e!.executedBy !== "agent") ? "core" : "agent";
+      const provTag = prov === "agent" ? '<span class="prov agent" title="backed only by evidence the agent reported">agent 自报 · lower trust</span> '
+        : prov === "core" ? '<span class="prov core" title="backed by evidence walkthrough executed itself">我们执行</span> ' : "";
+      return `<li class="step prov-${prov}" data-prov="${prov}">${provTag}<span class="badge ${esc(l.kind)}">${esc(l.kind)}</span> ${esc(l.claim)}${src ? ` → <code>${esc(src.file)}:${src.line}</code>` : ""}${l.evidence_ids.length ? ` <span class="meta">[${esc(l.evidence_ids.join(", "))}]</span>` : ""}${i < f.root_cause_chain.length - 1 ? " ↓" : ""}</li>`;
     }).join("");
     return `<details class="finding" id="${esc(f.id)}"><summary><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${esc(f.title)}${f.checkId ? ' <span class="meta">(from ' + esc(f.checkId) + ")</span>" : ""}</summary>
 <p><b>Symptom:</b> ${esc(f.symptom)}</p>
@@ -73,11 +78,15 @@ ${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<l
 <p><b>Evidence:</b></p>${evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
-  const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>Checks the agent ran (${results.length})</summary>
-<table><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>${(w.checks ?? []).map((c) => {
+  const row = (c: NonNullable<typeof w.checks>[number]) => {
     const r = results.find((x) => x.checkId === c.id);
-    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
-  }).join("")}</table></details>` : "";
+    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加 after ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${esc(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
+  };
+  const head = "<tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>";
+  const original = (w.checks ?? []).filter((c) => !c.appended), appended = (w.checks ?? []).filter((c) => c.appended);
+  const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>Checks the agent ran (${results.length})</summary>
+<h3>原始计划 Original plan (${original.length})</h3><table class="plan-original">${head}${original.map(row).join("")}</table>
+${appended.length ? `<h3 class="appended">追查中追加 Appended while tracing (${appended.length})</h3><table class="plan-appended" data-appended="${appended.length}">${head}${appended.map(row).join("")}</table>` : ""}</details>` : "";
 
   const sections = w.claims.map((c, i) => {
     const evidence = evidenceHtml(c.evidenceIds);
@@ -118,7 +127,9 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 .code code{display:block;background:#f6f8fa;padding:.3rem .5rem;margin-top:.2rem;white-space:pre-wrap}
 .signoff{margin-top:1rem;padding-top:.75rem;border-top:1px solid #ddd}.signoff textarea{width:100%;height:3rem;margin:.4rem 0}
 details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0}summary{cursor:pointer;font-weight:600}
-table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}tr.pass_needs_review td{background:#fff3cd}
+.prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
+li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}Commands ran as host child processes without isolation.</p>` : ""}

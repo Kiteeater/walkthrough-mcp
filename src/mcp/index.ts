@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
-  captureEvidenceShape, captureInput, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
+  captureEvidenceShape, captureInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
 } from "../core/index.js";
 
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
@@ -31,6 +31,9 @@ server.tool("run_in_sandbox", "Bring the sandbox up/down or exec a command in it
 server.tool("capture_evidence", "Submit raw output you obtained yourself (type=submit, check_id, kind, source, content), or have walkthrough capture a screenshot/logs. Stored redacted with sha256.",
   captureEvidenceShape, (a) => wrap(() => core.captureEvidence(a.id, captureInput(a)))());
 
+server.tool("import_mcp_result", "Import a result you got from another READ-ONLY MCP server (mongodb / langfuse / aliyun). Stored as agent-reported evidence (lower trust), hashed and redacted; must link to earlier evidence by a shared key.",
+  importMcpResultShape, (a) => wrap(() => core.importMcpResult(a.id, importInput(a as never)))());
+
 server.tool("link_source", "Link a source file and line.", {
   id, file: z.string(), line: z.number().int(), note: z.string().optional(),
 }, (a) => wrap(() => core.linkSource(a.id, a))());
@@ -48,9 +51,9 @@ server.tool("run_cli", "walkthrough runs a whitelisted READ-ONLY CLI for you (ar
 server.tool("verify_command_log", "Verify the hash-chained run_cli command log.", { id }, (a) => wrap(() => core.verifyCommandLog(a.id))());
 
 server.tool("plan_checks", "Record your check plan. Every check needs a machine-checkable expect. Returns next_actions.", planChecksShape,
-  (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never }))());
+  (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never, append: a.append, triggeringEvidenceId: a.triggering_evidence_id }))());
 
-server.tool("evaluate_check", "walkthrough judges a check pass/fail/inconclusive from its evidence. You cannot set or override the verdict.", evaluateCheckShape,
+server.tool("evaluate_check", "walkthrough judges a check pass/pass_needs_review/fail/inconclusive from its evidence (agent-reported evidence alone is at most pass_needs_review). You cannot set or override the verdict.", evaluateCheckShape,
   (a) => wrap(() => core.evaluateCheck(a.id, { checkId: a.check_id, evidenceIds: a.evidence_ids }))());
 
 server.tool("record_finding", "Record a finding with symptom, repro_steps and root_cause_chain. Observed steps must cite verified evidence.", recordFindingShape,

@@ -96,11 +96,52 @@ Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `plan_checks`, 
 
 ### Pluggable sources (seam for environment connectors)
 
-Action sources (`http`, `command`, later `connector:<name>`), observe sources (`log`, later `connector:<name>`) and
+Action sources (`http`, `command`, `connector:<name>` for imported MCP results), observe sources (`log`, later `connector:<name>`) and
 verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use` reserved) go through a registry in
 `src/core/registry.ts`. `evaluate_check` only talks to the verifier registry. Action and observe sources are the
 execution seam the agent uses (the demo agent sends its HTTP requests through `http`), so a new read-only
 connector is registered there and its output is submitted and judged like everything else.
+
+## Importing results from other MCP servers
+
+walkthrough never connects to your databases or observability stack. Mount the official servers on your host agent
+**read-only**, call them yourself, then hand the raw result over with `import_mcp_result`:
+
+| connector | server | recommended read-only setup | tools accepted for import |
+|---|---|---|---|
+| `mongodb` | `mongodb-mcp-server` | `npx -y mongodb-mcp-server --readOnly` (or `MDB_MCP_READ_ONLY=true`) **and** a read-only DB user | `find`, `aggregate`, `count`, `list-databases`, `list-collections`, `collection-schema`, `collection-indexes`, `explain`, `db-stats` |
+| `aliyun` | `alibaba-cloud-ops-mcp-server` | `--services sls,cms --extra-config "{'sls':['GetLogs','GetHistograms'],'cms':['DescribeAlertLogList','DescribeMetricList']}"` with a read-only RAM sub-account | `sls_GetLogs`, `sls_GetHistograms`, `cms_DescribeAlertLogList`, `cms_DescribeMetricList`, `ecs_DescribeInstances` |
+| `langfuse` | Langfuse MCP | allowlist only the read tools in your MCP client (the server exposes write tools by default); use a project-scoped key | `get_trace`, `list_traces`, `get_observation`, `list_observations`, `get_session`, `list_sessions` |
+
+```jsonc
+// import_mcp_result
+{ "id": "wt-…", "check_id": "chk-2-trace", "connector": "langfuse", "tool": "get_trace",
+  "params": { "traceId": "73c6…" }, "result": { /* raw tool result */ },
+  "links": [{ "evidence_id": "ev-4", "key": "73c6…" }] }
+```
+
+- Stored as `kind: "mcp_result"`, `executedBy: "agent"` (**reported by the agent**, lower trust), `source: "connector:<name>"`,
+  plus `mcpCall: {connector, server, tool, params}`; redacted and sha256-hashed like all evidence.
+- `params`: credential-looking keys (`password`, `token`, `apiKey`, `authorization`, `secret`…) are replaced by
+  `[REDACTED]`, `scheme://user:pass@` userinfo is stripped, then env-secret redaction runs. Never pass credentials.
+- Rejected: unknown connector, a tool outside the read-only list (e.g. `insert-many`), no `links`, a linked evidence id
+  that is missing or whose hash no longer matches, or a link `key` that does not occur in **both** the linked evidence
+  and the imported result.
+- Judgment rule: if **any** evidence fails the expectation → `fail`, whoever executed it. If all satisfy it: at least one
+  core-executed piece → `pass`; agent-reported only → `pass_needs_review` (flagged on the report's first screen).
+  (`count` is judged on the combined evidence.)
+- Imported results and params are also scrubbed of generic secret patterns (`sk-lf-…`, `pk-lf-…`, `Bearer …`,
+  `Authorization` / `Cookie` / `X-Api-Key` values, `sk-…`, `AKIA…`, `LTAI…`), not only env-known secrets.
+- `plan_checks` with `append: true` (+ required `triggering_evidence_id`) adds follow-up checks mid-run. Append-only:
+  an existing id (or a changed `expect`) is rejected; each appended check is a hash-chained `plan_append` entry in
+  `commands.jsonl` (timestamp, check sha256, triggering evidence) checked by `verify_command_log`; the report lists them
+  separately as **追查中追加**.
+  Root-cause chain steps in the HTML are marked **agent 自报** (dashed amber) vs **我们执行** (solid green).
+
+Demo: `npm run build && node examples/trace-demo/run.mjs .` starts a real MongoDB (`mongodb-memory-server`, or
+`$MONGO_URL`), a mock Langfuse and `examples/trace-demo/service`. The agent finds `GET /api/orders/ord-3/total` → 500,
+follows the response's trace id into Langfuse, the trace's `orderId` into Mongo (doc has no `items`), and the stack
+trace to `pricing.js:3`: `HTTP 500 → Langfuse trace → Mongo doc → file:line`. Committed run: `examples/output-trace/`.
 
 ## run_cli and verify_command_log
 
@@ -112,6 +153,8 @@ connector is registered there and its output is submitted and judged like everyt
 - **Per-subcommand argument allowlist** (`args` in the connector config): after the subcommand, only listed flags are
   accepted, as `--flag value` or `--flag=value`, matched exactly (case-sensitive). Everything else is rejected,
   including global flags such as `--endpoint`, `--insecure`, `--body-file`, `--config-path`, `--profile` and credential flags.
+- **aliyun / mqadmin argument values may not start with `-`** (side effect of the flag-value check: a value like `-1`
+  or `-foo` is treated as a smuggled flag and rejected).
 - `--region` is rejected unless the subcommand lists it **and** the value is in the connector's `regions` allowlist
   (default: none, the profile's own region is used).
 - `--profile` is appended by us from config; the agent can never choose a profile or pass credentials.

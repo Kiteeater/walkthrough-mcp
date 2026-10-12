@@ -27,3 +27,4 @@ export function createCore(root = process.cwd(), capturer: Capturer = new Playwr
 export function readJsonFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
+export * from "./imports.js";
