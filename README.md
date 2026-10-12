@@ -198,6 +198,8 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
 - **Provenance**: agent-reported HAR/screenshots alone give at most `pass_needs_review`, same as other imports.
 - **No computer use on the host?** `capture_page(check_id, url)` makes walkthrough load the page with Playwright and
   store screenshot + HAR + DOM text as core-executed evidence (needs `npx playwright install chromium`; CI e2e has it).
+  It has no SSRF policy of its own (the browser loads whatever the page references): use it only against your own
+  service inside the sandbox.
 
 ### replay_request (core-executed)
 
