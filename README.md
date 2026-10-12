@@ -76,9 +76,15 @@ MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthro
 
 **Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
 buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
-connected, and none is needed. Of the five company sources only the integration seams exist: Prometheus
-(`query_metrics`, alert watches), Langfuse/MongoDB (via their own MCP servers + `import_mcp_result`) and Aliyun
-(`run_cli` read-only allowlist) are supported; **RocketMQ read-only commands are not supported yet**. See
+connected, and none is needed. For the five company sources only the integration seams exist, and all five are
+supported:
+- Prometheus: `query_metrics` and alert watches.
+- Langfuse and MongoDB: through their own MCP servers plus `import_mcp_result`.
+- Aliyun: the `run_cli` read-only allowlist.
+- RocketMQ: `run_cli` read-only `mqadmin` queries with a fixed name server; see
+  [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo doesn't exercise it yet.
+
+See
 [docs/read-only-access.md](docs/read-only-access.md) for what access to request for each.
 
 From zero it starts these, then the demo agent runs the whole flow — `plan_checks` → `start_watch` → trigger
@@ -301,6 +307,70 @@ trace to `pricing.js:3`: `HTTP 500 → Langfuse trace → Mongo doc → file:lin
   credentials via env vars is not supported (env is stripped by design).
 - **mongosh** never takes agent argv: only fixed `find` / `aggregate` / `countDocuments` templates; `$out`, `$merge`,
   `$where`, `$function`, `$accumulator` are rejected at any depth.
+
+### mqadmin (RocketMQ) read-only preset
+
+The built-in `mqadmin` connector only runs query subcommands. Each one has its own argument allowlist:
+
+| subcommand | allowed args |
+|---|---|
+| `clusterList` | `-n`, `-c` |
+| `topicList` | `-n` |
+| `topicStatus` | `-n`, `-t`, `-c` |
+| `topicRoute`, `topicClusterList` | `-n`, `-t` |
+| `consumerProgress` | `-n`, `-g`, `-t`, `-s`, `-c` |
+| `consumerStatus` | `-n`, `-g`, `-i` |
+| `brokerStatus` | `-n`, `-b`, `-c` |
+| `queryMsgById` | `-n`, `-t`, `-i`, `-c` |
+| `queryMsgByKey` | `-n`, `-t`, `-k`, `-b`, `-m`, `-c`, `-l` |
+| `queryMsgByUniqueKey` | `-n`, `-i`, `-t`, `-c`, `-s` |
+
+Names and options were checked against the Apache RocketMQ `rocketmq-all-5.5.1` tools module (`MQAdminStartup` and
+each subcommand's `buildCommandlineOptions()`). Options that cause side effects are deliberately left out:
+`queryMsgById -s` (resends the message), and `-g`/`-d` on `queryMsgById`/`queryMsgByUniqueKey` (pushes the message to
+a consumer). So is `clusterList -i` (repeats forever), along with options that take no value. `-e`, `-f` and `-p`
+(`queryMsgByKey` end time and key type, `queryMsgById` body format, `queryMsgByUniqueKey` end time) are also
+unavailable, because they collide with the global credential/eval flag denylist.
+
+- Write and admin subcommands (`updateTopic`, `deleteTopic`, `sendMessage`, `resetOffsetByTime`, `updateSubGroup`,
+  `wipeWritePerm`, …) are rejected before anything is spawned. So is any argument not listed for the subcommand
+  (for example `--namesrvAddr`).
+- **The name server is fixed in config.** `-n` is accepted only when its value is in the connector's `namesrvs` list.
+  If `-n` is omitted, we append the first configured entry. The preset ships with an empty list, so you must set it,
+  e.g. `{ ...mqadmin, namesrvs: ["namesrv.internal:9876"] }`. `NAMESRV_ADDR` and `ROCKETMQ_*` are stripped from the
+  child env, so the address can't be redirected through the environment either.
+- **Migration for existing mqadmin users:** before this change, any `-n` was accepted. Now every mqadmin call is
+  rejected until the name server is configured, and the error shows what to add:
+
+  ```ts
+  new WalkthroughCore({
+    // …
+    connectors: PRESET_CONNECTORS.map((c) => c.name === "mqadmin" ? { ...c, namesrvs: ["namesrv.internal:9876"] } : c),
+  });
+  ```
+
+  Calls that passed `-n <address>` keep working once that address is listed. `NAMESRV_ADDR` from the environment is no
+  longer passed through, so add that address to `namesrvs` too. `queryMsgById` now requires `-t <topic>`, as mqadmin
+  itself does.
+- **Credentials** (ACL access and secret keys) come only from mqadmin's own tools config file. They are never taken
+  from env or argv, and all output goes through the Redactor.
+- **Message bodies.** mqadmin 5.5.1 doesn't print bodies. `queryMsgById` and `queryMsgByUniqueKey` write each body raw
+  to `/tmp/rocketmq/msgbodys/<msgId>` on the host and print `Message Body Path: <file>`. After the call, the core
+  reads each such file, redacts it, cuts it to `messageBody.maxChars` (default 2048, with a `…[truncated N chars]`
+  marker), stores it in the evidence on one line (newlines escaped), and deletes the original. A file is read and
+  deleted only if all of these hold:
+  - It sits directly in that directory, under a hex id name.
+  - It belongs to this query's `-i` (or to the `UNIQ_KEY` of a message whose `OffsetID` was asked for).
+  - It was written during this call.
+  - It is a regular file: symlinks are refused, the file is opened with `O_NOFOLLOW`, and dev/inode must match
+    between lstat, open and unlink.
+
+  `-i` must be hex message id(s), so path syntax is rejected before anything runs. Anything else is left in place and
+  marked `[not read: …]`. `queryMsgByKey` prints only a msgId/offset table and writes no body file.
+- **Known gaps (tracked in #25, #26):** `brokerStatus -b` and the IP:port encoded in a `queryMsgById` offset msgId both
+  make mqadmin connect directly to a broker, so they are exceptions to "no pivot".
+- `profile` (optional) is a label recorded in the command log alongside the CLI name, version and output sha256. It
+  is not passed to mqadmin, which has no profile flag (`appendProfile: false`).
 
 `verify_command_log` recomputes the hash chain of `commands.jsonl` (each entry hashes its content plus the previous
 hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or

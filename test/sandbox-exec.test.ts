@@ -17,7 +17,7 @@ function mk(allowExec?: boolean) {
 if(process.argv[2]==="--version"){console.log("9.9.9");process.exit(0)}
 require("fs").appendFileSync(${JSON.stringify(join(root, "calls.jsonl"))},JSON.stringify([${JSON.stringify(name)},...process.argv.slice(2)])+"\\n");console.log("ok");`); chmodSync(p, 0o755); return p; };
   void bin;
-  const connectors = PRESET_CONNECTORS.map((c) => ({ ...c, binary: fake(c.name) }));
+  const connectors = PRESET_CONNECTORS.map((c) => ({ ...c, binary: fake(c.name), ...(c.name === "mqadmin" ? { namesrvs: ["ns:9876"] } : {}) }));
   const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => undefined }, redactor: new Redactor([]), connectors });
   const cliCalls = () => existsSync(join(root, "calls.jsonl")) ? readFileSync(join(root, "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
   const id = core.startWalkthrough({ title: "t", sandbox: { ...SB, ...(allowExec === undefined ? {} : { allowExec }) } }).id;

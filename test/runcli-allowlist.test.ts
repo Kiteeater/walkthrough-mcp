@@ -6,7 +6,7 @@ import { cliArgv, CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } fr
 import { mockCore } from "./helpers.js";
 
 const aliyun = PRESET_CONNECTORS.find((c) => c.name === "aliyun")!;
-const mq = PRESET_CONNECTORS.find((c) => c.name === "mqadmin")!;
+const mq = { ...PRESET_CONNECTORS.find((c) => c.name === "mqadmin")!, namesrvs: ["ns:9876"] };
 const bad = (c: ConnectorConfig, argv: string[]) => expect(() => cliArgv(c, argv)).toThrow(CliRejectedError);
 
 describe("aliyun per-subcommand argument allowlist (B1)", () => {

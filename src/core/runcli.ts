@@ -8,7 +8,8 @@
  *    name+version+profile name). Credentials are never logged: they stay in the CLI's own local login state.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
+import { basename, dirname, resolve as resolvePath } from "node:path";
 
 export class CliRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "CliRejectedError"; }
@@ -37,6 +38,20 @@ export interface ConnectorConfig {
   /** mongo: connection string WITHOUT credentials (use the shell's own auth / a read-only user). */
   uri?: string;
   versionArgs?: string[];
+  /**
+   * Values accepted for `-n` (name server address). The agent may only pick one of these; if it omits `-n` and the
+   * list is non-empty, the first entry is appended by us. Default: none, so any `-n` is rejected (no pivot to other hosts).
+   */
+  namesrvs?: string[];
+  /**
+   * Message bodies. mqadmin 5.5.1 `queryMsgById` / `queryMsgByUniqueKey` do not print the body; they write it raw to
+   * `<dir>/<msgId>` (UniqueKey: `<msgId>_<n>` for n>0) and print `Message Body Path: <file>`. The core reads each such
+   * file (only directly under `dir`, hex-id name, regular file, written during this call), redacts it, cuts it to
+   * `maxChars`, puts it in the evidence, and deletes the original. Default dir: /tmp/rocketmq/msgbodys (hardcoded upstream).
+   */
+  messageBody?: { subcommands: string[]; maxChars: number; dir?: string };
+  /** Append `--profile <profile>` to argv (default true). False for CLIs without a profile flag; the name is still logged. */
+  appendProfile?: boolean;
   /** Host env var names passed to the CLI in addition to the sandbox defaults. */
   passEnv?: string[];
 }
@@ -61,12 +76,33 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
   },
   {
     name: "mqadmin", binary: "mqadmin",
-    allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["consumerProgress"], ["consumerStatus"], ["queryMsgById"], ["queryMsgByKey"], ["brokerStatus"]],
+    // Verified against Apache RocketMQ rocketmq-all-5.5.1 (efa1be5): tools/.../command/MQAdminStartup.java registers each
+    // name; each SubCommand's commandName()/buildCommandlineOptions() defines its options, and `-n` is the global
+    // namesrvAddr option from srvutil ServerUtil. Only value-taking, read-only options are listed. Omitted on purpose:
+    // queryMsgById -s (resend) / -u, and -g/-d on queryMsgById/queryMsgByUniqueKey (consumeMessageDirectly pushes the
+    // message to a consumer); clusterList -i (loops forever); flags without a value (-m, -l, -a, -s jstack, topicList -c),
+    // which the `<flag> <value>` grammar cannot express; -e/-f/-p (queryMsgByKey endTimestamp/keyType, queryMsgById
+    // bodyFormat, queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS). Write/admin subcommands (updateTopic, deleteTopic, sendMessage,
+    // resetOffsetByTime, updateSubGroup, wipeWritePerm, …) are simply absent and therefore rejected.
+    allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["topicClusterList"], ["consumerProgress"], ["consumerStatus"],
+      ["queryMsgById"], ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
     args: {
-      clusterList: ["-n"], topicList: ["-n"], topicStatus: ["-n", "-t"], topicRoute: ["-n", "-t"],
-      consumerProgress: ["-n", "-g"], consumerStatus: ["-n", "-g", "-i"], queryMsgById: ["-n", "-i"],
-      queryMsgByKey: ["-n", "-t", "-k"], brokerStatus: ["-n", "-b", "-c"],
+      clusterList: ["-n", "-c"],
+      topicList: ["-n"],
+      topicStatus: ["-n", "-t", "-c"],
+      topicRoute: ["-n", "-t"],
+      topicClusterList: ["-n", "-t"],
+      consumerProgress: ["-n", "-g", "-t", "-s", "-c"],
+      consumerStatus: ["-n", "-g", "-i"], // no -b: it connects straight to the given broker, bypassing the fixed name server
+      brokerStatus: ["-n", "-b", "-c"],
+      queryMsgById: ["-n", "-t", "-i", "-c"],
+      queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"],
+      queryMsgByUniqueKey: ["-n", "-i", "-t", "-c", "-s"],
     },
+    namesrvs: [], // set in config: the fixed name server address(es) the agent may query
+    // queryMsgByKey prints only a msgId/queue/offset table (QueryMsgByKeySubCommand L134-145) and writes no body file.
+    messageBody: { subcommands: ["queryMsgById", "queryMsgByUniqueKey"], maxChars: 2048, dir: "/tmp/rocketmq/msgbodys" },
+    appendProfile: false,
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
 ];
@@ -137,6 +173,8 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
   if (!prefix) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
   const allowed = c.args?.[prefix.join(" ")] ?? [];
   const rest = argv.slice(prefix.length);
+  let sawNamesrv = false;
+  if (c.namesrvs && c.namesrvs.length === 0 && allowed.includes("-n")) throw new CliRejectedError(namesrvHint(c.name));
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     const eq = a.startsWith("-") ? a.indexOf("=") : -1;
@@ -150,8 +188,23 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     }
     if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
     if (flag === "--region" && !(c.regions ?? []).includes(value)) throw new CliRejectedError(`${c.name}: region not in allowlist: ${JSON.stringify(value)}`);
+    if (flag === "-i" && c.messageBody?.subcommands.includes(prefix[0]) && !value.split(",").every((x) => MSG_ID.test(x.trim())))
+      throw new CliRejectedError(`${c.name} ${prefix[0]}: -i must be hex message id(s): ${JSON.stringify(value)}`);
+    if (c.namesrvs && flag === "-n") {
+      if (!c.namesrvs.includes(value)) throw new CliRejectedError(`${c.name}: -n name server not in allowlist: ${JSON.stringify(value)}`);
+      sawNamesrv = true;
+    }
   }
-  return c.profile ? [...argv, "--profile", c.profile] : argv;
+  let out = argv;
+  if (c.namesrvs && !sawNamesrv && c.namesrvs.length && allowed.includes("-n")) out = [...out, "-n", c.namesrvs[0]];
+  return c.profile && c.appendProfile !== false ? [...out, "--profile", c.profile] : out;
+}
+
+/** Error text when a connector that needs a fixed name server has none configured: says exactly what to add. */
+export function namesrvHint(name: string): string {
+  return `${name}: no name server configured. Add the allowed address(es) to the ${name} connector's "namesrvs" in your config, e.g.\n` +
+    `  connectors: PRESET_CONNECTORS.map((c) => c.name === "${name}" ? { ...c, namesrvs: ["namesrv.internal:9876"] } : c)\n` +
+    `Only listed addresses are accepted for -n; when -n is omitted the first one is used.`;
 }
 
 export interface CommandLogEntry {
@@ -197,4 +250,83 @@ export function verifyCommandLog(file: string, head?: { seq: number; hash: strin
 }
 
 /** Env vars that would redirect or re-credential a cloud CLI (endpoint, region, keys). Never passed to run_cli children. */
-export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_)/i;
+export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_|NAMESRV_ADDR$|ROCKETMQ_)/i;
+
+/**
+ * Cap message bodies in query output: each `Message Body:` value (up to the next blank line) is passed through
+ * `redact` FIRST (so a secret is never cut in half and partially kept), then cut to `maxChars`.
+ */
+export function capMessageBodies(output: string, maxChars: number, redact: (s: string) => string): string {
+  return output.replace(/(Message Body:[ \t]*)([\s\S]*?)(?=\r?\n\s*\r?\n|$)/g, (_m, head: string, body: string) => {
+    const r = redact(body);
+    return r.length <= maxChars ? head + r : `${head}${r.slice(0, maxChars)}…[truncated ${r.length - maxChars} chars]`;
+  });
+}
+
+export const MSG_BODY_DIR = "/tmp/rocketmq/msgbodys";
+/** A message id as accepted for `-i` and as a body file name: hex only, so no `/`, `..` or other path syntax. */
+export const MSG_ID = /^[0-9A-Fa-f]{16,64}$/;
+const BODY_NAME = /^([0-9A-Fa-f]{16,64})(?:_(\d{1,2}))?$/;
+const BODY_READ_MAX = 1_000_000;
+
+/** The ids this call asked for (`-i a,b` or `-i=a`), upper-cased. */
+export function requestedMsgIds(argv: string[]): Set<string> {
+  const ids = new Set<string>();
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i] === "-i" ? argv[i + 1] : argv[i].startsWith("-i=") ? argv[i].slice(3) : undefined;
+    for (const x of (v ?? "").split(",")) if (x.trim()) ids.add(x.trim().toUpperCase());
+  }
+  return ids;
+}
+
+/**
+ * Replace each `Message Body Path: <file>` line (format `%-20s %s%n`, QueryMsgByIdSubCommand L142-145 /
+ * QueryMsgByUniqueKeySubCommand L102) with the redacted, capped body read from that file, then delete the file.
+ * A file is read only if ALL hold: it sits directly in `dir`; its name is `<hexId>` or `<hexId>_<n>`; it belongs to
+ * this query (hexId is one of `ids`; or the block's `OffsetID:` is one of `ids` and hexId equals that block's
+ * `UNIQ_KEY` property: queryMsgById names the file after msg.getMsgId(), i.e. the unique key, which can differ
+ * from the offset id that was asked for); lstat says regular file (not a symlink),
+ * written during this call; and the fd opened with O_NOFOLLOW has the same dev/inode. It is unlinked only if a
+ * second lstat still shows that dev/inode. Anything else is left untouched. Newlines in the body are escaped.
+ */
+export function collectMessageBodies(output: string, o: { dir?: string; maxChars: number; sinceMs: number; ids: Set<string> }, redact: (s: string) => string): string {
+  const dir = resolvePath(o.dir ?? MSG_BODY_DIR);
+  const label = "Message Body:".padEnd(20);
+  let offsetId = "";
+  let uniqKey = "";
+  return output.split("\n").map((line) => {
+    const off = /^OffsetID:[ \t]+([0-9A-Fa-f]+)\s*$/.exec(line);
+    if (off) { offsetId = off[1].toUpperCase(); uniqKey = ""; return line; }
+    const props = /^Properties:[ \t].*\bUNIQ_KEY=([0-9A-Fa-f]+)/.exec(line);
+    if (props) { uniqKey = props[1].toUpperCase(); return line; }
+    const m = /^Message Body Path:[ \t]+(\S[^\r]*?)[ \t]*\r?$/.exec(line);
+    if (!m) return line;
+    const raw = m[1];
+    const p = resolvePath(raw);
+    const name = BODY_NAME.exec(basename(p));
+    const skip = (why: string) => `${line}\n${label} [not read: ${why}]`;
+    if (raw.includes("..") || dirname(p) !== dir || !name) return skip("unexpected path");
+    const fileId = name[1].toUpperCase();
+    const ours = o.ids.has(fileId) || (o.ids.has(offsetId) && fileId === uniqKey);
+    offsetId = ""; uniqKey = ""; // one body path per printed message block
+    if (!ours) return skip("not this query's message id");
+    let st;
+    try { st = lstatSync(p); } catch { return skip("file missing"); }
+    if (st.isSymbolicLink() || !st.isFile()) return skip("not a regular file");
+    if (st.mtimeMs < o.sinceMs - 2000) return skip("file predates this call");
+    let fd: number;
+    try { fd = openSync(p, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch { return skip("open refused"); }
+    let buf: Buffer;
+    try {
+      const f = fstatSync(fd);
+      if (f.dev !== st.dev || f.ino !== st.ino || !f.isFile()) return skip("file changed between lstat and open");
+      buf = Buffer.alloc(Math.min(f.size, BODY_READ_MAX));
+      readSync(fd, buf, 0, buf.length, 0);
+    } finally { closeSync(fd); }
+    try { const again = lstatSync(p); if (again.dev === st.dev && again.ino === st.ino) unlinkSync(p); } catch { /* already gone */ }
+    const r = redact(buf.toString("utf8"));
+    const extra = r.length - o.maxChars + Math.max(0, st.size - BODY_READ_MAX);
+    const body = (extra <= 0 ? r : `${r.slice(0, o.maxChars)}…[truncated ${extra} chars]`).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    return `${"Message Body Path:".padEnd(20)} ${redact(p)} [read by core, original deleted]\n${label} ${body}`;
+  }).join("\n");
+}
