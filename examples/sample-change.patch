@@ -1,14 +1,13 @@
---- a/examples/hello-service/server.js
-+++ b/examples/hello-service/server.js
+The change under walkthrough: order totals are now computed from line items.
+
+--- a/examples/orders-service/orders.js
++++ b/examples/orders-service/orders.js
 @@
-+const greeting = () => ({ message: "Hello from the new greeting endpoint", version: 2 });
++function orderTotal(order) {
++  return order.items.reduce((sum, item) => sum + item.price * item.qty, 0);
++}
 +
-@@
-+  if (req.url === "/api/greeting") {
-+    res.writeHead(200, { "content-type": "application/json" });
-+    return res.end(JSON.stringify(greeting()));
-+  }
-@@
--<h1>hello-service</h1>
-+<h1>hello-service</h1>
-+<div id="banner" style="background:#ddf4ff;padding:1rem">${greeting().message}</div>
+ function listOrders() {
+-  return ORDERS.map((o) => ({ id: o.id, customer: o.customer, total: o.legacyTotal ?? o.total }));
++  return ORDERS.map((o) => ({ id: o.id, customer: o.customer, total: orderTotal(o) }));
+ }

@@ -4,3 +4,4 @@ dist/
 *.log
 .env
 e2e-output/
+examples/.generated.*.json

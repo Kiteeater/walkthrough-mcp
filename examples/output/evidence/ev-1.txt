@@ -1,0 +1,4 @@
+GET http://localhost:3000/health
+HTTP 200 OK
+
+{"ok":true}

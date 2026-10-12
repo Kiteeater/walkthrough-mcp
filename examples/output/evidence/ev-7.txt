@@ -1,0 +1,4 @@
+GET http://localhost:3000/api/orders/1
+HTTP 200 OK
+
+{"id":1,"customer":"ada","items":[{"sku":"pen","price":2.5,"qty":4}]}

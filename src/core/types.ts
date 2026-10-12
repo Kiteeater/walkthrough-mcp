@@ -1,4 +1,5 @@
-export type EvidenceType = "screenshot" | "logs";
+/** `response` = captured HTTP response or command output from a check. */
+export type EvidenceType = "screenshot" | "logs" | "response";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {
@@ -34,6 +35,70 @@ export interface Claim {
   evidenceIds: string[];
   sourceIds: string[];
   review?: Review;
+}
+
+export interface HttpAction { type: "http"; method?: string; url: string; body?: string; headers?: Record<string, string> }
+export interface CommandAction { type: "command"; command: string }
+/** Reserved for read-only environment connectors (PR 5), e.g. `connector:mongodb`. */
+export interface ConnectorAction { type: `connector:${string}`; [key: string]: unknown }
+export type CheckAction = HttpAction | CommandAction | ConnectorAction;
+
+export interface LogObserve { source: "log"; service: string }
+export interface ConnectorObserve { source: `connector:${string}`; [key: string]: unknown }
+export type ObserveSpec = LogObserve | ConnectorObserve;
+
+export interface Check {
+  id: string;
+  name: string;
+  action: CheckAction;
+  /** Typed observation sources captured around the action (e.g. `{source: "log", service}`). */
+  observe?: ObserveSpec[];
+  /** Shorthand: log services to watch, and alert patterns that must NOT appear in observed logs. */
+  watch?: { logs?: string[]; alerts?: string[] };
+  /** Verifier type; `rule` (default) ships in v1, `script` / `playwright` / `computer-use` are reserved. */
+  verify?: { type: string; [key: string]: unknown };
+  /** Expected result. HTTP: `status` (exact) or `statusRange` [min,max]; command: `exitCode`. */
+  expect: { status?: number; statusRange?: [number, number]; bodyIncludes?: string; exitCode?: number };
+}
+
+export interface CheckResult {
+  checkId: string;
+  status: "pass" | "fail";
+  reasons: string[];
+  actual: { status?: number; exitCode?: number };
+  evidenceIds: string[];
+  findingId?: string;
+  at: string;
+}
+
+export type Severity = "critical" | "high" | "medium" | "low";
+
+export interface RootCause {
+  /** Source link id (file:line) the failure was traced to. */
+  sourceId?: string;
+  /** Logs evidence id containing the stack trace / error. */
+  logEvidenceId?: string;
+  /** One-line explanation, e.g. the error message. */
+  summary?: string;
+}
+
+export interface Finding {
+  id: string;
+  title: string;
+  severity: Severity;
+  whatHappened: string;
+  repro: string[];
+  rootCause?: RootCause;
+  evidenceIds: string[];
+  kind: ClaimKind;
+  /** Auto-drafted from a failed check (agent can refine it). */
+  draft?: boolean;
+  checkId?: string;
+}
+
+export interface SignOff {
+  decision: "approve" | "reject";
+  comment?: string;
 }
 
 export interface RunRecord {
@@ -75,4 +140,9 @@ export interface Walkthrough {
   evidence: Evidence[];
   sources: SourceLink[];
   claims: Claim[];
+  goal?: string;
+  checks?: Check[];
+  checkResults?: CheckResult[];
+  findings?: Finding[];
+  signoff?: SignOff;
 }

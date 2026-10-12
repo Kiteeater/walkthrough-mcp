@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createCore, renderWalkthrough } from "../core/index.js";
+import { createCore, planChecksShape, recordFindingShape, renderWalkthrough } from "../core/index.js";
 
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
 const server = new McpServer({ name: "walkthrough-mcp", version: "0.1.0" });
@@ -38,6 +38,15 @@ server.tool("record_claim", "Record a claim. observed claims must cite existing,
   id, question: z.string(), conclusion: z.string(), kind: z.enum(["observed", "inferred"]),
   evidenceIds: z.array(z.string()).optional(), sourceIds: z.array(z.string()).optional(),
 }, (a) => wrap(() => core.recordClaim(a.id, a))());
+
+server.tool("plan_checks", "Record the checks you will run for a goal. Each needs a machine-checkable expect.", planChecksShape,
+  (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never }))());
+
+server.tool("run_checks", "Run all planned checks in the sandbox, capture evidence, auto-judge pass/fail, draft findings.", { id },
+  (a) => wrap(() => core.runChecks(a.id))());
+
+server.tool("record_finding", "Record a finding. observed findings must cite existing, unmodified evidence ids.", recordFindingShape,
+  (a) => wrap(() => core.recordFinding(a.id, a))());
 
 server.tool("render_walkthrough", "Render the walkthrough to static HTML.", { id },
   (a) => wrap(() => ({ html: renderWalkthrough(core, a.id) }))());

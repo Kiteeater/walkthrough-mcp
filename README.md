@@ -1,11 +1,26 @@
 # walkthrough-mcp
 
 Don't review the diff — **run the change and answer "what does it actually do?" with evidence.**
-Inspired by WeZZard's walkthrough idea.
+Built on WeZZard's walkthrough idea: audit the execution result, not the code.
 
-A TypeScript MCP server (stdio) and CLI sharing one core (`src/core`). It brings up a Docker Compose
-sandbox, captures evidence (Playwright screenshots, docker logs), links source lines, records claims
-marked `observed` or `inferred`, and renders a static HTML walkthrough a human can Agree/Flag.
+## Audit-only workflow
+
+Humans only audit the **final result**: which problems the agent found, how it reported them, and the root-cause
+trace. Everything in between is the agent's job, with no human in the loop:
+
+1. The agent plans its checks (`plan_checks`). Every check needs a **machine-checkable expectation**
+   (`status`, `statusRange`, `bodyIncludes`, `exitCode`, or `watch.alerts`); a check without one is rejected.
+2. `run_checks` executes them in the sandbox, stores every response and log slice as sha256 evidence, and
+   **the core, not the agent, judges pass/fail** against the expectation.
+3. Each failed check auto-drafts an observed finding. The root cause is traced by grepping the captured logs for a
+   stack trace and mapping the first in-project frame to `file:line` (`link_source`).
+4. `render_walkthrough` produces an audit view. The first screen shows only conclusions: number of findings, a
+   severity breakdown, and a one-line root cause (with the source line) per finding. Each finding expands into its
+   evidence chain; per-claim Agree/Flag is optional and collapsed.
+5. A human gives one report-level sign-off (认可 / 打回 + comment), exported to `review.json` and imported back.
+
+Planning belongs to the agent. The example's deterministic, rule-based planner lives in `src/demo-agent/`
+(outside the core), so the demo needs no LLM: it derives one generic check per declared route and knows nothing about bugs.
 
 ## Install
 
@@ -67,7 +82,16 @@ and `walkthrough-html.png` (a screenshot of the rendered page).
 ```
 
 Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `capture_evidence` (screenshot | logs),
-`link_source` (file + line), `record_claim` (observed | inferred), `render_walkthrough`.
+`link_source` (file + line), `record_claim` (observed | inferred), `plan_checks`, `run_checks`,
+`record_finding` (title, severity critical/high/medium/low, what happened, repro, root cause = source link and/or
+log evidence id, evidence ids, observed | inferred), `render_walkthrough`.
+
+### Pluggable sources (seam for environment connectors)
+
+Check actions (`action.type`: `http`, `command`, later `connector:<name>`), observations (`observe[].source`:
+`log`, later `connector:<name>`) and verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use`
+reserved) all go through a registry in `src/core/registry.ts`. New read-only connectors register there without
+touching `run_checks` or `record_finding`; their results become sha256 evidence like everything else.
 
 ## Evidence format
 
@@ -78,7 +102,8 @@ Every evidence item is stored under `.walkthrough/<id>/evidence/` and described 
   "sha256": "…", "createdAt": "2026-10-13T06:00:00.000Z", "source": "http://localhost:3000/" }
 ```
 
-`type` is `screenshot` or `logs` (`source` = `docker:<service>`). Claims reference evidence **only by id**.
+`type` is `screenshot`, `logs` (`source` = `docker:<service>` / `local:<service>`) or `response` (an HTTP response
+or command output captured by a check). Claims reference evidence **only by id**.
 An `observed` claim is rejected if it cites no evidence, cites an unknown id, or the evidence file's
 sha256 no longer matches. `inferred` claims may have no evidence.
 
@@ -98,9 +123,11 @@ not redacted — don't render secrets on pages you capture.
 
 ## Example
 
-`examples/hello-service` is a tiny web service; `examples/sample-change.patch` describes the change
-(a new `/api/greeting` endpoint and home banner). `bash examples/run-e2e.sh` runs the whole flow and produces
-HTML with one observed and one inferred claim. CI runs it and uploads the HTML as the `walkthrough-html` artifact.
+`examples/orders-service` is a tiny order service with a real bug: the change in `examples/sample-change.patch`
+computes totals from line items, but a legacy order has none, so `GET /api/orders` returns 500 with a stack trace in
+the logs. `bash examples/run-local-e2e.sh` (or `run-e2e.sh` with Docker) lets the demo agent plan checks from
+`routes.json`, run them, find the 500 and trace it to `orders.js:9`. The committed real run lives in `examples/output/`
+(`walkthrough-html.png` is the first screen; `walkthrough-html-full.png` is the whole page).
 
 ## CI
 

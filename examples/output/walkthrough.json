@@ -1,10 +1,10 @@
 {
-  "id": "wt-20261012185330-b1a3dc",
-  "title": "Sample change: greeting endpoint + home banner (local backend)",
-  "createdAt": "2026-10-12T18:53:30.058Z",
+  "id": "wt-20261012190204-dd3de4",
+  "title": "Sample change: order totals from line items (local backend)",
+  "createdAt": "2026-10-12T19:02:04.068Z",
   "sandbox": {
     "backend": "local",
-    "cwd": "/workspace/walkthrough-mcp/examples/hello-service",
+    "cwd": "/workspace/walkthrough-mcp/examples/orders-service",
     "up": "docker compose up -d",
     "down": "docker compose down -v",
     "local": {
@@ -19,94 +19,376 @@
       "id": "run-1",
       "command": "exec node server.js",
       "exitCode": 0,
-      "output": "started pid 238855",
-      "createdAt": "2026-10-12T18:53:30.365Z"
+      "output": "started pid 252072",
+      "createdAt": "2026-10-12T19:02:04.373Z"
     },
     {
       "id": "run-2",
-      "command": "curl -fsS http://localhost:3000/api/greeting",
-      "exitCode": 0,
-      "output": "/home/box/.profile: line 30: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n/home/box/.us-env: line 3: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n{\"message\":\"Hello from the new greeting endpoint\",\"version\":2}",
-      "createdAt": "2026-10-12T18:53:30.435Z"
-    },
-    {
-      "id": "run-3",
       "command": "kill local process group",
       "exitCode": 0,
       "output": "stopped local process\n",
-      "createdAt": "2026-10-12T18:53:31.537Z"
+      "createdAt": "2026-10-12T19:02:06.590Z"
     }
   ],
   "evidence": [
     {
       "id": "ev-1",
-      "type": "screenshot",
-      "path": "evidence/ev-1.png",
-      "sha256": "e1e09f6216cbfef3cc1755588dd12b3111669802100011d11b6e6910b9ba3d22",
-      "createdAt": "2026-10-12T18:53:31.528Z",
-      "source": "http://localhost:3000/"
+      "type": "response",
+      "path": "evidence/ev-1.txt",
+      "sha256": "449f91274e0709429cdb0a82706d5fd443b60d0fb672ed7b55155b2bef8ad6ed",
+      "createdAt": "2026-10-12T19:02:04.645Z",
+      "source": "GET /health"
     },
     {
       "id": "ev-2",
       "type": "logs",
       "path": "evidence/ev-2.log",
-      "sha256": "ab926c0627c9c6517ebdc9e97bf50bed3cc6a1e5f27f1d93ca855bf79be6d1e1",
-      "createdAt": "2026-10-12T18:53:31.528Z",
-      "source": "local:web"
+      "sha256": "b2b440e7cacd673582ff81cfd235100f20c15e8389f248e85965d5a97c93b9c2",
+      "createdAt": "2026-10-12T19:02:04.645Z",
+      "source": "local:app (during chk-1)"
+    },
+    {
+      "id": "ev-3",
+      "type": "response",
+      "path": "evidence/ev-3.txt",
+      "sha256": "26272c441e2ee24811226030d1bf3e0cddf97212524deb86e05c1b277fb4acf1",
+      "createdAt": "2026-10-12T19:02:04.849Z",
+      "source": "GET /"
+    },
+    {
+      "id": "ev-4",
+      "type": "logs",
+      "path": "evidence/ev-4.log",
+      "sha256": "e120c1625982c2fd785ce9ccb81d519b2bc8ba59c68469557db040d4cd0293d7",
+      "createdAt": "2026-10-12T19:02:04.850Z",
+      "source": "local:app (during chk-2)"
+    },
+    {
+      "id": "ev-5",
+      "type": "response",
+      "path": "evidence/ev-5.txt",
+      "sha256": "40ac1618b1083e89f81a2920469ded2d0fa410be49930fed602bd932e430772b",
+      "createdAt": "2026-10-12T19:02:05.054Z",
+      "source": "GET /api/orders"
+    },
+    {
+      "id": "ev-6",
+      "type": "logs",
+      "path": "evidence/ev-6.log",
+      "sha256": "bfb35223444ba0d69275da5c33e9d5269a198cfffd3d90c6c31c430ae7a70459",
+      "createdAt": "2026-10-12T19:02:05.055Z",
+      "source": "local:app (during chk-3)"
+    },
+    {
+      "id": "ev-7",
+      "type": "response",
+      "path": "evidence/ev-7.txt",
+      "sha256": "e075e008cde6dcea62506a186bec4a119fc0fd92849b17654c6340dd14e65015",
+      "createdAt": "2026-10-12T19:02:05.263Z",
+      "source": "GET /api/orders/1"
+    },
+    {
+      "id": "ev-8",
+      "type": "logs",
+      "path": "evidence/ev-8.log",
+      "sha256": "10c988a6404e8de48a008c3fcca882f90c2902b951cdc4f151fbaca120c4eaea",
+      "createdAt": "2026-10-12T19:02:05.264Z",
+      "source": "local:app (during chk-4)"
+    },
+    {
+      "id": "ev-9",
+      "type": "response",
+      "path": "evidence/ev-9.txt",
+      "sha256": "c6cac6598554eaa7ca3cf9e1af962bf0615fedc28f40fb4fc9d431346ebf0661",
+      "createdAt": "2026-10-12T19:02:05.467Z",
+      "source": "GET /api/orders/3"
+    },
+    {
+      "id": "ev-10",
+      "type": "logs",
+      "path": "evidence/ev-10.log",
+      "sha256": "0935dbe80e55abe1f8342444e91ae0971f55d66add5472464bd7d867a6725930",
+      "createdAt": "2026-10-12T19:02:05.468Z",
+      "source": "local:app (during chk-5)"
+    },
+    {
+      "id": "ev-11",
+      "type": "screenshot",
+      "path": "evidence/ev-11.png",
+      "sha256": "4ec21b2a10bb15ef3d0c20bd2a4d145a66e46e55394629a9ae255ea0cf3d1e3d",
+      "createdAt": "2026-10-12T19:02:06.579Z",
+      "source": "http://localhost:3000/"
     }
   ],
   "sources": [
     {
       "id": "src-1",
-      "file": "examples/hello-service/server.js",
-      "line": 7,
-      "note": "new greeting()"
+      "file": "examples/orders-service/orders.js",
+      "line": 9,
+      "note": "TypeError: Cannot read properties of undefined (reading 'reduce')"
     },
     {
       "id": "src-2",
-      "file": "examples/hello-service/server.js",
-      "line": 15,
-      "note": "new /api/greeting route"
-    },
-    {
-      "id": "src-3",
-      "file": "examples/hello-service/server.js",
-      "line": 22,
-      "note": "new home banner"
+      "file": "examples/orders-service/orders.js",
+      "line": 16,
+      "note": "getOrder() (untouched by the patch)"
     }
   ],
   "claims": [
     {
       "id": "claim-1",
-      "question": "What does the change do to the home page and API when the service actually runs?",
-      "conclusion": "The home page renders the new greeting banner, and the service log shows the /api/greeting route being served.",
+      "question": "Does the service start and serve its home page?",
+      "conclusion": "Yes: the home page rendered and lists the order endpoints.",
       "kind": "observed",
       "evidenceIds": [
-        "ev-1",
-        "ev-2"
+        "ev-11"
       ],
-      "sourceIds": [
-        "src-3",
-        "src-2"
-      ],
+      "sourceIds": [],
       "review": {
         "decision": "agree",
-        "note": "screenshot shows the banner; log shows GET /api/greeting"
+        "note": "home page screenshot matches"
       }
     },
     {
       "id": "claim-2",
-      "question": "Does the change affect other callers of greeting()?",
-      "conclusion": "Probably not: greeting() is a new pure function only used by the two new code paths. Not exercised at runtime here.",
+      "question": "Does the change alter the response shape of /api/orders/:id?",
+      "conclusion": "Probably not: getOrder() is not touched by the patch. Inferred from the diff; the shape itself was not asserted.",
       "kind": "inferred",
       "evidenceIds": [],
       "sourceIds": [
-        "src-1"
+        "src-2"
       ],
       "review": {
         "decision": "flag",
         "note": "inferred only; needs a runtime check"
       }
     }
-  ]
+  ],
+  "goal": "Verify every declared route of orders-service still works after the change",
+  "checks": [
+    {
+      "id": "chk-1",
+      "name": "GET /health",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/health"
+      },
+      "watch": {
+        "logs": [
+          "app"
+        ],
+        "alerts": [
+          "Error:",
+          "Unhandled",
+          "FATAL"
+        ]
+      },
+      "expect": {
+        "statusRange": [
+          200,
+          299
+        ]
+      }
+    },
+    {
+      "id": "chk-2",
+      "name": "GET /",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/"
+      },
+      "watch": {
+        "logs": [
+          "app"
+        ],
+        "alerts": [
+          "Error:",
+          "Unhandled",
+          "FATAL"
+        ]
+      },
+      "expect": {
+        "statusRange": [
+          200,
+          299
+        ]
+      }
+    },
+    {
+      "id": "chk-3",
+      "name": "GET /api/orders",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/api/orders"
+      },
+      "watch": {
+        "logs": [
+          "app"
+        ],
+        "alerts": [
+          "Error:",
+          "Unhandled",
+          "FATAL"
+        ]
+      },
+      "expect": {
+        "statusRange": [
+          200,
+          299
+        ]
+      }
+    },
+    {
+      "id": "chk-4",
+      "name": "GET /api/orders/1",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/api/orders/1"
+      },
+      "watch": {
+        "logs": [
+          "app"
+        ],
+        "alerts": [
+          "Error:",
+          "Unhandled",
+          "FATAL"
+        ]
+      },
+      "expect": {
+        "statusRange": [
+          200,
+          299
+        ]
+      }
+    },
+    {
+      "id": "chk-5",
+      "name": "GET /api/orders/3",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "http://localhost:3000/api/orders/3"
+      },
+      "watch": {
+        "logs": [
+          "app"
+        ],
+        "alerts": [
+          "Error:",
+          "Unhandled",
+          "FATAL"
+        ]
+      },
+      "expect": {
+        "statusRange": [
+          200,
+          299
+        ]
+      }
+    }
+  ],
+  "checkResults": [
+    {
+      "checkId": "chk-1",
+      "status": "pass",
+      "reasons": [],
+      "actual": {
+        "status": 200
+      },
+      "evidenceIds": [
+        "ev-1",
+        "ev-2"
+      ],
+      "at": "2026-10-12T19:02:04.646Z"
+    },
+    {
+      "checkId": "chk-2",
+      "status": "pass",
+      "reasons": [],
+      "actual": {
+        "status": 200
+      },
+      "evidenceIds": [
+        "ev-3",
+        "ev-4"
+      ],
+      "at": "2026-10-12T19:02:04.851Z"
+    },
+    {
+      "checkId": "chk-3",
+      "status": "fail",
+      "reasons": [
+        "status 500, expected 200-299",
+        "alert \"Error:\" in logs"
+      ],
+      "actual": {
+        "status": 500
+      },
+      "evidenceIds": [
+        "ev-5",
+        "ev-6"
+      ],
+      "at": "2026-10-12T19:02:05.056Z",
+      "findingId": "finding-1"
+    },
+    {
+      "checkId": "chk-4",
+      "status": "pass",
+      "reasons": [],
+      "actual": {
+        "status": 200
+      },
+      "evidenceIds": [
+        "ev-7",
+        "ev-8"
+      ],
+      "at": "2026-10-12T19:02:05.264Z"
+    },
+    {
+      "checkId": "chk-5",
+      "status": "pass",
+      "reasons": [],
+      "actual": {
+        "status": 200
+      },
+      "evidenceIds": [
+        "ev-9",
+        "ev-10"
+      ],
+      "at": "2026-10-12T19:02:05.469Z"
+    }
+  ],
+  "findings": [
+    {
+      "id": "finding-1",
+      "title": "GET /api/orders — status 500, expected 200-299",
+      "severity": "high",
+      "whatHappened": "GET /api/orders failed: status 500, expected 200-299; alert \"Error:\" in logs. Logs show \"TypeError: Cannot read properties of undefined (reading 'reduce')\" at examples/orders-service/orders.js:9.",
+      "repro": [
+        "Start the sandbox: exec node server.js",
+        "curl -i -X GET \"http://localhost:3000/api/orders\""
+      ],
+      "rootCause": {
+        "logEvidenceId": "ev-6",
+        "sourceId": "src-1",
+        "summary": "TypeError: Cannot read properties of undefined (reading 'reduce')"
+      },
+      "evidenceIds": [
+        "ev-5",
+        "ev-6"
+      ],
+      "kind": "observed",
+      "draft": true,
+      "checkId": "chk-3"
+    }
+  ],
+  "signoff": {
+    "decision": "reject",
+    "comment": "fix the traced root cause, then re-run the walkthrough"
+  }
 }

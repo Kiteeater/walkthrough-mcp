@@ -16,3 +16,10 @@ describe.each(["src/mcp/index.ts", "src/cli/index.ts"])("thin shell %s", (file) 
     expect(src.split("\n").length).toBeLessThanOrEqual(MAX_LINES);
   });
 });
+
+describe("core boundary", () => {
+  it("core never imports the demo agent (planning belongs to the agent)", async () => {
+    const { readdirSync } = await import("node:fs");
+    for (const f of readdirSync("src/core")) expect(readFileSync(`src/core/${f}`, "utf8"), f).not.toMatch(/from\s+["'][^"']*demo-agent/);
+  });
+});

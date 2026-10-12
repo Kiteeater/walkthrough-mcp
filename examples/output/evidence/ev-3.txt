@@ -1,0 +1,5 @@
+GET http://localhost:3000/
+HTTP 200 OK
+
+<!doctype html><html><body style="font-family:sans-serif"><h1>orders-service</h1>
+<p>Endpoints: <code>/api/orders</code>, <code>/api/orders/:id</code></p></body></html>
