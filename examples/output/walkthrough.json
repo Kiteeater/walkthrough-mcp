@@ -1,7 +1,7 @@
 {
-  "id": "wt-20261012184722-b5e090",
+  "id": "wt-20261012185032-401b1b",
   "title": "Sample change: greeting endpoint + home banner (local backend)",
-  "createdAt": "2026-10-12T18:47:22.922Z",
+  "createdAt": "2026-10-12T18:50:32.270Z",
   "sandbox": {
     "backend": "local",
     "cwd": "/workspace/walkthrough-mcp/examples/hello-service",
@@ -16,22 +16,22 @@
       "id": "run-1",
       "command": "exec node server.js",
       "exitCode": 0,
-      "output": "started pid 230387",
-      "createdAt": "2026-10-12T18:47:23.229Z"
+      "output": "started pid 234646",
+      "createdAt": "2026-10-12T18:50:32.576Z"
     },
     {
       "id": "run-2",
       "command": "curl -fsS http://localhost:3000/api/greeting",
       "exitCode": 0,
       "output": "/home/box/.profile: line 30: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n/home/box/.us-env: line 3: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory\n{\"message\":\"Hello from the new greeting endpoint\",\"version\":2}",
-      "createdAt": "2026-10-12T18:47:23.302Z"
+      "createdAt": "2026-10-12T18:50:32.646Z"
     },
     {
       "id": "run-3",
       "command": "kill local process group",
       "exitCode": 0,
       "output": "stopped local process\n",
-      "createdAt": "2026-10-12T18:47:24.413Z"
+      "createdAt": "2026-10-12T18:50:33.754Z"
     }
   ],
   "evidence": [
@@ -40,7 +40,7 @@
       "type": "screenshot",
       "path": "evidence/ev-1.png",
       "sha256": "e1e09f6216cbfef3cc1755588dd12b3111669802100011d11b6e6910b9ba3d22",
-      "createdAt": "2026-10-12T18:47:24.404Z",
+      "createdAt": "2026-10-12T18:50:33.742Z",
       "source": "http://localhost:3000/"
     },
     {
@@ -48,7 +48,7 @@
       "type": "logs",
       "path": "evidence/ev-2.log",
       "sha256": "ab926c0627c9c6517ebdc9e97bf50bed3cc6a1e5f27f1d93ca855bf79be6d1e1",
-      "createdAt": "2026-10-12T18:47:24.404Z",
+      "createdAt": "2026-10-12T18:50:33.743Z",
       "source": "local:web"
     }
   ],
@@ -87,7 +87,8 @@
         "src-2"
       ],
       "review": {
-        "decision": "agree"
+        "decision": "agree",
+        "note": "screenshot shows the banner; log shows GET /api/greeting"
       }
     },
     {

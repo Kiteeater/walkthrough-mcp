@@ -10,6 +10,13 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const w = core.load(id);
   const local = w.sandbox.backend === "local";
   const localBadge = local ? `<span class="badge local" title="local run, not isolated">本地运行、未隔离</span> ` : "";
+  const count = (f: (c: (typeof w.claims)[number]) => boolean) => w.claims.filter(f).length;
+  const summary = `<div class="summary" id="summary">
+<span>observed: <b data-count="observed">${count((c) => c.kind === "observed")}</b></span>
+<span>inferred: <b data-count="inferred">${count((c) => c.kind === "inferred")}</b></span>
+<span>agreed: <b data-count="agreed">${count((c) => c.review?.decision === "agree")}</b></span>
+<span>flagged: <b data-count="flagged">${count((c) => c.review?.decision === "flag")}</b></span>
+</div>`;
   const sections = w.claims.map((c, i) => {
     const evidence = c.evidenceIds.map((evId) => {
       const ev = w.evidence.find((e) => e.id === evId);
@@ -24,11 +31,15 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
       const s = w.sources.find((x) => x.id === sid);
       return s ? `<li><code>${esc(s.file)}:${s.line}</code>${s.note ? ` — ${esc(s.note)}` : ""}</li>` : "";
     }).join("");
+    const review = c.review
+      ? `<div class="review ${esc(c.review.decision)}">Review: <strong>${esc(c.review.decision)}</strong>${c.review.note ? ` — <span class="review-note">${esc(c.review.note)}</span>` : ""}</div>`
+      : `<div class="review none">Review: <em>pending</em></div>`;
     const prior = c.review ? ` data-prior="${esc(c.review.decision)}"` : "";
     return `<section class="claim" id="${esc(c.id)}" data-claim="${esc(c.id)}"${prior}>
 <h2>Q${i + 1}. ${esc(c.question)}</h2>
 <p>${localBadge}<span class="badge ${esc(c.kind)}">${esc(c.kind)}</span> ${esc(c.conclusion)}</p>
 ${sources ? `<ul class="sources">${sources}</ul>` : ""}
+${review}
 ${evidence || `<p class="none">No evidence attached (inferred).</p>`}
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
 <input class="note" placeholder="note (optional)"><span class="state"></span></div>
@@ -43,11 +54,14 @@ body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0
 .badge{padding:2px 8px;border-radius:10px;font-size:.8rem;color:#fff}
 .badge.local{background:#cf222e}.badge.observed{background:#1a7f37}.badge.inferred{background:#9a6700}
 img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;overflow:auto;max-height:300px}
-.meta{font-size:.75rem;color:#666}.state{margin-left:.5rem;font-weight:bold}
+.meta{font-size:.75rem;color:#666}.summary{display:flex;gap:1.5rem;background:#f6f8fa;padding:.75rem 1rem;border-radius:8px}
+.review{margin:.5rem 0;padding:.4rem .6rem;border-left:4px solid #999}.review.agree{border-color:#1a7f37}.review.flag{border-color:#cf222e;background:#fff5f5}
+.state{margin-left:.5rem;font-weight:bold}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}Commands ran as host child processes without isolation.</p>` : ""}
 <p class="meta">walkthrough ${esc(w.id)} · ${w.claims.length} questions · ${w.evidence.length} evidence items</p>
+${summary}
 ${sections}
 <button id="export">Export review.json</button>
 <script>

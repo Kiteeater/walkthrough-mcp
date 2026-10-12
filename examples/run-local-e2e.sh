@@ -14,7 +14,7 @@ echo "$result"
 id="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$result")"
 dir=".walkthrough/$id"
 
-printf '{"walkthroughId":"%s","decisions":[{"claimId":"claim-1","decision":"agree"},{"claimId":"claim-2","decision":"flag","note":"inferred only; needs a runtime check"}]}\n' "$id" > "$dir/review.json"
+printf '{"walkthroughId":"%s","decisions":[{"claimId":"claim-1","decision":"agree","note":"screenshot shows the banner; log shows GET /api/greeting"},{"claimId":"claim-2","decision":"flag","note":"inferred only; needs a runtime check"}]}\n' "$id" > "$dir/review.json"
 node dist/cli/index.js import-review "$dir/review.json" --root .
 node dist/cli/index.js render "$id" --root . >/dev/null
 
@@ -29,6 +29,8 @@ const { chromium } = require("playwright");
 grep -q 'class="badge observed"' "$dir/index.html"
 grep -q 'class="badge inferred"' "$dir/index.html"
 grep -q '本地运行、未隔离' "$dir/index.html"
+grep -q 'class="review flag"' "$dir/index.html"
+grep -q 'data-count="agreed">1<' "$dir/index.html"
 if grep -rqF "$DEMO_API_KEY" "$dir"; then echo "secret leaked into output" >&2; exit 1; fi
 
 mkdir -p examples/output && cp -r "$dir"/. examples/output/

@@ -31,6 +31,7 @@ node dist/cli/index.js import-review review.json
 ```
 
 Output lives in `.walkthrough/<id>/`: `walkthrough.json`, `evidence/`, `index.html`.
+After `import-review`, re-rendering shows each claim's review status and note under it, plus a summary block (observed / inferred / agreed / flagged counts) at the top; all of it is escaped and redacted.
 The HTML is fully static: click Agree/Flag (with an optional note) per question, then
 **Export review.json** downloads your decisions for `import-review`.
 
