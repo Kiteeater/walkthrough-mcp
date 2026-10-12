@@ -76,9 +76,15 @@ MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthro
 
 **Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
 buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
-connected, and none is needed. Of the five company sources only the integration seams exist: Prometheus
-(`query_metrics`, alert watches), Langfuse/MongoDB (via their own MCP servers + `import_mcp_result`) and Aliyun
-(`run_cli` read-only allowlist) are supported; **RocketMQ read-only commands are not supported yet**. See
+connected, and none is needed. For the five company sources only the integration seams exist, and all five are
+supported:
+- Prometheus: `query_metrics` and alert watches.
+- Langfuse and MongoDB: through their own MCP servers plus `import_mcp_result`.
+- Aliyun: the `run_cli` read-only allowlist.
+- RocketMQ: `run_cli` read-only `mqadmin` queries with a fixed name server; see
+  [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo doesn't exercise it yet.
+
+See
 [docs/read-only-access.md](docs/read-only-access.md) for what access to request for each.
 
 From zero it starts these, then the demo agent runs the whole flow — `plan_checks` → `start_watch` → trigger
