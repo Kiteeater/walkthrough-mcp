@@ -408,7 +408,7 @@ export class WalkthroughCore {
         status = "fail";
         reasons = failing.map((x) => `${x.ev.id} (${x.ev.executedBy === "agent" ? "reported by agent" : "executed by walkthrough"}): ${x.j.reasons.join("; ")}`);
       } else if (status === "pass") {
-        const coreOk = judged.length < 2 ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
+        const coreOk = judged.length < 2 || check.expect.type === "count" ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
         if (!coreOk) {
           status = "pass_needs_review";
           reasons = [...j.reasons, "no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review"];
