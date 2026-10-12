@@ -1,0 +1,4 @@
+GET http://localhost:3200/api/orders/ord-3/total
+HTTP 500 Internal Server Error
+
+{"error":"internal error","traceId":"73c6ba68-5072-4bc8-b96d-b2968782af8c"}

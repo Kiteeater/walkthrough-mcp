@@ -69,7 +69,7 @@ const statuses = (rs: CheckResult[]) => rs.filter((r) => /^chk-\d+$/.test(r.chec
 describe("demo agent executes, core judges, finding points at the real bug (planner knows nothing about it)", () => {
   it("bug in /a → one finding traced to svc/lib.js:2", async () => {
     const { w, results } = await runReal("a");
-    expect(statuses(results)).toEqual(["pass", "fail", "pass"]);
+    expect(statuses(results)).toEqual(["pass_needs_review", "fail", "pass_needs_review"]) // http-only checks: agent-reported evidence (PR #7);
     expect(results.find((r) => r.checkId === "chk-2-logs")?.status).toBe("fail");
     expect(results.find((r) => r.checkId === "chk-2")?.reasons[0]).toMatch(/status 500/);
     expect(w.findings).toHaveLength(1);
@@ -82,14 +82,15 @@ describe("demo agent executes, core judges, finding points at the real bug (plan
 
   it("bug moved to /b → finding moves and root cause updates to svc/lib.js:6", async () => {
     const { w, results } = await runReal("b");
-    expect(statuses(results)).toEqual(["pass", "pass", "fail"]);
+    expect(statuses(results)).toEqual(["pass_needs_review", "pass_needs_review", "fail"]);
     expect(w.findings).toHaveLength(1);
     expect(rootCauseOf(w)).toMatchObject({ checkId: "chk-3", loc: "svc/lib.js:6" });
   });
 
   it("bug fixed → every check passes and there are no findings", async () => {
     const { core, w, results } = await runReal(null);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    // log checks (captured by us) pass; http-only checks (agent-reported) are at most pass_needs_review
+    expect(results.every((r) => r.status === (r.checkId.endsWith("-logs") ? "pass" : "pass_needs_review"))).toBe(true);
     expect(w.findings ?? []).toHaveLength(0);
     const html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('data-findings="0"');

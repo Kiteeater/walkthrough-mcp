@@ -18,6 +18,10 @@ export interface Evidence {
   checkId?: string;
   /** `core` = we executed/captured it; `agent` = raw output reported by the host agent. */
   executedBy?: "core" | "agent";
+  /** For imported MCP results (connector:<name>): which server/tool the agent says it called, params redacted, creds dropped. */
+  mcpCall?: { connector: string; server: string; tool: string; params: unknown };
+  /** Correlation links to earlier evidence: `key` (trace id, doc id…) appears in both, verified at import time. */
+  links?: { evidenceId: string; key: string }[];
 }
 
 export type ClaimKind = "observed" | "inferred";
@@ -79,7 +83,8 @@ export interface Check {
   verify?: { type: string; [key: string]: unknown };
 }
 
-export type Verdict = "pass" | "fail" | "inconclusive";
+/** `pass_needs_review`: the rule passed but every piece of evidence was reported by the agent, none executed by us. */
+export type Verdict = "pass" | "pass_needs_review" | "fail" | "inconclusive";
 
 /** Written only by evaluate_check (the core). There is no API for the agent to set or change it. */
 export interface CheckResult {

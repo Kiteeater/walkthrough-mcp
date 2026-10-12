@@ -96,11 +96,44 @@ Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `plan_checks`, 
 
 ### Pluggable sources (seam for environment connectors)
 
-Action sources (`http`, `command`, later `connector:<name>`), observe sources (`log`, later `connector:<name>`) and
+Action sources (`http`, `command`, `connector:<name>` for imported MCP results), observe sources (`log`, later `connector:<name>`) and
 verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use` reserved) go through a registry in
 `src/core/registry.ts`. `evaluate_check` only talks to the verifier registry. Action and observe sources are the
 execution seam the agent uses (the demo agent sends its HTTP requests through `http`), so a new read-only
 connector is registered there and its output is submitted and judged like everything else.
+
+## Importing results from other MCP servers
+
+walkthrough never connects to your databases or observability stack. Mount the official servers on your host agent
+**read-only**, call them yourself, then hand the raw result over with `import_mcp_result`:
+
+| connector | server | recommended read-only setup | tools accepted for import |
+|---|---|---|---|
+| `mongodb` | `mongodb-mcp-server` | `npx -y mongodb-mcp-server --readOnly` (or `MDB_MCP_READ_ONLY=true`) **and** a read-only DB user | `find`, `aggregate`, `count`, `list-databases`, `list-collections`, `collection-schema`, `collection-indexes`, `explain`, `db-stats` |
+| `aliyun` | `alibaba-cloud-ops-mcp-server` | `--services sls,cms --extra-config "{'sls':['GetLogs','GetHistograms'],'cms':['DescribeAlertLogList','DescribeMetricList']}"` with a read-only RAM sub-account | `sls_GetLogs`, `sls_GetHistograms`, `cms_DescribeAlertLogList`, `cms_DescribeMetricList`, `ecs_DescribeInstances` |
+| `langfuse` | Langfuse MCP | allowlist only the read tools in your MCP client (the server exposes write tools by default); use a project-scoped key | `get_trace`, `list_traces`, `get_observation`, `list_observations`, `get_session`, `list_sessions` |
+
+```jsonc
+// import_mcp_result
+{ "id": "wt-…", "check_id": "chk-2-trace", "connector": "langfuse", "tool": "get_trace",
+  "params": { "traceId": "73c6…" }, "result": { /* raw tool result */ },
+  "links": [{ "evidence_id": "ev-4", "key": "73c6…" }] }
+```
+
+- Stored as `kind: "mcp_result"`, `executedBy: "agent"` (**reported by the agent**, lower trust), `source: "connector:<name>"`,
+  plus `mcpCall: {connector, server, tool, params}`; redacted and sha256-hashed like all evidence.
+- `params`: credential-looking keys (`password`, `token`, `apiKey`, `authorization`, `secret`…) are replaced by
+  `[REDACTED]`, `scheme://user:pass@` userinfo is stripped, then env-secret redaction runs. Never pass credentials.
+- Rejected: unknown connector, a tool outside the read-only list (e.g. `insert-many`), no `links`, a linked evidence id
+  that is missing or whose hash no longer matches, or a link `key` that does not occur in **both** the linked evidence
+  and the imported result.
+- A check judged only on agent-reported evidence is at most `pass_needs_review`; the report's first screen flags it.
+  Root-cause chain steps in the HTML are marked **agent 自报** (dashed amber) vs **我们执行** (solid green).
+
+Demo: `npm run build && node examples/trace-demo/run.mjs .` starts a real MongoDB (`mongodb-memory-server`, or
+`$MONGO_URL`), a mock Langfuse and `examples/trace-demo/service`. The agent finds `GET /api/orders/ord-3/total` → 500,
+follows the response's trace id into Langfuse, the trace's `orderId` into Mongo (doc has no `items`), and the stack
+trace to `pricing.js:3`: `HTTP 500 → Langfuse trace → Mongo doc → file:line`. Committed run: `examples/output-trace/`.
 
 ## Evidence format
 
@@ -118,6 +151,10 @@ sha256 no longer matches. `inferred` claims may have no evidence.
 
 > The stored sha256 lives in the mutable `walkthrough.json`, so it catches **accidental** changes to evidence
 > files, not deliberate tampering (anyone who can edit the evidence can also edit the hash).
+>
+> The same holds for the `run_cli` command log: its hash-chain tail (`commandLogHead`) is stored in `walkthrough.json`,
+> which is itself mutable. Edits or truncation of `commands.jsonl` are detected, but someone who recomputes the whole
+> log **and** the tail together is not. Proper external anchoring of the tail is planned before PR #10.
 
 Writes to `walkthrough.json` are serialised per walkthrough id within one process, so concurrent tool calls
 don't lose data. Multiple processes writing the same walkthrough are not coordinated.

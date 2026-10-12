@@ -12,6 +12,7 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
+import { MCP_IMPORT_PRESETS, sanitizeParams, stripUserinfo, type McpImportConnector } from "./imports.js";
 import type {
   Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
   Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
@@ -32,6 +33,14 @@ export interface CoreDeps {
   now?: () => Date;
   /** run_cli connectors (default: read-only presets aliyun / mqadmin / mongosh). */
   connectors?: ConnectorConfig[];
+  /** MCP servers whose results may be imported (default: read-only presets mongodb / langfuse / aliyun). */
+  mcpImports?: McpImportConnector[];
+}
+
+export interface ImportMcpInput {
+  checkId?: string; connector: string; tool: string; params?: unknown; result: unknown;
+  /** At least one: earlier evidence id + correlation key that must appear in both (e.g. trace id, order id). */
+  links: { evidenceId: string; key: string }[];
 }
 
 export interface RunCliInput {
@@ -315,10 +324,11 @@ export class WalkthroughCore {
   }
 
   /** plan_checks: record the agent's plan. Every check needs a machine-checkable expect; returns next_actions. */
-  planChecks(id: string, input: { goal: string; checks: Check[] }): Promise<{ checks: Check[]; next_actions: NextAction[] }> {
+  planChecks(id: string, input: { goal: string; checks: Check[]; append?: boolean }): Promise<{ checks: Check[]; next_actions: NextAction[] }> {
     return this.withLock(id, () => {
       const w = this.load(id);
-      const ids = new Set<string>();
+      // append = follow-up checks discovered mid-run (e.g. while tracing a 500); earlier checks and verdicts stay.
+      const ids = new Set<string>(input.append ? (w.checks ?? []).map((c) => c.id) : []);
       for (const c of input.checks) {
         if (!c.id || ids.has(c.id)) throw new Error(`check ids must be unique and non-empty: ${c.id}`);
         const problem = expectProblem(c.expect);
@@ -330,10 +340,10 @@ export class WalkthroughCore {
         ids.add(c.id);
       }
       w.goal = input.goal;
-      w.checks = input.checks;
-      w.checkResults = [];
+      w.checks = input.append ? [...(w.checks ?? []), ...input.checks] : input.checks;
+      if (!input.append) w.checkResults = [];
       this.save(w);
-      return { checks: w.checks, next_actions: w.checks.map(nextActionFor) };
+      return { checks: w.checks, next_actions: input.checks.map(nextActionFor) };
     });
   }
 
@@ -352,7 +362,11 @@ export class WalkthroughCore {
       for (const ev of evs) if (ev.checkId !== check.id) throw new ClaimRejectedError(`evidence ${ev.id} was not captured for ${check.id}`);
       const texts = evs.filter((ev) => ev.type !== "screenshot").map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
       const j = await this.registry.verifier(check.verify?.type ?? "rule").verify(check, texts);
-      const result: CheckResult = { checkId: check.id, status: j.status, reasons: j.reasons, evidenceIds, at: this.ts() };
+      // Agent-reported evidence alone can never yield a clean pass: the human must look at it.
+      const agentOnly = evs.length > 0 && evs.every((ev) => ev.executedBy === "agent");
+      const status = j.status === "pass" && agentOnly ? "pass_needs_review" : j.status;
+      const reasons = status === "pass_needs_review" ? [...j.reasons, "all evidence was reported by the agent, none executed by walkthrough: needs human review"] : j.reasons;
+      const result: CheckResult = { checkId: check.id, status, reasons, evidenceIds, at: this.ts() };
       w.checkResults = [...(w.checkResults ?? []).filter((r) => r.checkId !== check.id), result];
       this.save(w);
       return result;
@@ -399,6 +413,46 @@ export class WalkthroughCore {
       w.signoff = { decision: input.decision as SignOff["decision"], ...(input.comment ? { comment: String(input.comment) } : {}) };
       this.save(w);
       return w.signoff;
+    });
+  }
+
+  /**
+   * import_mcp_result: store a result the agent got from another MCP server (connector:<name>) as agent-reported
+   * evidence. Rejected: unknown connector, tool not in its read-only list, no correlation link, linked evidence missing /
+   * tampered, or correlation key absent from either side. Params: credential keys dropped, URI userinfo stripped, redacted.
+   */
+  importMcpResult(id: string, input: ImportMcpInput): Promise<Evidence> {
+    return this.withLock(id, async () => {
+      const w = this.load(id);
+      const c = (this.deps.mcpImports ?? MCP_IMPORT_PRESETS).find((x) => x.name === input.connector);
+      if (!c) throw new ClaimRejectedError(`unknown MCP connector: ${input.connector}`);
+      if (!c.tools.includes(input.tool)) throw new ClaimRejectedError(`tool ${input.connector}.${input.tool} is not in the read-only import list`);
+      if (input.checkId !== undefined && !(w.checks ?? []).some((x) => x.id === input.checkId)) throw new ClaimRejectedError(`unknown check: ${input.checkId}`);
+      if (input.result === undefined) throw new ClaimRejectedError("result is required");
+      const links = input.links ?? [];
+      if (!links.length) throw new ClaimRejectedError("imported evidence must link to earlier evidence (links: [{evidenceId, key}])");
+      const raw = typeof input.result === "string" ? input.result : JSON.stringify(input.result, null, 2);
+      this.verifyEvidence(w, "observed", links.map((l) => l.evidenceId));
+      for (const l of links) {
+        if (!l.key || String(l.key).length < 1) throw new ClaimRejectedError("link key is required");
+        const ev = w.evidence.find((e) => e.id === l.evidenceId)!;
+        if (!readFileSync(join(this.dir(id), ev.path), "utf8").includes(String(l.key))) throw new ClaimRejectedError(`unlinked: key "${l.key}" not found in ${l.evidenceId}`);
+        if (!raw.includes(String(l.key))) throw new ClaimRejectedError(`unlinked: key "${l.key}" not found in the imported result`);
+      }
+      const params = sanitizeParams(input.params ?? {}, this.redactor);
+      const out = await this.registry.action(`connector:${c.name}`).run({ type: `connector:${c.name}`, tool: input.tool, params, result: input.result } as never, { walkthrough: w, sandbox: undefined as never });
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.json.txt`;
+      writeFileSync(join(this.dir(id), rel), this.redactor.text(stripUserinfo(out.evidenceText)));
+      const ev: Evidence = {
+        id: evId, type: "response", kind: "mcp_result", path: rel, executedBy: "agent",
+        source: `connector:${c.name}`, mcpCall: { connector: c.name, server: c.server, tool: input.tool, params },
+        links: links.map((l) => ({ evidenceId: l.evidenceId, key: this.redactor.text(String(l.key)) })),
+        ...(input.checkId ? { checkId: input.checkId } : {}), sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts(),
+      };
+      w.evidence.push(ev);
+      this.save(w);
+      return ev;
     });
   }
 

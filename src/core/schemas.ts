@@ -18,6 +18,7 @@ export const planChecksShape = {
   id: z.string(),
   goal: z.string(),
   checks: z.array(checkSchema).describe("your plan; a check without a machine-checkable expect is rejected"),
+  append: z.boolean().optional().describe("add follow-up checks to the existing plan (keeps earlier verdicts)"),
 };
 
 export const captureEvidenceShape = {
@@ -58,3 +59,19 @@ export function captureInput(a: Cap) {
   if (!s.check_id) throw new Error("check_id is required when submitting evidence");
   return { type: "submit" as const, checkId: s.check_id, kind: s.kind as never, source: s.source as never, content: s.content, path: s.path };
 }
+
+export const importMcpResultShape = {
+  id: z.string(),
+  check_id: z.string().optional(),
+  connector: z.string().describe("connector name: mongodb | langfuse | aliyun (read-only presets)"),
+  tool: z.string().describe("the MCP tool YOU called on that server, e.g. find / get_trace / sls_GetLogs"),
+  params: z.unknown().optional().describe("the call parameters; credential fields are dropped, never send secrets"),
+  result: z.unknown().describe("the raw, unedited tool result"),
+  links: z.array(z.object({ evidence_id: z.string(), key: z.string() })).min(1)
+    .describe("earlier evidence this result follows from, and the key (trace id, doc id…) present in both"),
+};
+type Imp = { check_id?: string; connector: string; tool: string; params?: unknown; result: unknown; links: { evidence_id: string; key: string }[] };
+export const importInput = (a: Imp) => ({
+  checkId: a.check_id, connector: a.connector, tool: a.tool, params: a.params, result: a.result,
+  links: (a.links ?? []).map((l) => ({ evidenceId: l.evidence_id, key: l.key })),
+});

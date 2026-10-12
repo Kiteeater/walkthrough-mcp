@@ -1,0 +1,19 @@
+# reported by agent: langfuse.get_trace({"traceId":"73c6ba68-5072-4bc8-b96d-b2968782af8c"})
+
+{
+  "id": "73c6ba68-5072-4bc8-b96d-b2968782af8c",
+  "name": "GET /api/orders/:id/total",
+  "metadata": {
+    "db": "shop",
+    "collection": "orders",
+    "orderId": "ord-3"
+  },
+  "observations": [
+    {
+      "name": "orderTotal",
+      "level": "ERROR",
+      "statusMessage": "Cannot read properties of undefined (reading 'reduce')"
+    }
+  ],
+  "timestamp": "2026-10-12T19:41:55.656Z"
+}

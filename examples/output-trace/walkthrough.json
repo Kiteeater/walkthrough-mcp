@@ -1,0 +1,348 @@
+{
+  "id": "wt-20261012194154-fa35a6",
+  "title": "Trace a 500 across HTTP → Langfuse → MongoDB → source",
+  "createdAt": "2026-10-12T19:41:54.895Z",
+  "sandbox": {
+    "backend": "local",
+    "cwd": "/workspace/wm-pr7/examples/trace-demo/service",
+    "up": "exec node server.js",
+    "down": "true",
+    "local": {
+      "up": "exec node server.js",
+      "passEnv": [
+        "MONGO_URL",
+        "LANGFUSE_URL",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "id": "run-1",
+      "command": "exec node server.js",
+      "exitCode": 0,
+      "output": "started pid 33545",
+      "createdAt": "2026-10-12T19:41:55.201Z"
+    },
+    {
+      "id": "run-2",
+      "command": "kill local process group",
+      "exitCode": 0,
+      "output": "stopped local process\n",
+      "createdAt": "2026-10-12T19:41:56.023Z"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-1",
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-1.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "sha256": "51b028f265256c011534d622308208ddbda7a21dc054dd639708dcabeb66ab92",
+      "createdAt": "2026-10-12T19:41:55.267Z"
+    },
+    {
+      "id": "ev-2",
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-2.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3200/api/orders/ord-1/total\"",
+      "checkId": "chk-1",
+      "sha256": "ae2770f4334400683a333858c2717bfc9aec743984fe13e605acb544ecb4e8f0",
+      "createdAt": "2026-10-12T19:41:55.602Z"
+    },
+    {
+      "id": "ev-3",
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-3.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-1-logs",
+      "sha256": "d5365402028f37f589410438eab7314a34c3381e9625750ed2f605134d7ef7bd",
+      "createdAt": "2026-10-12T19:41:55.603Z"
+    },
+    {
+      "id": "ev-4",
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-4.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3200/api/orders/ord-3/total\"",
+      "checkId": "chk-2",
+      "sha256": "11925742c8cfbc71c9604c305860fe010aca312da96fbdf0fa0991207100a207",
+      "createdAt": "2026-10-12T19:41:55.966Z"
+    },
+    {
+      "id": "ev-5",
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-5.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-2-logs",
+      "sha256": "9be95c2ecff7514c27dc6792d93b14a1cc5eb5c6b31048caec439f05a7a445fd",
+      "createdAt": "2026-10-12T19:41:55.967Z"
+    },
+    {
+      "id": "ev-6",
+      "type": "response",
+      "kind": "mcp_result",
+      "path": "evidence/ev-6.json.txt",
+      "executedBy": "agent",
+      "source": "connector:langfuse",
+      "mcpCall": {
+        "connector": "langfuse",
+        "server": "langfuse",
+        "tool": "get_trace",
+        "params": {
+          "traceId": "73c6ba68-5072-4bc8-b96d-b2968782af8c"
+        }
+      },
+      "links": [
+        {
+          "evidenceId": "ev-4",
+          "key": "73c6ba68-5072-4bc8-b96d-b2968782af8c"
+        }
+      ],
+      "checkId": "chk-2-trace",
+      "sha256": "885dddd8f28cab6d020182f0f2e88ca899ae8db3bb6157d391dc4b4866827cb1",
+      "createdAt": "2026-10-12T19:41:55.978Z"
+    },
+    {
+      "id": "ev-7",
+      "type": "response",
+      "kind": "mcp_result",
+      "path": "evidence/ev-7.json.txt",
+      "executedBy": "agent",
+      "source": "connector:mongodb",
+      "mcpCall": {
+        "connector": "mongodb",
+        "server": "mongodb-mcp-server",
+        "tool": "find",
+        "params": {
+          "database": "shop",
+          "collection": "orders",
+          "filter": {
+            "_id": "ord-3"
+          }
+        }
+      },
+      "links": [
+        {
+          "evidenceId": "ev-6",
+          "key": "ord-3"
+        }
+      ],
+      "checkId": "chk-2-doc",
+      "sha256": "3b7d8d480720502581ae1cdd4a4eec40be7ba59914875b1b35cd3fb63627dd43",
+      "createdAt": "2026-10-12T19:41:56.007Z"
+    }
+  ],
+  "sources": [
+    {
+      "id": "src-1",
+      "file": "examples/trace-demo/service/pricing.js",
+      "line": 3,
+      "note": "TypeError: Cannot read properties of undefined (reading 'reduce')"
+    }
+  ],
+  "claims": [],
+  "goal": "Every order's total endpoint answers 2xx; if not, trace the failure to its root cause across sources",
+  "checks": [
+    {
+      "id": "chk-1",
+      "intent": "GET /api/orders/ord-1/total answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3200/api/orders/ord-1/total",
+      "expect": {
+        "type": "status",
+        "value": [
+          200,
+          299
+        ]
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-1-logs",
+      "intent": "no error alerts in app logs for ord-1",
+      "method": "cli",
+      "target": "logs:app",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-2",
+      "intent": "GET /api/orders/ord-3/total answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3200/api/orders/ord-3/total",
+      "expect": {
+        "type": "status",
+        "value": [
+          200,
+          299
+        ]
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-2-logs",
+      "intent": "no error alerts in app logs for ord-3",
+      "method": "cli",
+      "target": "logs:app",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-2-trace",
+      "intent": "Langfuse trace 73c6ba68-5072-4bc8-b96d-b2968782af8c has no ERROR observation",
+      "method": "mcp",
+      "target": "langfuse.get_trace(73c6ba68-5072-4bc8-b96d-b2968782af8c)",
+      "expect": {
+        "type": "absent",
+        "value": "\"level\": \"ERROR\""
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-2-doc",
+      "intent": "shop.orders ord-3 has line items",
+      "method": "mcp",
+      "target": "mongodb.find(orders, {_id: ord-3})",
+      "expect": {
+        "type": "regex",
+        "value": "\"items\"\\s*:"
+      },
+      "severity_if_fail": "high"
+    }
+  ],
+  "checkResults": [
+    {
+      "checkId": "chk-1",
+      "status": "pass_needs_review",
+      "reasons": [
+        "all evidence was reported by the agent, none executed by walkthrough: needs human review"
+      ],
+      "evidenceIds": [
+        "ev-2"
+      ],
+      "at": "2026-10-12T19:41:55.604Z"
+    },
+    {
+      "checkId": "chk-1-logs",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-3"
+      ],
+      "at": "2026-10-12T19:41:55.605Z"
+    },
+    {
+      "checkId": "chk-2",
+      "status": "fail",
+      "reasons": [
+        "status 500, expected 200-299"
+      ],
+      "evidenceIds": [
+        "ev-4"
+      ],
+      "at": "2026-10-12T19:41:55.968Z"
+    },
+    {
+      "checkId": "chk-2-logs",
+      "status": "fail",
+      "reasons": [
+        "found /Error:|Unhandled|FATAL/: \"Error:\""
+      ],
+      "evidenceIds": [
+        "ev-5"
+      ],
+      "at": "2026-10-12T19:41:55.969Z"
+    },
+    {
+      "checkId": "chk-2-trace",
+      "status": "fail",
+      "reasons": [
+        "found /\"level\": \"ERROR\"/: \"\\\"level\\\": \\\"ERROR\\\"\""
+      ],
+      "evidenceIds": [
+        "ev-6"
+      ],
+      "at": "2026-10-12T19:41:55.980Z"
+    },
+    {
+      "checkId": "chk-2-doc",
+      "status": "fail",
+      "reasons": [
+        "no match for /\"items\"\\s*:/"
+      ],
+      "evidenceIds": [
+        "ev-7"
+      ],
+      "at": "2026-10-12T19:41:56.008Z"
+    }
+  ],
+  "findings": [
+    {
+      "id": "finding-1",
+      "title": "GET /api/orders/ord-3/total → 500: order document without line items",
+      "severity": "high",
+      "symptom": "GET http://localhost:3200/api/orders/ord-3/total answered 500 (trace 73c6ba68-5072-4bc8-b96d-b2968782af8c)",
+      "repro_steps": [
+        "curl -i -X GET \"http://localhost:3200/api/orders/ord-3/total\"",
+        "langfuse.get_trace({traceId: \"73c6ba68-5072-4bc8-b96d-b2968782af8c\"})",
+        "mongodb.find(orders, {_id: ord-3})"
+      ],
+      "root_cause_chain": [
+        {
+          "claim": "GET /api/orders/ord-3/total answered 500 (status 500, expected 200-299)",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-4"
+          ]
+        },
+        {
+          "claim": "Langfuse trace 73c6ba68-5072-4bc8-b96d-b2968782af8c: observation \"orderTotal\" is ERROR (Cannot read properties of undefined (reading 'reduce')) for orders ord-3 — fail",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-6"
+          ]
+        },
+        {
+          "claim": "MongoDB shop.orders {_id: \"ord-3\"} has fields [_id, customer, legacyTotal] but no \"items\" — fail",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-7"
+          ]
+        },
+        {
+          "claim": "the service's stack trace points at examples/trace-demo/service/pricing.js:3 (TypeError: Cannot read properties of undefined (reading 'reduce')): the code assumes every order has items",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-5"
+          ],
+          "source_ref": "src-1"
+        }
+      ],
+      "evidenceIds": [
+        "ev-4",
+        "ev-6",
+        "ev-7",
+        "ev-5"
+      ],
+      "kind": "observed",
+      "checkId": "chk-2"
+    }
+  ]
+}

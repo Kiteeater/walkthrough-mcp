@@ -1,0 +1,19 @@
+{
+  "title": "Trace a 500 across HTTP → Langfuse → MongoDB → source",
+  "waitFor": { "url": "http://localhost:3200/health", "timeoutMs": 60000 },
+  "captures": [],
+  "claims": [],
+  "sandbox": {
+    "backend": "local",
+    "cwd": "service",
+    "up": "exec node server.js",
+    "down": "true",
+    "local": { "up": "exec node server.js", "passEnv": ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
+  },
+  "agent": {
+    "goal": "Every order's total endpoint answers 2xx; if not, trace the failure to its root cause across sources",
+    "baseUrl": "http://localhost:3200",
+    "service": "app",
+    "orders": ["ord-1", "ord-3"]
+  }
+}
