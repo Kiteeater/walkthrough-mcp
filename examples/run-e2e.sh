@@ -5,6 +5,11 @@ cd "$(dirname "$0")/.."
 # Generate the demo secret WITHOUT xtrace so its value never reaches CI logs.
 : "${DEMO_API_KEY:=e2e-demo-key-$RANDOM$RANDOM}"
 export DEMO_API_KEY
+# Per-run host port (OS-assigned, loopback) and readiness token: waitFor only accepts /health answers that echo
+# this token (waitFor.header), so another server holding a port can never pass as the orders service.
+PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+DEMO_HEALTH_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(12).toString("hex"))')"
+export PORT DEMO_HEALTH_TOKEN
 set -x
 
 [ -d dist ] || npm run build

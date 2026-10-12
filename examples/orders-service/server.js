@@ -14,7 +14,7 @@ const json = (res, status, body) => {
 const server = http.createServer((req, res) => {
   console.log(`${req.method} ${req.url}`);
   try {
-    if (req.url === "/health") return json(res, 200, { ok: true });
+    if (req.url === "/health") { res.setHeader("x-walkthrough-demo-token", process.env.DEMO_HEALTH_TOKEN || ""); return json(res, 200, { ok: true }); }
     if (req.url === "/api/orders") return json(res, 200, listOrders());
     const m = /^\/api\/orders\/(\d+)$/.exec(req.url);
     if (m) {

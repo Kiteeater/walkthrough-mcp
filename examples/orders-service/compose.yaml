@@ -6,6 +6,8 @@ services:
     volumes:
       - ./:/app:ro
     ports:
-      - "3000:3000"
+      # host port chosen per run by the e2e script (OS-assigned free port), loopback only
+      - "127.0.0.1:${PORT:?PORT must be set (free host port)}:3000"
     environment:
       DEMO_API_KEY: ${DEMO_API_KEY:-}
+      DEMO_HEALTH_TOKEN: ${DEMO_HEALTH_TOKEN:-}

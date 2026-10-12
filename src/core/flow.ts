@@ -17,8 +17,21 @@ export interface FlowConfig {
   keepRunning?: boolean;
 }
 
+export function expandEnv(v: unknown, where: string, env: NodeJS.ProcessEnv = process.env): unknown {
+  if (typeof v === "string") return v.replace(/\$\{([A-Z][A-Z0-9_]*)\}/g, (_m, k: string) => {
+    const x = env[k];
+    if (x === undefined || x === "") throw new Error(`${where}: \${${k}} is not set`);
+    return x;
+  });
+  if (Array.isArray(v)) return v.map((x) => expandEnv(x, where, env));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expandEnv(x, where, env)]));
+  return v;
+}
+
 export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConfig, "up" | "down" | "backend">> = {}): FlowConfig {
-  const cfg = JSON.parse(readFileSync(path, "utf8")) as FlowConfig;
+  // `${NAME}` (upper-case env var) in any string is replaced from the environment, so per-run values (an OS-assigned
+  // port, a readiness token for waitFor.header) never have to be hard-coded. An unset variable is an error.
+  const cfg = expandEnv(JSON.parse(readFileSync(path, "utf8")), path) as FlowConfig;
   cfg.sandbox.cwd = resolve(dirname(path), cfg.sandbox.cwd ?? ".");
   if (overrides.up) cfg.sandbox.up = overrides.up;
   if (overrides.down) cfg.sandbox.down = overrides.down;
