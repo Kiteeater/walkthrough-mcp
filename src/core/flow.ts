@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";
+import { withDeadline } from "./settle.js";
 import type { Check, ClaimKind, SandboxConfig } from "./types.js";
 import type { WalkthroughCore } from "./walkthrough.js";
 
@@ -8,7 +9,7 @@ import type { WalkthroughCore } from "./walkthrough.js";
 export interface FlowConfig {
   title: string;
   sandbox: SandboxConfig;
-  waitFor?: { url: string; timeoutMs?: number };
+  waitFor?: { url: string; timeoutMs?: number; attemptTimeoutMs?: number };
   exec?: string[];
   /** The agent's check plan (planning belongs to the agent; see src/demo-agent for the example planner). */
   plan?: { goal: string; checks: Check[] };
@@ -30,10 +31,12 @@ export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConf
   return cfg;
 }
 
-async function waitForUrl(url: string, timeoutMs: number): Promise<void> {
+/** Poll `url` until it answers 2xx. Every attempt has a ref'd deadline, so this always settles (exit-13 fix). */
+export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try { if ((await fetch(url)).ok) return; } catch { /* not ready */ }
+    const budget = Math.max(1, Math.min(attemptTimeoutMs, deadline - Date.now()));
+    try { if ((await withDeadline((signal) => fetch(url, { signal }), budget, `GET ${url}`)).ok) return; } catch { /* not ready */ }
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`timed out waiting for ${url}`);
@@ -45,7 +48,7 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
   const up = await core.runInSandbox(w.id, "up");
   if (up.exitCode !== 0) throw new Error(`sandbox up failed:\n${up.output}`);
   try {
-    if (cfg.waitFor && !opts.skipWait) await waitForUrl(cfg.waitFor.url, cfg.waitFor.timeoutMs ?? 60_000);
+    if (cfg.waitFor && !opts.skipWait) await waitForUrl(cfg.waitFor.url, cfg.waitFor.timeoutMs ?? 60_000, cfg.waitFor.attemptTimeoutMs);
     for (const c of cfg.exec ?? []) await core.runInSandbox(w.id, "exec", c);
     if (cfg.plan) {
       await core.planChecks(w.id, { goal: cfg.plan.goal, checks: cfg.plan.checks });

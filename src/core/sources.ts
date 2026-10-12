@@ -1,3 +1,4 @@
+import { withDeadline } from "./settle.js";
 import { judge } from "./checks.js";
 import { Registry } from "./registry.js";
 import type { CommandAction, HttpAction, LogObserve } from "./types.js";
@@ -8,8 +9,10 @@ export const httpSource = {
     const method = a.method ?? "GET";
     const repro = `curl -i -X ${method} ${JSON.stringify(a.url)}`;
     try {
-      const res = await fetch(a.url, { method, body: a.body, headers: a.headers, signal: AbortSignal.timeout(15_000) });
-      const body = await res.text();
+      const { res, body } = await withDeadline(async (signal) => {
+        const r = await fetch(a.url, { method, body: a.body, headers: a.headers, signal });
+        return { res: r, body: await r.text() };
+      }, 15_000, `${method} ${a.url}`);
       return { status: res.status, body, repro, evidenceText: `${method} ${a.url}\nHTTP ${res.status} ${res.statusText}\n\n${body}` };
     } catch (e) {
       return { body: "", repro, evidenceText: `${method} ${a.url}\nrequest failed: ${(e as Error).message}` };
