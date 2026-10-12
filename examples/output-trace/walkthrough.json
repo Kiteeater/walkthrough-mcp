@@ -1,7 +1,7 @@
 {
-  "id": "wt-20261012233640-6c2fa8",
+  "id": "wt-20261012235443-2575a5",
   "title": "追查一个 500：HTTP → Langfuse → MongoDB → 源码",
-  "createdAt": "2026-10-12T23:36:40.501Z",
+  "createdAt": "2026-10-12T23:54:43.787Z",
   "sandbox": {
     "backend": "local",
     "cwd": "examples/trace-demo/service",
@@ -25,15 +25,15 @@
       "id": "run-1",
       "command": "exec node server.js",
       "exitCode": 0,
-      "output": "started pid 416085",
-      "createdAt": "2026-10-12T23:36:40.808Z"
+      "output": "started pid 448121",
+      "createdAt": "2026-10-12T23:54:44.094Z"
     },
     {
       "id": "run-2",
       "command": "kill local process group",
       "exitCode": 0,
       "output": "stopped local process\n",
-      "createdAt": "2026-10-12T23:36:42.168Z"
+      "createdAt": "2026-10-12T23:54:45.659Z"
     }
   ],
   "evidence": [
@@ -44,8 +44,8 @@
       "path": "evidence/ev-1.log",
       "source": "local:app",
       "executedBy": "core",
-      "sha256": "9a787ee711db64c8b0b4e3d7fa9e55d0ecac285efdb099a7d55eb498a8bf3fcc",
-      "createdAt": "2026-10-12T23:36:40.862Z"
+      "sha256": "93e6b6e87d273e3db142ad2f976c327b036e0ce25a16da324b784e91fee00f23",
+      "createdAt": "2026-10-12T23:54:44.150Z"
     },
     {
       "id": "ev-2",
@@ -53,10 +53,10 @@
       "kind": "http",
       "path": "evidence/ev-2.txt",
       "executedBy": "agent",
-      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:42827/api/orders/ord-1/total\"",
+      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:33909/api/orders/ord-1/total\"",
       "checkId": "chk-1",
-      "sha256": "6e75a98ed2d85b079784ca7c5c7eb9005bb7433e341558e7ec6069046f284a5f",
-      "createdAt": "2026-10-12T23:36:41.304Z"
+      "sha256": "5952c4815ea4d9c696e3c658c302cfaa54018295266e28a41ba6d2f8f459dd46",
+      "createdAt": "2026-10-12T23:54:44.600Z"
     },
     {
       "id": "ev-3",
@@ -67,7 +67,7 @@
       "executedBy": "core",
       "checkId": "chk-1-logs",
       "sha256": "7fe4330cb826775c2be65c209c967a1cd718dd8265887fa6377d16fdc6d6580b",
-      "createdAt": "2026-10-12T23:36:41.305Z"
+      "createdAt": "2026-10-12T23:54:44.602Z"
     },
     {
       "id": "ev-4",
@@ -75,10 +75,10 @@
       "kind": "http",
       "path": "evidence/ev-4.txt",
       "executedBy": "agent",
-      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:42827/api/orders/ord-3/total\"",
+      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:33909/api/orders/ord-3/total\"",
       "checkId": "chk-2",
-      "sha256": "3d1f8c53bbec6fc74a221f77313d455b84220a377599a6801ecda62c9cdd3353",
-      "createdAt": "2026-10-12T23:36:41.664Z"
+      "sha256": "b686278a70808492129664fbe32782297b7e988a30a72916ab8b78b8f46cb946",
+      "createdAt": "2026-10-12T23:54:44.961Z"
     },
     {
       "id": "ev-5",
@@ -88,8 +88,8 @@
       "source": "local:app",
       "executedBy": "core",
       "checkId": "chk-2-logs",
-      "sha256": "c86265f4d9474ac985d57ba74d845ebf5ed71ef51b4628459a93a78818dc1a5b",
-      "createdAt": "2026-10-12T23:36:41.665Z"
+      "sha256": "18f14246477ba7a5026e86c3e8fcfdbbe1edf67584151f0a025d0926385b0816",
+      "createdAt": "2026-10-12T23:54:44.962Z"
     },
     {
       "id": "ev-6",
@@ -97,32 +97,32 @@
       "kind": "har",
       "path": "evidence/ev-6.har",
       "executedBy": "agent",
-      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:42827/api/orders/ord-3/total\"",
+      "source": "agent:fetch curl -i -X GET \"http://127.0.0.1:33909/api/orders/ord-3/total\"",
       "checkId": "chk-2",
-      "sha256": "1188d8da5e8da103e2ff9a73a6fa786322ee46fcf58983373fe45779bbfef8b8",
-      "createdAt": "2026-10-12T23:36:41.668Z"
+      "sha256": "c8b382ca27f2f2ba9df1222cedacb5fccd0d40436fbeb86bd2ed8bfd336b3ede",
+      "createdAt": "2026-10-12T23:54:44.965Z"
     },
     {
       "id": "ev-7",
       "type": "har",
       "kind": "har",
       "path": "evidence/ev-7.har",
-      "sha256": "136eef372c47f423738f55e46dcce833968315067cf288477c49b106472028fc",
-      "createdAt": "2026-10-12T23:36:41.680Z",
+      "sha256": "337e0475979489b49e2e77399b94465bb5d33bab4b5fa2471ae1b0529d3b7b7f",
+      "createdAt": "2026-10-12T23:54:44.976Z",
       "checkId": "chk-2",
       "executedBy": "core",
-      "source": "replay:GET http://127.0.0.1:42827/api/orders/ord-3/total (from ev-6)"
+      "source": "replay:GET http://127.0.0.1:33909/api/orders/ord-3/total (from ev-6)"
     },
     {
       "id": "ev-8",
       "type": "response",
       "kind": "metric",
       "path": "evidence/ev-8.json",
-      "sha256": "98483b5fdfc24b7b47f4d7faf4221a5fc42bb007273007eb348feabb5034c45c",
-      "createdAt": "2026-10-12T23:36:41.693Z",
+      "sha256": "42d0dfc9b50d83c2f2722899ed67ef69c56dae4a6efef99c2a76902f9816af61",
+      "createdAt": "2026-10-12T23:54:44.986Z",
       "executedBy": "core",
       "checkId": "chk-2-5xx",
-      "source": "prometheus:http://127.0.0.1:40479/api/v1/query sum(rate(http_requests_total{route=\"/api/orders/:id/total\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{route=\"/api/orders/:id/total\"}[5m]))"
+      "source": "prometheus:http://127.0.0.1:45299/api/v1/query sum(rate(http_requests_total{route=\"/api/orders/:id/total\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{route=\"/api/orders/:id/total\"}[5m]))"
     },
     {
       "id": "ev-9",
@@ -136,18 +136,18 @@
         "server": "langfuse",
         "tool": "get_trace",
         "params": {
-          "traceId": "ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4"
+          "traceId": "ad355f94-a88f-4303-9bb1-47c46b732361"
         }
       },
       "links": [
         {
           "evidenceId": "ev-4",
-          "key": "ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4"
+          "key": "ad355f94-a88f-4303-9bb1-47c46b732361"
         }
       ],
       "checkId": "chk-2-trace",
-      "sha256": "150ed004c43a35ca80e7b1e7f484b38f1cac4f92fc0e25d46b22c75ffe44399f",
-      "createdAt": "2026-10-12T23:36:41.706Z"
+      "sha256": "ed6c6792d63c5cc1ed5daab6c04f32c731be2abea41bcb7031dc2c7739f4f474",
+      "createdAt": "2026-10-12T23:54:44.997Z"
     },
     {
       "id": "ev-10",
@@ -176,7 +176,7 @@
       ],
       "checkId": "chk-2-doc",
       "sha256": "2ee6cd627f1fc4d90c4aadd9ffcfe007920f643b687613c0e143553db5df1634",
-      "createdAt": "2026-10-12T23:36:41.728Z"
+      "createdAt": "2026-10-12T23:54:45.019Z"
     },
     {
       "id": "ev-11",
@@ -184,20 +184,31 @@
       "kind": "cli_output",
       "path": "evidence/ev-11.txt",
       "executedBy": "core",
-      "source": "run_cli:mqadmin consumerProgress -g order-pricing-consumer -t ORDER_CREATED -n 127.0.0.1:45265",
+      "source": "run_cli:mqadmin consumerProgress -g order-pricing-consumer -t ORDER_CREATED -n 127.0.0.1:46721",
       "checkId": "chk-2-mq",
-      "sha256": "001041608c14f1e3873278cc4418594da8e9d28ff9fbe4dec3fdffd7d59ecf84",
-      "createdAt": "2026-10-12T23:36:41.958Z"
+      "sha256": "7e1840966b35bfa40c678388ab4e93ecab49e636850c5341382a4f4c91e807e2",
+      "createdAt": "2026-10-12T23:54:45.303Z"
     },
     {
       "id": "ev-12",
       "type": "response",
-      "kind": "alert",
-      "path": "evidence/ev-12.json",
-      "sha256": "c4f12016bef301e755bd91ab4deaacab8fecb9089d7966f4f8546395a2f0e6e6",
-      "createdAt": "2026-10-12T23:36:42.157Z",
+      "kind": "cli_output",
+      "path": "evidence/ev-12.txt",
       "executedBy": "core",
-      "source": "prometheus:http://127.0.0.1:40479/api/v1/alerts 2026-10-12T23:36:40.864Z..2026-10-12T23:36:41.940Z (stopped_early)"
+      "source": "run_cli:aliyun sls GetLogs --project demo-prod-logs --logstore infra --from 1791848984 --to 1791849286 --query layer: infra and level: ERROR --profile demo-readonly",
+      "checkId": "chk-2-sls",
+      "sha256": "1925b979bea3d261dd64cad774ed6fbdcacf6c5b1ca0c09c5910fcfa62705d16",
+      "createdAt": "2026-10-12T23:54:45.525Z"
+    },
+    {
+      "id": "ev-13",
+      "type": "response",
+      "kind": "alert",
+      "path": "evidence/ev-13.json",
+      "sha256": "ad105cb825b16447c9c4660128479f8cfb4a3cb37807986d97cdf59b9fc1ef7f",
+      "createdAt": "2026-10-12T23:54:45.648Z",
+      "executedBy": "core",
+      "source": "prometheus:http://127.0.0.1:45299/api/v1/alerts 2026-10-12T23:54:44.153Z..2026-10-12T23:54:45.230Z (stopped_early)"
     }
   ],
   "sources": [
@@ -215,7 +226,7 @@
       "id": "chk-1",
       "intent": "GET /api/orders/ord-1/total 返回 2xx",
       "method": "http",
-      "target": "GET http://127.0.0.1:42827/api/orders/ord-1/total",
+      "target": "GET http://127.0.0.1:33909/api/orders/ord-1/total",
       "expect": {
         "type": "status",
         "value": [
@@ -245,7 +256,7 @@
       "id": "chk-2",
       "intent": "GET /api/orders/ord-3/total 返回 2xx",
       "method": "http",
-      "target": "GET http://127.0.0.1:42827/api/orders/ord-3/total",
+      "target": "GET http://127.0.0.1:33909/api/orders/ord-3/total",
       "expect": {
         "type": "status",
         "value": [
@@ -286,23 +297,23 @@
       },
       "severity_if_fail": "medium",
       "appended": {
-        "at": "2026-10-12T23:36:41.686Z",
+        "at": "2026-10-12T23:54:44.981Z",
         "triggeringEvidenceId": "ev-4",
         "logSeq": 2
       }
     },
     {
       "id": "chk-2-trace",
-      "intent": "Langfuse trace ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4 没有 ERROR 级 observation",
+      "intent": "Langfuse trace ad355f94-a88f-4303-9bb1-47c46b732361 没有 ERROR 级 observation",
       "method": "mcp",
-      "target": "langfuse.get_trace(ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4)",
+      "target": "langfuse.get_trace(ad355f94-a88f-4303-9bb1-47c46b732361)",
       "expect": {
         "type": "absent",
         "value": "\"level\": \"ERROR\""
       },
       "severity_if_fail": "high",
       "appended": {
-        "at": "2026-10-12T23:36:41.703Z",
+        "at": "2026-10-12T23:54:44.995Z",
         "triggeringEvidenceId": "ev-4",
         "logSeq": 4
       }
@@ -318,7 +329,7 @@
       },
       "severity_if_fail": "high",
       "appended": {
-        "at": "2026-10-12T23:36:41.703Z",
+        "at": "2026-10-12T23:54:44.995Z",
         "triggeringEvidenceId": "ev-4",
         "logSeq": 5
       }
@@ -334,9 +345,25 @@
       },
       "severity_if_fail": "medium",
       "appended": {
-        "at": "2026-10-12T23:36:41.733Z",
+        "at": "2026-10-12T23:54:45.024Z",
         "triggeringEvidenceId": "ev-4",
         "logSeq": 6
+      }
+    },
+    {
+      "id": "chk-2-sls",
+      "intent": "SLS demo-prod-logs/infra 在事故时间段内没有基础设施层报错（layer: infra and level: ERROR 无结果）",
+      "method": "cli",
+      "target": "aliyun sls GetLogs --project demo-prod-logs --logstore infra --from 1791848984 --to 1791849286 --query \"layer: infra and level: ERROR\"",
+      "expect": {
+        "type": "regex",
+        "value": "^exit 0\\n\\n\\[\\]$"
+      },
+      "severity_if_fail": "medium",
+      "appended": {
+        "at": "2026-10-12T23:54:45.308Z",
+        "triggeringEvidenceId": "ev-4",
+        "logSeq": 8
       }
     }
   ],
@@ -350,7 +377,7 @@
       "evidenceIds": [
         "ev-2"
       ],
-      "at": "2026-10-12T23:36:41.307Z"
+      "at": "2026-10-12T23:54:44.604Z"
     },
     {
       "checkId": "chk-1-logs",
@@ -359,7 +386,7 @@
       "evidenceIds": [
         "ev-3"
       ],
-      "at": "2026-10-12T23:36:41.308Z"
+      "at": "2026-10-12T23:54:44.605Z"
     },
     {
       "checkId": "chk-2",
@@ -372,7 +399,7 @@
         "ev-4",
         "ev-7"
       ],
-      "at": "2026-10-12T23:36:41.682Z"
+      "at": "2026-10-12T23:54:44.978Z"
     },
     {
       "checkId": "chk-2-logs",
@@ -383,7 +410,7 @@
       "evidenceIds": [
         "ev-5"
       ],
-      "at": "2026-10-12T23:36:41.684Z"
+      "at": "2026-10-12T23:54:44.980Z"
     },
     {
       "checkId": "chk-2-5xx",
@@ -394,7 +421,7 @@
       "evidenceIds": [
         "ev-8"
       ],
-      "at": "2026-10-12T23:36:41.695Z"
+      "at": "2026-10-12T23:54:44.988Z"
     },
     {
       "checkId": "chk-2-trace",
@@ -405,7 +432,7 @@
       "evidenceIds": [
         "ev-9"
       ],
-      "at": "2026-10-12T23:36:41.707Z"
+      "at": "2026-10-12T23:54:44.998Z"
     },
     {
       "checkId": "chk-2-doc",
@@ -416,7 +443,7 @@
       "evidenceIds": [
         "ev-10"
       ],
-      "at": "2026-10-12T23:36:41.729Z"
+      "at": "2026-10-12T23:54:45.021Z"
     },
     {
       "checkId": "chk-2-mq",
@@ -425,22 +452,31 @@
       "evidenceIds": [
         "ev-11"
       ],
-      "at": "2026-10-12T23:36:41.961Z"
+      "at": "2026-10-12T23:54:45.306Z"
+    },
+    {
+      "checkId": "chk-2-sls",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-12"
+      ],
+      "at": "2026-10-12T23:54:45.527Z"
     }
   ],
   "commandLogHead": {
-    "seq": 10,
-    "hash": "2b9a20a03d42e4fc0cc5ce2a2456f41ce4e6f99ab8c74c07f5b75219e9bda90f"
+    "seq": 12,
+    "hash": "c4a0f03932e317e1d1f35ad351f613d522075735c289c5289f9811c5c10b3562"
   },
   "findings": [
     {
       "id": "finding-1",
       "title": "GET /api/orders/ord-3/total 返回 500：订单文档缺少商品明细",
       "severity": "high",
-      "symptom": "GET http://127.0.0.1:42827/api/orders/ord-3/total 返回 500（trace ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4）",
+      "symptom": "GET http://127.0.0.1:33909/api/orders/ord-3/total 返回 500（trace ad355f94-a88f-4303-9bb1-47c46b732361）",
       "repro_steps": [
-        "curl -i -X GET \"http://127.0.0.1:42827/api/orders/ord-3/total\"",
-        "langfuse.get_trace({traceId: \"ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4\"})",
+        "curl -i -X GET \"http://127.0.0.1:33909/api/orders/ord-3/total\"",
+        "langfuse.get_trace({traceId: \"ad355f94-a88f-4303-9bb1-47c46b732361\"})",
         "mongodb.find(orders, {_id: ord-3})"
       ],
       "root_cause_chain": [
@@ -460,7 +496,7 @@
           ]
         },
         {
-          "claim": "Langfuse trace ed0762ba-9d6c-4e6c-8b2e-27d599ba0db4：observation \"orderTotal\" 为 ERROR（Cannot read properties of undefined (reading 'reduce')），对应 orders ord-3 — 判定：失败",
+          "claim": "Langfuse trace ad355f94-a88f-4303-9bb1-47c46b732361：observation \"orderTotal\" 为 ERROR（Cannot read properties of undefined (reading 'reduce')），对应 orders ord-3 — 判定：失败",
           "kind": "observed",
           "evidence_ids": [
             "ev-9"
@@ -489,7 +525,7 @@
         "ev-9",
         "ev-10",
         "ev-5",
-        "ev-12"
+        "ev-13"
       ],
       "kind": "observed",
       "checkId": "chk-2",
@@ -500,18 +536,25 @@
             "ev-11"
           ],
           "check_id": "chk-2-mq"
+        },
+        {
+          "claim": "查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题（aliyun sls GetLogs：demo-prod-logs/infra，layer: infra and level: ERROR，0 条）",
+          "evidence_ids": [
+            "ev-12"
+          ],
+          "check_id": "chk-2-sls"
         }
       ],
       "corroborating": [
         {
           "kind": "alert",
-          "claim": "Prometheus alert HighOrders5xx firing (activeAt 2026-10-12T23:36:41.313Z, first seen by walkthrough at 2026-10-12T23:36:41.940Z) (route=/api/orders/:id/total, severity=critical): 5xx ratio on /api/orders/:id/total above 10% for 2m — related to chk-1, chk-2",
+          "claim": "Prometheus alert HighOrders5xx firing (activeAt 2026-10-12T23:54:44.610Z, first seen by walkthrough at 2026-10-12T23:54:45.230Z) (route=/api/orders/:id/total, severity=critical): 5xx ratio on /api/orders/:id/total above 10% for 2m — related to chk-1, chk-2",
           "evidence_ids": [
-            "ev-12"
+            "ev-13"
           ],
           "alertname": "HighOrders5xx",
-          "activeAt": "2026-10-12T23:36:41.313Z",
-          "firstSeenAt": "2026-10-12T23:36:41.940Z",
+          "activeAt": "2026-10-12T23:54:44.610Z",
+          "firstSeenAt": "2026-10-12T23:54:45.230Z",
           "alsoMatched": [
             "chk-1"
           ]
@@ -521,10 +564,10 @@
   ],
   "alertWatches": [
     {
-      "watchId": "w_01ddf3741879bceb",
-      "evidenceId": "ev-12",
-      "start": "2026-10-12T23:36:40.864Z",
-      "end": "2026-10-12T23:36:41.940Z",
+      "watchId": "w_7e7b85d1de45c2f2",
+      "evidenceId": "ev-13",
+      "start": "2026-10-12T23:54:44.153Z",
+      "end": "2026-10-12T23:54:45.230Z",
       "polls": 2,
       "outcome": "stopped_early",
       "finalizedBy": "collect",
@@ -537,8 +580,8 @@
           ],
           "findingId": "finding-1",
           "attached": true,
-          "activeAt": "2026-10-12T23:36:41.313Z",
-          "firstSeenAt": "2026-10-12T23:36:41.940Z"
+          "activeAt": "2026-10-12T23:54:44.610Z",
+          "firstSeenAt": "2026-10-12T23:54:45.230Z"
         }
       ],
       "unmatched": [
@@ -550,8 +593,8 @@
             "severity": "warning"
           },
           "severity": "medium",
-          "activeAt": "2026-10-12T23:32:40.871Z",
-          "firstSeenAt": "2026-10-12T23:36:40.865Z"
+          "activeAt": "2026-10-12T23:50:44.160Z",
+          "firstSeenAt": "2026-10-12T23:54:44.154Z"
         }
       ],
       "pendingSeen": 1

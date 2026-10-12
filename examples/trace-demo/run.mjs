@@ -13,6 +13,7 @@ import { MongoClient } from "mongodb";
 import { startMockLangfuse } from "./mock-langfuse.mjs";
 import { startMockPrometheus } from "./mock-prometheus.mjs";
 import { writeMockMqadmin } from "./mock-mqadmin.mjs";
+import { writeMockAliyun } from "./mock-aliyun.mjs";
 import { DemoMongoRefused, planDemoMongo, startDockerMongo } from "./mongo-demo.mjs";
 
 const args = process.argv.slice(2);
@@ -57,6 +58,8 @@ const promUrl = `http://127.0.0.1:${prom.address().port}`;
 const mqDir = mkdtempSync(join(tmpdir(), "wt-demo-mq-"));
 const mqBin = writeMockMqadmin(mqDir, { dir: join(mqDir, "msgbodys") });
 const namesrv = `127.0.0.1:${await freePort()}`;
+// Mock aliyun CLI (sls GetLogs, real JSON response shape) in the same throwaway dir.
+const slsBin = writeMockAliyun(mqDir);
 cleanups.push(() => rmSync(mqDir, { recursive: true, force: true }));
 // The committed flow config has a ${SERVICE_URL} placeholder; the run uses a generated copy next to it (gitignored).
 const here = dirname(fileURLToPath(import.meta.url));
@@ -64,7 +67,7 @@ const flowPath = join(here, "walkthrough.trace.generated.json");
 writeFileSync(flowPath, readFileSync(join(here, "walkthrough.trace.json"), "utf8").replaceAll("${SERVICE_URL}", serviceUrl).replaceAll("${HEALTH_TOKEN}", healthToken));
 cleanups.push(() => { /* keep the generated config for inspection; it holds no secrets */ });
 const env = { ...process.env, PORT: String(svcPort), DEMO_HEALTH_TOKEN: healthToken, MONGO_URL: url, MONGO_DB: plan.db, LANGFUSE_URL: lfUrl, LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
-  WALKTHROUGH_PROMETHEUS_URL: promUrl, WALKTHROUGH_PROMETHEUS_TOKEN: promToken, WALKTHROUGH_DEMO_MQADMIN: mqBin, WALKTHROUGH_DEMO_NAMESRV: namesrv };
+  WALKTHROUGH_PROMETHEUS_URL: promUrl, WALKTHROUGH_PROMETHEUS_TOKEN: promToken, WALKTHROUGH_DEMO_MQADMIN: mqBin, WALKTHROUGH_DEMO_NAMESRV: namesrv, WALKTHROUGH_DEMO_ALIYUN: slsBin };
 let child;
 cleanups.push(() => lf.close(), () => prom.close(), () => { try { child?.kill("SIGTERM"); } catch { /* gone */ } });
 child = spawn(process.execPath, ["dist/demo-agent/trace-run.js", flowPath, "--root", root], { env, stdio: ["ignore", "inherit", "inherit"] });
