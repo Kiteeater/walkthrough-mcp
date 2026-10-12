@@ -60,9 +60,31 @@ describe("mqadmin read-only preset: argv allowlist", () => {
     expect(() => cliArgv(mq, ["topicList", "-n", "evil.example:9876"])).toThrow(/name server not in allowlist/);
     expect(() => cliArgv(mq, ["topicList", "-n=10.0.0.9:9876"])).toThrow(/name server not in allowlist/);
     expect(() => cliArgv(mq, ["topicStatus", "-t", "orders", "-n", NS, "-n", "evil:9876"])).toThrow(/name server not in allowlist/);
-    expect(() => cliArgv(preset, ["topicList", "-n", NS])).toThrow(/name server not in allowlist/); // preset default: none
     expect(cliArgv(mq, ["topicList"])).toEqual(["topicList", "-n", NS]);
     expect(cliArgv(mq, ["topicStatus", "-n", NS, "-t", "orders"])).toEqual(["topicStatus", "-n", NS, "-t", "orders"]);
+  });
+
+  it("unconfigured namesrvs: every call is rejected with the exact config to add", () => {
+    for (const argv of [["topicList"], ["topicList", "-n", NS]]) {
+      expect(() => cliArgv(preset, argv)).toThrow(CliRejectedError);
+      expect(() => cliArgv(preset, argv)).toThrow(
+        'mqadmin: no name server configured. Add the allowed address(es) to the mqadmin connector\'s "namesrvs" in your config, e.g.\n' +
+        '  connectors: PRESET_CONNECTORS.map((c) => c.name === "mqadmin" ? { ...c, namesrvs: ["namesrv.internal:9876"] } : c)\n' +
+        "Only listed addresses are accepted for -n; when -n is omitted the first one is used.");
+    }
+  });
+
+  it("allowlists match RocketMQ 5.5.1 tools options; side-effecting options are rejected", () => {
+    expect(cliArgv(mq, ["queryMsgByKey", "-t", "orders", "-k", "o1", "-b", "1700000000000", "-m", "32"])).toBeTruthy();
+    expect(cliArgv(mq, ["consumerStatus", "-g", "g1", "-b", "10.0.0.5:10911"])).toBeTruthy();
+    expect(cliArgv(mq, ["queryMsgById", "-t", "orders", "-i", "ID1", "-c", "c1"])).toBeTruthy();
+    for (const argv of [
+      ["queryMsgById", "-t", "orders", "-i", "ID1", "-s", "true"],          // resend
+      ["queryMsgById", "-t", "orders", "-i", "ID1", "-g", "g1", "-d", "c1"], // consumeMessageDirectly
+      ["queryMsgByUniqueKey", "-t", "orders", "-i", "ID1", "-g", "g1", "-d", "c1"],
+      ["clusterList", "-i", "1"],                                           // interval: never exits
+      ["queryMsgByKey", "-n", NS, "-t", "orders", "-k", "o1", "-x", "1"],
+    ]) expect(() => cliArgv(mq, argv)).toThrow(/argument not in allowlist/);
   });
 
   it("name server / RocketMQ env vars are never passed to the child", () => {
@@ -102,7 +124,7 @@ describe("mqadmin via run_cli with a mock binary", () => {
     const body = `auth=${TOKEN} ${"x".repeat(cap * 3)}TAIL-MARKER`;
     const { core, root, start, ev } = setup(body);
     const id = await start();
-    const r = await core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-i", "0A00000100002A9F0000000000001234"] });
+    const r = await core.runCli(id, { connector: "mqadmin", argv: ["queryMsgById", "-t", "orders", "-i", "0A00000100002A9F0000000000001234"] });
     const text = ev(id, r.evidence.id);
     expect(text).not.toContain(TOKEN);
     expect(text).toContain("auth=[REDACTED]");

@@ -308,14 +308,23 @@ The built-in `mqadmin` connector only runs query subcommands. Each one has its o
 
 | subcommand | allowed args |
 |---|---|
-| `clusterList`, `topicList` | `-n` |
-| `topicStatus`, `topicRoute`, `topicClusterList` | `-n`, `-t` |
-| `consumerProgress` | `-n`, `-g` |
-| `consumerStatus` | `-n`, `-g`, `-i` |
+| `clusterList` | `-n`, `-c` |
+| `topicList` | `-n` |
+| `topicStatus` | `-n`, `-t`, `-c` |
+| `topicRoute`, `topicClusterList` | `-n`, `-t` |
+| `consumerProgress` | `-n`, `-g`, `-t`, `-s`, `-c` |
+| `consumerStatus` | `-n`, `-g`, `-i`, `-b` |
 | `brokerStatus` | `-n`, `-b`, `-c` |
-| `queryMsgById` | `-n`, `-i` |
-| `queryMsgByKey` | `-n`, `-t`, `-k` |
-| `queryMsgByUniqueKey` | `-n`, `-i`, `-t` |
+| `queryMsgById` | `-n`, `-t`, `-i`, `-c` |
+| `queryMsgByKey` | `-n`, `-t`, `-k`, `-b`, `-m`, `-c`, `-l` |
+| `queryMsgByUniqueKey` | `-n`, `-i`, `-t`, `-c`, `-s` |
+
+Names and options were checked against the Apache RocketMQ `rocketmq-all-5.5.1` tools module (`MQAdminStartup` and
+each subcommand's `buildCommandlineOptions()`). Options that cause side effects are deliberately left out:
+`queryMsgById -s` (resends the message), and `-g`/`-d` on `queryMsgById`/`queryMsgByUniqueKey` (pushes the message to
+a consumer). So is `clusterList -i` (repeats forever), along with options that take no value. `-e`, `-f` and `-p`
+(`queryMsgByKey` end time and key type, `queryMsgById` body format, `queryMsgByUniqueKey` end time) are also
+unavailable, because they collide with the global credential/eval flag denylist.
 
 - Write and admin subcommands (`updateTopic`, `deleteTopic`, `sendMessage`, `resetOffsetByTime`, `updateSubGroup`,
   `wipeWritePerm`, …) are rejected before anything is spawned. So is any argument not listed for the subcommand
@@ -324,6 +333,19 @@ The built-in `mqadmin` connector only runs query subcommands. Each one has its o
   If `-n` is omitted, we append the first configured entry. The preset ships with an empty list, so you must set it,
   e.g. `{ ...mqadmin, namesrvs: ["namesrv.internal:9876"] }`. `NAMESRV_ADDR` and `ROCKETMQ_*` are stripped from the
   child env, so the address can't be redirected through the environment either.
+- **Migration for existing mqadmin users:** before this change, any `-n` was accepted. Now every mqadmin call is
+  rejected until the name server is configured, and the error shows what to add:
+
+  ```ts
+  new WalkthroughCore({
+    // …
+    connectors: PRESET_CONNECTORS.map((c) => c.name === "mqadmin" ? { ...c, namesrvs: ["namesrv.internal:9876"] } : c),
+  });
+  ```
+
+  Calls that passed `-n <address>` keep working once that address is listed. `NAMESRV_ADDR` from the environment is no
+  longer passed through, so add that address to `namesrvs` too. `queryMsgById` now requires `-t <topic>`, as mqadmin
+  itself does.
 - **Credentials** (ACL access and secret keys) come only from mqadmin's own tools config file. They are never taken
   from env or argv, and all output goes through the Redactor.
 - **Message bodies** printed by `queryMsgById`, `queryMsgByKey` and `queryMsgByUniqueKey` are redacted first, then cut

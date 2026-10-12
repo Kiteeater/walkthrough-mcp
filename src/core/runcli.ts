@@ -70,14 +70,28 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
   },
   {
     name: "mqadmin", binary: "mqadmin",
-    // Query-only subcommands (names as in `mqadmin help`). Write/admin ones (updateTopic, deleteTopic, sendMessage,
+    // Verified against Apache RocketMQ rocketmq-all-5.5.1 (efa1be5): tools/.../command/MQAdminStartup.java registers each
+    // name; each SubCommand's commandName()/buildCommandlineOptions() defines its options, and `-n` is the global
+    // namesrvAddr option from srvutil ServerUtil. Only value-taking, read-only options are listed. Omitted on purpose:
+    // queryMsgById -s (resend) / -u, and -g/-d on queryMsgById/queryMsgByUniqueKey (consumeMessageDirectly pushes the
+    // message to a consumer); clusterList -i (loops forever); flags without a value (-m, -l, -a, -s jstack, topicList -c),
+    // which the `<flag> <value>` grammar cannot express; -e/-f/-p (queryMsgByKey endTimestamp/keyType, queryMsgById
+    // bodyFormat, queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS). Write/admin subcommands (updateTopic, deleteTopic, sendMessage,
     // resetOffsetByTime, updateSubGroup, wipeWritePerm, …) are simply absent and therefore rejected.
     allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["topicClusterList"], ["consumerProgress"], ["consumerStatus"],
       ["queryMsgById"], ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
     args: {
-      clusterList: ["-n"], topicList: ["-n"], topicStatus: ["-n", "-t"], topicRoute: ["-n", "-t"], topicClusterList: ["-n", "-t"],
-      consumerProgress: ["-n", "-g"], consumerStatus: ["-n", "-g", "-i"], queryMsgById: ["-n", "-i"],
-      queryMsgByKey: ["-n", "-t", "-k"], queryMsgByUniqueKey: ["-n", "-i", "-t"], brokerStatus: ["-n", "-b", "-c"],
+      clusterList: ["-n", "-c"],
+      topicList: ["-n"],
+      topicStatus: ["-n", "-t", "-c"],
+      topicRoute: ["-n", "-t"],
+      topicClusterList: ["-n", "-t"],
+      consumerProgress: ["-n", "-g", "-t", "-s", "-c"],
+      consumerStatus: ["-n", "-g", "-i", "-b"],
+      brokerStatus: ["-n", "-b", "-c"],
+      queryMsgById: ["-n", "-t", "-i", "-c"],
+      queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"],
+      queryMsgByUniqueKey: ["-n", "-i", "-t", "-c", "-s"],
     },
     namesrvs: [], // set in config: the fixed name server address(es) the agent may query
     messageBody: { subcommands: ["queryMsgById", "queryMsgByKey", "queryMsgByUniqueKey"], maxChars: 2048 },
@@ -153,6 +167,7 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
   const allowed = c.args?.[prefix.join(" ")] ?? [];
   const rest = argv.slice(prefix.length);
   let sawNamesrv = false;
+  if (c.namesrvs && c.namesrvs.length === 0 && allowed.includes("-n")) throw new CliRejectedError(namesrvHint(c.name));
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     const eq = a.startsWith("-") ? a.indexOf("=") : -1;
@@ -174,6 +189,13 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
   let out = argv;
   if (c.namesrvs && !sawNamesrv && c.namesrvs.length && allowed.includes("-n")) out = [...out, "-n", c.namesrvs[0]];
   return c.profile && c.appendProfile !== false ? [...out, "--profile", c.profile] : out;
+}
+
+/** Error text when a connector that needs a fixed name server has none configured: says exactly what to add. */
+export function namesrvHint(name: string): string {
+  return `${name}: no name server configured. Add the allowed address(es) to the ${name} connector's "namesrvs" in your config, e.g.\n` +
+    `  connectors: PRESET_CONNECTORS.map((c) => c.name === "${name}" ? { ...c, namesrvs: ["namesrv.internal:9876"] } : c)\n` +
+    `Only listed addresses are accepted for -n; when -n is omitted the first one is used.`;
 }
 
 export interface CommandLogEntry {
