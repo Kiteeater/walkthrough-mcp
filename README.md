@@ -135,6 +135,43 @@ Demo: `npm run build && node examples/trace-demo/run.mjs .` starts a real MongoD
 follows the response's trace id into Langfuse, the trace's `orderId` into Mongo (doc has no `items`), and the stack
 trace to `pricing.js:3`: `HTTP 500 → Langfuse trace → Mongo doc → file:line`. Committed run: `examples/output-trace/`.
 
+## run_cli and verify_command_log
+
+`run_cli` lets the agent ask the core to run a **read-only, allowlisted** CLI on its behalf. The core executes it
+(`executedBy: "core"`), stores the redacted output as evidence and appends one line to `commands.jsonl`.
+
+- **argv only**: spawned as `spawn(binary, args)` with `shell: false`; arguments containing shell syntax (`;`, `|`, `$()`, …) are rejected.
+- **Subcommand allowlist** per connector (e.g. `aliyun sls GetLogs`, `mqadmin topicStatus`).
+- **Per-subcommand argument allowlist** (`args` in the connector config): after the subcommand, only listed flags are
+  accepted, as `--flag value` or `--flag=value`, matched exactly (case-sensitive). Everything else is rejected,
+  including global flags such as `--endpoint`, `--insecure`, `--body-file`, `--config-path`, `--profile` and credential flags.
+- **aliyun / mqadmin argument values may not start with `-`** (side effect of the flag-value check: a value like `-1`
+  or `-foo` is treated as a smuggled flag and rejected).
+- `--region` is rejected unless the subcommand lists it **and** the value is in the connector's `regions` allowlist
+  (default: none, the profile's own region is used).
+- `--profile` is appended by us from config; the agent can never choose a profile or pass credentials.
+- **Env**: the child env is built from an allowlist only (`PATH`, `HOME`, `LANG`, `TMPDIR`, `TERM` + configured
+  `passEnv`). `ALIBABA_CLOUD_*`, `ALICLOUD_*`, `ALIYUN_*`, `ACS_*` are always stripped, even if listed in `passEnv`;
+  run_cli accepts no env from the caller.
+- **Credentials** are read only from the CLI's own profile config file (e.g. `~/.aliyun/config.json`); passing
+  credentials via env vars is not supported (env is stripped by design).
+- **mongosh** never takes agent argv: only fixed `find` / `aggregate` / `countDocuments` templates; `$out`, `$merge`,
+  `$where`, `$function`, `$accumulator` are rejected at any depth.
+
+`verify_command_log` recomputes the hash chain of `commands.jsonl` (each entry hashes its content plus the previous
+hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or
+truncated entries.
+
+### Threat model / limits
+
+- The hash chain is **unkeyed** (plain SHA-256, no secret). It detects accidental or partial tampering, not a
+  deliberate rewrite: anyone who can write the walkthrough directory can recompute the whole log **and** the head in
+  `walkthrough.json` together. Same limitation as evidence hashes. External anchoring is planned before PR #10.
+- `run_in_sandbox exec` is a separate, broader path: it runs arbitrary argv in the sandbox and **does not go through
+  the run_cli allowlist**, so it can still invoke e.g. `aliyun` with any flags if the binary and login state are
+  reachable. Tracking issue: [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8).
+- The allowlist is only as safe as the flags it lists; review additions to `args` like code.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:
@@ -151,10 +188,6 @@ sha256 no longer matches. `inferred` claims may have no evidence.
 
 > The stored sha256 lives in the mutable `walkthrough.json`, so it catches **accidental** changes to evidence
 > files, not deliberate tampering (anyone who can edit the evidence can also edit the hash).
->
-> The same holds for the `run_cli` command log: its hash-chain tail (`commandLogHead`) is stored in `walkthrough.json`,
-> which is itself mutable. Edits or truncation of `commands.jsonl` are detected, but someone who recomputes the whole
-> log **and** the tail together is not. Proper external anchoring of the tail is planned before PR #10.
 
 Writes to `walkthrough.json` are serialised per walkthrough id within one process, so concurrent tool calls
 don't lose data. Multiple processes writing the same walkthrough are not coordinated.

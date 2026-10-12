@@ -6,6 +6,7 @@ import { Redactor } from "./redact.js";
 import {
   appendCommandLog, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
+  CLI_ENV_DENY,
 } from "./runcli.js";
 import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
@@ -220,6 +221,7 @@ export class WalkthroughCore {
     return this.withLock(id, async () => {
       const w = this.load(id);
       if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
+      if ((input as { env?: unknown }).env !== undefined) throw new CliRejectedError("run_cli does not accept env from the caller");
       const c = (this.deps.connectors ?? PRESET_CONNECTORS).find((x) => x.name === input.connector);
       if (!c) throw new CliRejectedError(`unknown connector: ${input.connector}`);
       let argv: string[];
@@ -233,7 +235,8 @@ export class WalkthroughCore {
       const root = resolve(w.sandbox.cwd);
       const cwd = resolve(root, input.cwd ?? ".");
       if (cwd !== root && !cwd.startsWith(root + sep)) throw new CliRejectedError(`cwd outside the walkthrough root: ${input.cwd}`);
-      const env = allowlistEnv([...(w.sandbox.local?.passEnv ?? []), ...(c.passEnv ?? [])]);
+      const env = allowlistEnv([...(w.sandbox.local?.passEnv ?? []), ...(c.passEnv ?? [])].filter((n) => !CLI_ENV_DENY.test(n)));
+      for (const n of Object.keys(env)) if (CLI_ENV_DENY.test(n)) delete env[n];
       const version = await this.cliVersion(c, env, cwd);
       const timeoutMs = Math.min(Math.max(1, input.timeoutS ?? 60), 600) * 1000;
       const res = await run(c.binary, argv, { cwd, env, timeoutMs });
