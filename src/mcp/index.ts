@@ -51,7 +51,7 @@ server.tool("run_cli", "walkthrough runs a whitelisted READ-ONLY CLI for you (ar
 server.tool("verify_command_log", "Verify the hash-chained run_cli command log.", { id }, (a) => wrap(() => core.verifyCommandLog(a.id))());
 
 server.tool("plan_checks", "Record your check plan. Every check needs a machine-checkable expect. Returns next_actions.", planChecksShape,
-  (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never, append: a.append }))());
+  (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never, append: a.append, triggeringEvidenceId: a.triggering_evidence_id }))());
 
 server.tool("evaluate_check", "walkthrough judges a check pass/pass_needs_review/fail/inconclusive from its evidence (agent-reported evidence alone is at most pass_needs_review). You cannot set or override the verdict.", evaluateCheckShape,
   (a) => wrap(() => core.evaluateCheck(a.id, { checkId: a.check_id, evidenceIds: a.evidence_ids }))());

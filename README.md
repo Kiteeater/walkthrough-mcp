@@ -127,7 +127,15 @@ walkthrough never connects to your databases or observability stack. Mount the o
 - Rejected: unknown connector, a tool outside the read-only list (e.g. `insert-many`), no `links`, a linked evidence id
   that is missing or whose hash no longer matches, or a link `key` that does not occur in **both** the linked evidence
   and the imported result.
-- A check judged only on agent-reported evidence is at most `pass_needs_review`; the report's first screen flags it.
+- Judgment rule: if **any** evidence fails the expectation → `fail`, whoever executed it. If all satisfy it: at least one
+  core-executed piece → `pass`; agent-reported only → `pass_needs_review` (flagged on the report's first screen).
+  (`count` is judged on the combined evidence.)
+- Imported results and params are also scrubbed of generic secret patterns (`sk-lf-…`, `pk-lf-…`, `Bearer …`,
+  `Authorization` / `Cookie` / `X-Api-Key` values, `sk-…`, `AKIA…`, `LTAI…`), not only env-known secrets.
+- `plan_checks` with `append: true` (+ required `triggering_evidence_id`) adds follow-up checks mid-run. Append-only:
+  an existing id (or a changed `expect`) is rejected; each appended check is a hash-chained `plan_append` entry in
+  `commands.jsonl` (timestamp, check sha256, triggering evidence) checked by `verify_command_log`; the report lists them
+  separately as **追查中追加**.
   Root-cause chain steps in the HTML are marked **agent 自报** (dashed amber) vs **我们执行** (solid green).
 
 Demo: `npm run build && node examples/trace-demo/run.mjs .` starts a real MongoDB (`mongodb-memory-server`, or

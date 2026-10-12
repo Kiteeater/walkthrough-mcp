@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createSandboxFactory, Redactor, renderWalkthrough, WalkthroughCore, MASK, type Capturer } from "../src/core/index.js";
 import { runTraceAgent } from "../src/demo-agent/trace.js";
 import { mockCore, SB } from "./helpers.js";
+import { readdirSync, statSync } from "node:fs";
 
 const check = (id: string, value = '"items"') => ({ id, intent: id, method: "mcp" as const, target: "t", expect: { type: "regex" as const, value }, severity_if_fail: "high" as const });
 
@@ -78,7 +79,7 @@ describe("agent-reported evidence is at most pass_needs_review", () => {
     const ev = await core.importMcpResult(id, { checkId: "d", connector: "mongodb", tool: "find", result: [{ _id: "tr-42", items: [1] }], links: [{ evidenceId: http.id, key: "tr-42" }] });
     const r = await core.evaluateCheck(id, { checkId: "d", evidenceIds: [ev.id] });
     expect(r.status).toBe("pass_needs_review");
-    expect(r.reasons.join()).toMatch(/reported by the agent/);
+    expect(r.reasons.join()).toMatch(/agent-reported only/);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     expect(html).toContain('data-needs-review="1"');
     expect(html).toMatch(/<tr class="pass_needs_review"><td>d /);
@@ -89,7 +90,7 @@ describe("agent-reported evidence is at most pass_needs_review", () => {
     const ev = await core.importMcpResult(id, { checkId: "d", connector: "mongodb", tool: "find", result: [{ _id: "tr-42" }], links: [{ evidenceId: http.id, key: "tr-42" }] });
     expect((await core.evaluateCheck(id, { checkId: "d", evidenceIds: [ev.id] })).status).toBe("fail");
     const logs = await core.captureEvidence(id, { type: "logs", service: "web", checkId: "t" });
-    await core.planChecks(id, { goal: "g", checks: [check("l", "listening")], append: true });
+    await core.planChecks(id, { goal: "g", checks: [check("l", "listening")], append: true, triggeringEvidenceId: logs.id });
     const l2 = await core.captureEvidence(id, { type: "logs", service: "web", checkId: "l" });
     expect(logs.executedBy).toBe("core");
     expect((await core.evaluateCheck(id, { checkId: "l", evidenceIds: [l2.id] })).status).toBe("pass");
@@ -142,4 +143,92 @@ describe("cross-source root-cause chain: HTTP 500 → Langfuse trace → Mongo d
     expect(html.match(/<li class="step prov-core"/g)).toHaveLength(1);
     expect(JSON.stringify(out) + html).not.toContain("sk-test-xyz");
   }, 180_000);
+});
+
+describe("judgment provenance rule", () => {
+  async function two(checkId: string, value: string, logs: string, agentText: string) {
+    const { core } = mockCore({ logs });
+    const w = core.startWalkthrough({ title: "p", sandbox: SB });
+    await core.planChecks(w.id, { goal: "g", checks: [check(checkId, value)] });
+    const coreEv = await core.captureEvidence(w.id, { type: "logs", service: "web", checkId });
+    const agentEv = await core.captureEvidence(w.id, { type: "submit", checkId, kind: "log", source: { tool: "x" }, content: agentText });
+    return { core, id: w.id, coreEv, agentEv };
+  }
+  it("core-executed evidence passes + agent-reported evidence fails → fail", async () => {
+    const { core, id, coreEv, agentEv } = await two("c", "ok", "web | ok", "nothing here");
+    const r = await core.evaluateCheck(id, { checkId: "c", evidenceIds: [coreEv.id, agentEv.id] });
+    expect(r.status).toBe("fail");
+    expect(r.reasons.join()).toMatch(new RegExp(`${agentEv.id} \\(reported by agent\\)`));
+  });
+  it("agent-reported passes + core-executed fails → fail", async () => {
+    const { core, id, coreEv, agentEv } = await two("c", "ok", "web | nope", "ok");
+    expect((await core.evaluateCheck(id, { checkId: "c", evidenceIds: [coreEv.id, agentEv.id] })).status).toBe("fail");
+  });
+  it("all satisfy and at least one is core-executed → plain pass", async () => {
+    const { core, id, coreEv, agentEv } = await two("c", "ok", "web | ok", "ok too");
+    expect((await core.evaluateCheck(id, { checkId: "c", evidenceIds: [coreEv.id, agentEv.id] })).status).toBe("pass");
+    expect((await core.evaluateCheck(id, { checkId: "c", evidenceIds: [coreEv.id] })).status).toBe("pass");
+  });
+  it("all satisfy but only agent-reported → pass_needs_review", async () => {
+    const { core, id, agentEv } = await two("c", "ok", "web | ok", "ok");
+    const a2 = await core.captureEvidence(id, { type: "submit", checkId: "c", kind: "log", source: { tool: "y" }, content: "ok 2" });
+    expect((await core.evaluateCheck(id, { checkId: "c", evidenceIds: [agentEv.id, a2.id] })).status).toBe("pass_needs_review");
+  });
+});
+
+describe("plan_checks append is append-only and logged", () => {
+  it("rejects changing an existing check's expect, re-adding an id, or appending without a triggering evidence", async () => {
+    const { core, id, http } = await setup();
+    await expect(core.planChecks(id, { goal: "g", checks: [{ ...check("d"), expect: { type: "regex", value: "anything" } }], append: true, triggeringEvidenceId: http.id })).rejects.toThrow(/append-only.*changing its expect is not allowed/);
+    await expect(core.planChecks(id, { goal: "g", checks: [check("d")], append: true, triggeringEvidenceId: http.id })).rejects.toThrow(/append-only: check d already exists/);
+    await expect(core.planChecks(id, { goal: "g", checks: [check("n")], append: true })).rejects.toThrow(/triggeringEvidenceId/);
+    await expect(core.planChecks(id, { goal: "g", checks: [check("n")], append: true, triggeringEvidenceId: "ev-404" })).rejects.toThrow(/evidence not found/);
+    expect(core.load(id).checks!.find((c) => c.id === "d")!.expect.value).toBe('"items"');
+    expect(core.load(id).checks).toHaveLength(3);
+  });
+  it("each appended check is a hash-chained log entry with timestamp + triggeringEvidenceId; chain verifies; report labels it", async () => {
+    const { core, root, id, http } = await setup();
+    await core.planChecks(id, { goal: "g", checks: [check("n1"), check("n2")], append: true, triggeringEvidenceId: http.id });
+    const lines = readFileSync(join(root, ".walkthrough", id, "commands.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ type: "plan_append", checkId: "n1", triggeringEvidenceId: http.id, executedBy: "core" });
+    expect(lines[1]).toMatchObject({ checkId: "n2", prev: lines[0].hash });
+    expect(Date.parse(lines[0].ts)).not.toBeNaN();
+    expect(await core.verifyCommandLog(id)).toMatchObject({ ok: true, entries: 2 });
+    // tampering with an appended check's expect in walkthrough.json is caught
+    const wf = join(root, ".walkthrough", id, "walkthrough.json");
+    const orig = readFileSync(wf, "utf8");
+    writeFileSync(wf, orig.replace('"id": "n1",', '"id": "n1", "tampered": true,'));
+    expect((await core.verifyCommandLog(id)).error).toMatch(/appended check n1 missing or modified/);
+    writeFileSync(wf, orig);
+    expect(core.load(id).checks!.find((c) => c.id === "n2")!.appended).toMatchObject({ triggeringEvidenceId: http.id, logSeq: 2 });
+    const html = readFileSync(renderWalkthrough(core, id), "utf8");
+    expect(html).toContain('data-appended="2"');
+    expect(html.split('class="plan-original"')[1].split("</table>")[0]).not.toContain("n1 ");
+    expect(html.split('class="plan-appended"')[1]).toContain("追查中追加");
+    // an agent-supplied `appended` field is ignored in a normal plan
+    await core.planChecks(id, { goal: "g", checks: [{ ...check("z"), appended: { at: "x", triggeringEvidenceId: "ev-1", logSeq: 9 } }] });
+    expect(core.load(id).checks![0].appended).toBeUndefined();
+  });
+});
+
+describe("imports: generic secret patterns are scrubbed from every artifact", () => {
+  it("fake sk-lf / pk-lf / Bearer / AKIA / LTAI / headers are absent from .walkthrough (json, evidence, log, html)", async () => {
+    const { core, root, id, http } = await setup();
+    const SECRETS = ["sk-lf-1a2b3c4d-fake-secret", "pk-lf-9z8y7x-fake-public", "eyJhbGciOiJfake.token.value", "AKIAABCDEFGHIJKLMNOP", "LTAI5tFakeAliyunKey01", "sk-proj-abcdefghijklmnop1234", "sess=c00kie-value", "xapikey-fake-123"];
+    const ev = await core.importMcpResult(id, {
+      checkId: "t", connector: "langfuse", tool: "get_trace",
+      params: { traceId: "tr-42", note: "used sk-lf-1a2b3c4d-fake-secret", headers: "Authorization: Bearer eyJhbGciOiJfake.token.value" },
+      result: { id: "tr-42", input: { headers: { Authorization: "Bearer eyJhbGciOiJfake.token.value", Cookie: "sess=c00kie-value", "X-Api-Key": "xapikey-fake-123" } },
+        output: "keys: sk-lf-1a2b3c4d-fake-secret pk-lf-9z8y7x-fake-public AKIAABCDEFGHIJKLMNOP LTAI5tFakeAliyunKey01 sk-proj-abcdefghijklmnop1234" },
+      links: [{ evidenceId: http.id, key: "tr-42" }],
+    });
+    await core.evaluateCheck(id, { checkId: "t", evidenceIds: [ev.id] });
+    renderWalkthrough(core, id);
+    const files: string[] = [];
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); statSync(p).isDirectory() ? walk(p) : files.push(p); } };
+    walk(join(root, ".walkthrough"));
+    expect(files.some((f) => f.endsWith("index.html"))).toBe(true);
+    for (const f of files) { const t = readFileSync(f, "utf8"); for (const s of SECRETS) expect(t, `${s} in ${f}`).not.toContain(s); }
+  });
 });

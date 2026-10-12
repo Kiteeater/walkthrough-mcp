@@ -50,7 +50,7 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       if (meta.orderId && meta.collection) {
         more.push({ id: `${n}-doc`, intent: `${meta.db}.${meta.collection} ${meta.orderId} has line items`, method: "mcp", target: `mongodb.find(${meta.collection}, {_id: ${meta.orderId}})`, expect: { type: "regex", value: '"items"\\s*:' }, severity_if_fail: "high" });
       }
-      await core.planChecks(id, { goal: o.goal, checks: more, append: true });
+      await core.planChecks(id, { goal: o.goal, checks: more, append: true, triggeringEvidenceId: httpEv.id });
       const tEv = await core.importMcpResult(id, { checkId: `${n}-trace`, connector: "langfuse", tool: "get_trace", params: { traceId }, result: trace, links: [{ evidenceId: httpEv.id, key: traceId }] });
       const tRes = await core.evaluateCheck(id, { checkId: `${n}-trace`, evidenceIds: [tEv.id] });
       const err = trace.observations?.find((x) => x.level === "ERROR");

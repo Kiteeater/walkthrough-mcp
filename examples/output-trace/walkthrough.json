@@ -1,7 +1,7 @@
 {
-  "id": "wt-20261012194154-fa35a6",
+  "id": "wt-20261012195308-f71472",
   "title": "Trace a 500 across HTTP → Langfuse → MongoDB → source",
-  "createdAt": "2026-10-12T19:41:54.895Z",
+  "createdAt": "2026-10-12T19:53:08.277Z",
   "sandbox": {
     "backend": "local",
     "cwd": "/workspace/wm-pr7/examples/trace-demo/service",
@@ -22,15 +22,15 @@
       "id": "run-1",
       "command": "exec node server.js",
       "exitCode": 0,
-      "output": "started pid 33545",
-      "createdAt": "2026-10-12T19:41:55.201Z"
+      "output": "started pid 49323",
+      "createdAt": "2026-10-12T19:53:08.583Z"
     },
     {
       "id": "run-2",
       "command": "kill local process group",
       "exitCode": 0,
       "output": "stopped local process\n",
-      "createdAt": "2026-10-12T19:41:56.023Z"
+      "createdAt": "2026-10-12T19:53:09.399Z"
     }
   ],
   "evidence": [
@@ -42,7 +42,7 @@
       "source": "local:app",
       "executedBy": "core",
       "sha256": "51b028f265256c011534d622308208ddbda7a21dc054dd639708dcabeb66ab92",
-      "createdAt": "2026-10-12T19:41:55.267Z"
+      "createdAt": "2026-10-12T19:53:08.645Z"
     },
     {
       "id": "ev-2",
@@ -53,7 +53,7 @@
       "source": "agent:fetch curl -i -X GET \"http://localhost:3200/api/orders/ord-1/total\"",
       "checkId": "chk-1",
       "sha256": "ae2770f4334400683a333858c2717bfc9aec743984fe13e605acb544ecb4e8f0",
-      "createdAt": "2026-10-12T19:41:55.602Z"
+      "createdAt": "2026-10-12T19:53:08.980Z"
     },
     {
       "id": "ev-3",
@@ -64,7 +64,7 @@
       "executedBy": "core",
       "checkId": "chk-1-logs",
       "sha256": "d5365402028f37f589410438eab7314a34c3381e9625750ed2f605134d7ef7bd",
-      "createdAt": "2026-10-12T19:41:55.603Z"
+      "createdAt": "2026-10-12T19:53:08.981Z"
     },
     {
       "id": "ev-4",
@@ -74,8 +74,8 @@
       "executedBy": "agent",
       "source": "agent:fetch curl -i -X GET \"http://localhost:3200/api/orders/ord-3/total\"",
       "checkId": "chk-2",
-      "sha256": "11925742c8cfbc71c9604c305860fe010aca312da96fbdf0fa0991207100a207",
-      "createdAt": "2026-10-12T19:41:55.966Z"
+      "sha256": "d581e0dabf78a2ad8cdc1dfe2057bfada825bb34eb8c976a50b725500b910425",
+      "createdAt": "2026-10-12T19:53:09.349Z"
     },
     {
       "id": "ev-5",
@@ -85,8 +85,8 @@
       "source": "local:app",
       "executedBy": "core",
       "checkId": "chk-2-logs",
-      "sha256": "9be95c2ecff7514c27dc6792d93b14a1cc5eb5c6b31048caec439f05a7a445fd",
-      "createdAt": "2026-10-12T19:41:55.967Z"
+      "sha256": "0822a5ad67d5d0fec01b27378d1b786e4896fb757d8ebc855ebb1735866cca2d",
+      "createdAt": "2026-10-12T19:53:09.349Z"
     },
     {
       "id": "ev-6",
@@ -100,18 +100,18 @@
         "server": "langfuse",
         "tool": "get_trace",
         "params": {
-          "traceId": "73c6ba68-5072-4bc8-b96d-b2968782af8c"
+          "traceId": "1a411552-763b-45c6-8370-b39a5977be50"
         }
       },
       "links": [
         {
           "evidenceId": "ev-4",
-          "key": "73c6ba68-5072-4bc8-b96d-b2968782af8c"
+          "key": "1a411552-763b-45c6-8370-b39a5977be50"
         }
       ],
       "checkId": "chk-2-trace",
-      "sha256": "885dddd8f28cab6d020182f0f2e88ca899ae8db3bb6157d391dc4b4866827cb1",
-      "createdAt": "2026-10-12T19:41:55.978Z"
+      "sha256": "57e098b00e15922a1d32a4e8ec3d1f825509841ba5f68c87741ab99696aa2adb",
+      "createdAt": "2026-10-12T19:53:09.360Z"
     },
     {
       "id": "ev-7",
@@ -140,7 +140,7 @@
       ],
       "checkId": "chk-2-doc",
       "sha256": "3b7d8d480720502581ae1cdd4a4eec40be7ba59914875b1b35cd3fb63627dd43",
-      "createdAt": "2026-10-12T19:41:56.007Z"
+      "createdAt": "2026-10-12T19:53:09.383Z"
     }
   ],
   "sources": [
@@ -206,14 +206,19 @@
     },
     {
       "id": "chk-2-trace",
-      "intent": "Langfuse trace 73c6ba68-5072-4bc8-b96d-b2968782af8c has no ERROR observation",
+      "intent": "Langfuse trace 1a411552-763b-45c6-8370-b39a5977be50 has no ERROR observation",
       "method": "mcp",
-      "target": "langfuse.get_trace(73c6ba68-5072-4bc8-b96d-b2968782af8c)",
+      "target": "langfuse.get_trace(1a411552-763b-45c6-8370-b39a5977be50)",
       "expect": {
         "type": "absent",
         "value": "\"level\": \"ERROR\""
       },
-      "severity_if_fail": "high"
+      "severity_if_fail": "high",
+      "appended": {
+        "at": "2026-10-12T19:53:09.357Z",
+        "triggeringEvidenceId": "ev-4",
+        "logSeq": 1
+      }
     },
     {
       "id": "chk-2-doc",
@@ -224,7 +229,12 @@
         "type": "regex",
         "value": "\"items\"\\s*:"
       },
-      "severity_if_fail": "high"
+      "severity_if_fail": "high",
+      "appended": {
+        "at": "2026-10-12T19:53:09.357Z",
+        "triggeringEvidenceId": "ev-4",
+        "logSeq": 2
+      }
     }
   ],
   "checkResults": [
@@ -232,12 +242,12 @@
       "checkId": "chk-1",
       "status": "pass_needs_review",
       "reasons": [
-        "all evidence was reported by the agent, none executed by walkthrough: needs human review"
+        "no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review"
       ],
       "evidenceIds": [
         "ev-2"
       ],
-      "at": "2026-10-12T19:41:55.604Z"
+      "at": "2026-10-12T19:53:08.983Z"
     },
     {
       "checkId": "chk-1-logs",
@@ -246,7 +256,7 @@
       "evidenceIds": [
         "ev-3"
       ],
-      "at": "2026-10-12T19:41:55.605Z"
+      "at": "2026-10-12T19:53:08.983Z"
     },
     {
       "checkId": "chk-2",
@@ -257,7 +267,7 @@
       "evidenceIds": [
         "ev-4"
       ],
-      "at": "2026-10-12T19:41:55.968Z"
+      "at": "2026-10-12T19:53:09.350Z"
     },
     {
       "checkId": "chk-2-logs",
@@ -268,7 +278,7 @@
       "evidenceIds": [
         "ev-5"
       ],
-      "at": "2026-10-12T19:41:55.969Z"
+      "at": "2026-10-12T19:53:09.351Z"
     },
     {
       "checkId": "chk-2-trace",
@@ -279,7 +289,7 @@
       "evidenceIds": [
         "ev-6"
       ],
-      "at": "2026-10-12T19:41:55.980Z"
+      "at": "2026-10-12T19:53:09.361Z"
     },
     {
       "checkId": "chk-2-doc",
@@ -290,18 +300,22 @@
       "evidenceIds": [
         "ev-7"
       ],
-      "at": "2026-10-12T19:41:56.008Z"
+      "at": "2026-10-12T19:53:09.385Z"
     }
   ],
+  "commandLogHead": {
+    "seq": 2,
+    "hash": "ee70cd0065f17d322485df5b7fe1f40de801be296c0167448b129474676eb0b6"
+  },
   "findings": [
     {
       "id": "finding-1",
       "title": "GET /api/orders/ord-3/total → 500: order document without line items",
       "severity": "high",
-      "symptom": "GET http://localhost:3200/api/orders/ord-3/total answered 500 (trace 73c6ba68-5072-4bc8-b96d-b2968782af8c)",
+      "symptom": "GET http://localhost:3200/api/orders/ord-3/total answered 500 (trace 1a411552-763b-45c6-8370-b39a5977be50)",
       "repro_steps": [
         "curl -i -X GET \"http://localhost:3200/api/orders/ord-3/total\"",
-        "langfuse.get_trace({traceId: \"73c6ba68-5072-4bc8-b96d-b2968782af8c\"})",
+        "langfuse.get_trace({traceId: \"1a411552-763b-45c6-8370-b39a5977be50\"})",
         "mongodb.find(orders, {_id: ord-3})"
       ],
       "root_cause_chain": [
@@ -313,7 +327,7 @@
           ]
         },
         {
-          "claim": "Langfuse trace 73c6ba68-5072-4bc8-b96d-b2968782af8c: observation \"orderTotal\" is ERROR (Cannot read properties of undefined (reading 'reduce')) for orders ord-3 — fail",
+          "claim": "Langfuse trace 1a411552-763b-45c6-8370-b39a5977be50: observation \"orderTotal\" is ERROR (Cannot read properties of undefined (reading 'reduce')) for orders ord-3 — fail",
           "kind": "observed",
           "evidence_ids": [
             "ev-6"

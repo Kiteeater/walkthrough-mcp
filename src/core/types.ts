@@ -81,6 +81,8 @@ export interface Check {
   severity_if_fail: Severity;
   /** Verifier type; `rule` (default) ships now, `script` / `playwright` / `computer-use` are reserved. */
   verify?: { type: string; [key: string]: unknown };
+  /** Set by the core when the check was appended mid-run (plan_checks append): never supplied by the agent. */
+  appended?: { at: string; triggeringEvidenceId: string; logSeq: number };
 }
 
 /** `pass_needs_review`: the rule passed but every piece of evidence was reported by the agent, none executed by us. */

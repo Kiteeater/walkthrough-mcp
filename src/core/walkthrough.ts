@@ -4,7 +4,7 @@ import { join, resolve, sep } from "node:path";
 import type { Capturer } from "./capture.js";
 import { Redactor } from "./redact.js";
 import {
-  appendCommandLog, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
+  appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
   CLI_ENV_DENY,
 } from "./runcli.js";
@@ -13,7 +13,7 @@ import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
-import { MCP_IMPORT_PRESETS, sanitizeParams, stripUserinfo, type McpImportConnector } from "./imports.js";
+import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
   Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
   Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
@@ -268,7 +268,14 @@ export class WalkthroughCore {
     const r = verifyCommandLog(file, w.commandLogHead);
     if (!r.ok || !existsSync(file)) return r;
     for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
-      const e = JSON.parse(line) as CommandLogEntry;
+      const e = JSON.parse(line) as CommandLogEntry & { type?: string; checkSha256?: string; triggeringEvidenceId?: string };
+      if (e.type === "plan_append") {
+        const c = (w.checks ?? []).find((x) => x.id === e.checkId);
+        const { appended: _a, ...plain } = c ?? ({} as Check);
+        if (!c || createHash("sha256").update(JSON.stringify(plain)).digest("hex") !== e.checkSha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: appended check ${e.checkId} missing or modified` };
+        if (!w.evidence.some((x) => x.id === e.triggeringEvidenceId)) return { ok: false, entries: r.entries, error: `seq ${e.seq}: triggering evidence ${e.triggeringEvidenceId} missing` };
+        continue;
+      }
       const ev = w.evidence.find((x) => x.id === e.evidenceId);
       const p = ev && join(this.dir(id), ev.path);
       if (!ev || ev.sha256 !== e.outputSha256 || !existsSync(p!) || sha256File(p!) !== e.outputSha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: evidence ${e.evidenceId} missing or modified` };
@@ -327,12 +334,20 @@ export class WalkthroughCore {
   }
 
   /** plan_checks: record the agent's plan. Every check needs a machine-checkable expect; returns next_actions. */
-  planChecks(id: string, input: { goal: string; checks: Check[]; append?: boolean }): Promise<{ checks: Check[]; next_actions: NextAction[] }> {
+  planChecks(id: string, input: { goal: string; checks: Check[]; append?: boolean; triggeringEvidenceId?: string }): Promise<{ checks: Check[]; next_actions: NextAction[] }> {
     return this.withLock(id, () => {
       const w = this.load(id);
-      // append = follow-up checks discovered mid-run (e.g. while tracing a 500); earlier checks and verdicts stay.
-      const ids = new Set<string>(input.append ? (w.checks ?? []).map((c) => c.id) : []);
+      // append = follow-up checks discovered mid-run (e.g. while tracing a 500). Append-only: existing checks and
+      // verdicts can't be changed or removed; each appended check is written to the hash-chained command log.
+      const existing = new Map((input.append ? w.checks ?? [] : []).map((c) => [c.id, c]));
+      if (input.append) {
+        if (!input.triggeringEvidenceId) throw new ClaimRejectedError("append requires triggeringEvidenceId (the evidence that made you add these checks)");
+        this.verifyEvidence(w, "observed", [input.triggeringEvidenceId]);
+      }
+      const ids = new Set<string>(existing.keys());
       for (const c of input.checks) {
+        const prev = existing.get(c.id);
+        if (prev) throw new ClaimRejectedError(`append-only: check ${c.id} already exists${JSON.stringify(prev.expect) !== JSON.stringify(c.expect) ? " (changing its expect is not allowed)" : ""}`);
         if (!c.id || ids.has(c.id)) throw new Error(`check ids must be unique and non-empty: ${c.id}`);
         const problem = expectProblem(c.expect);
         if (problem) throw new Error(`check ${c.id}: expect is not machine-checkable (${problem})`);
@@ -342,11 +357,27 @@ export class WalkthroughCore {
         if (c.verify && !this.registry.has("verifier", c.verify.type)) throw new Error(`check ${c.id}: verifier "${c.verify.type}" not available`);
         ids.add(c.id);
       }
-      w.goal = input.goal;
-      w.checks = input.append ? [...(w.checks ?? []), ...input.checks] : input.checks;
-      if (!input.append) w.checkResults = [];
+      if (!input.append) {
+        w.goal = input.goal;
+        w.checks = input.checks.map(({ appended: _a, ...c }) => c as Check);
+        w.checkResults = [];
+        this.save(w);
+        return { checks: w.checks, next_actions: w.checks.map(nextActionFor) };
+      }
+      const added: Check[] = [];
+      for (const raw of input.checks) {
+        const { appended: _a, ...c } = raw;
+        const at = this.ts();
+        const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+          ts: at, walkthroughId: id, type: "plan_append", checkId: c.id,
+          checkSha256: createHash("sha256").update(JSON.stringify(c)).digest("hex"), triggeringEvidenceId: input.triggeringEvidenceId!, executedBy: "core",
+        });
+        w.commandLogHead = { seq: log.seq, hash: log.hash };
+        added.push({ ...c, appended: { at, triggeringEvidenceId: input.triggeringEvidenceId!, logSeq: log.seq } });
+      }
+      w.checks = [...(w.checks ?? []), ...added];
       this.save(w);
-      return { checks: w.checks, next_actions: input.checks.map(nextActionFor) };
+      return { checks: w.checks, next_actions: added.map(nextActionFor) };
     });
   }
 
@@ -365,10 +396,24 @@ export class WalkthroughCore {
       for (const ev of evs) if (ev.checkId !== check.id) throw new ClaimRejectedError(`evidence ${ev.id} was not captured for ${check.id}`);
       const texts = evs.filter((ev) => ev.type !== "screenshot").map((ev) => readFileSync(join(this.dir(id), ev.path), "utf8"));
       const j = await this.registry.verifier(check.verify?.type ?? "rule").verify(check, texts);
-      // Agent-reported evidence alone can never yield a clean pass: the human must look at it.
-      const agentOnly = evs.length > 0 && evs.every((ev) => ev.executedBy === "agent");
-      const status = j.status === "pass" && agentOnly ? "pass_needs_review" : j.status;
-      const reasons = status === "pass_needs_review" ? [...j.reasons, "all evidence was reported by the agent, none executed by walkthrough: needs human review"] : j.reasons;
+      // Provenance rule: any piece of evidence that fails the expectation → fail, whoever executed it. If everything
+      // satisfies it: ≥1 core-executed evidence that passes on its own → pass; agent-reported only → pass_needs_review.
+      // (`count` aggregates across evidence, so it is judged on the combined texts only.)
+      const judged = evs.filter((ev) => ev.type !== "screenshot");
+      const per = check.expect.type === "count" || judged.length < 2 ? [] : await Promise.all(judged.map(async (ev, i) => ({ ev, j: await this.registry.verifier(check.verify?.type ?? "rule").verify(check, [texts[i]]) })));
+      const failing = per.filter((x) => x.j.status === "fail");
+      let status = j.status;
+      let reasons = j.reasons;
+      if (failing.length) {
+        status = "fail";
+        reasons = failing.map((x) => `${x.ev.id} (${x.ev.executedBy === "agent" ? "reported by agent" : "executed by walkthrough"}): ${x.j.reasons.join("; ")}`);
+      } else if (status === "pass") {
+        const coreOk = judged.length < 2 ? judged.some((ev) => ev.executedBy !== "agent") : per.some((x) => x.ev.executedBy !== "agent" && x.j.status === "pass");
+        if (!coreOk) {
+          status = "pass_needs_review";
+          reasons = [...j.reasons, "no evidence executed by walkthrough satisfies the expectation (agent-reported only): needs human review"];
+        }
+      }
       const result: CheckResult = { checkId: check.id, status, reasons, evidenceIds, at: this.ts() };
       w.checkResults = [...(w.checkResults ?? []).filter((r) => r.checkId !== check.id), result];
       this.save(w);
@@ -446,11 +491,11 @@ export class WalkthroughCore {
       const out = await this.registry.action(`connector:${c.name}`).run({ type: `connector:${c.name}`, tool: input.tool, params, result: input.result } as never, { walkthrough: w, sandbox: undefined as never });
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.json.txt`;
-      writeFileSync(join(this.dir(id), rel), this.redactor.text(stripUserinfo(out.evidenceText)));
+      writeFileSync(join(this.dir(id), rel), scrub(out.evidenceText, this.redactor));
       const ev: Evidence = {
         id: evId, type: "response", kind: "mcp_result", path: rel, executedBy: "agent",
         source: `connector:${c.name}`, mcpCall: { connector: c.name, server: c.server, tool: input.tool, params },
-        links: links.map((l) => ({ evidenceId: l.evidenceId, key: this.redactor.text(String(l.key)) })),
+        links: links.map((l) => ({ evidenceId: l.evidenceId, key: scrub(String(l.key), this.redactor) })),
         ...(input.checkId ? { checkId: input.checkId } : {}), sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts(),
       };
       w.evidence.push(ev);

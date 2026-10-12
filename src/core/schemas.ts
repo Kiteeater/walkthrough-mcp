@@ -18,7 +18,8 @@ export const planChecksShape = {
   id: z.string(),
   goal: z.string(),
   checks: z.array(checkSchema).describe("your plan; a check without a machine-checkable expect is rejected"),
-  append: z.boolean().optional().describe("add follow-up checks to the existing plan (keeps earlier verdicts)"),
+  append: z.boolean().optional().describe("append-only follow-up checks (existing checks can't be changed); logged in the command log"),
+  triggering_evidence_id: z.string().optional().describe("required with append: the evidence that made you add these checks"),
 };
 
 export const captureEvidenceShape = {

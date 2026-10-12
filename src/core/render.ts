@@ -78,11 +78,15 @@ ${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<l
 <p><b>Evidence:</b></p>${evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
-  const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>Checks the agent ran (${results.length})</summary>
-<table><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>${(w.checks ?? []).map((c) => {
+  const row = (c: NonNullable<typeof w.checks>[number]) => {
     const r = results.find((x) => x.checkId === c.id);
-    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
-  }).join("")}</table></details>` : "";
+    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}${c.appended ? ` · 追查中追加 after ${esc(c.appended.triggeringEvidenceId)} (log #${c.appended.logSeq}, ${esc(c.appended.at)})` : ""}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
+  };
+  const head = "<tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>";
+  const original = (w.checks ?? []).filter((c) => !c.appended), appended = (w.checks ?? []).filter((c) => c.appended);
+  const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>Checks the agent ran (${results.length})</summary>
+<h3>原始计划 Original plan (${original.length})</h3><table class="plan-original">${head}${original.map(row).join("")}</table>
+${appended.length ? `<h3 class="appended">追查中追加 Appended while tracing (${appended.length})</h3><table class="plan-appended" data-appended="${appended.length}">${head}${appended.map(row).join("")}</table>` : ""}</details>` : "";
 
   const sections = w.claims.map((c, i) => {
     const evidence = evidenceHtml(c.evidenceIds);

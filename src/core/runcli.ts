@@ -166,10 +166,15 @@ const entryHash = (e: Omit<CommandLogEntry, "hash">) => createHash("sha256").upd
 
 /** Append one entry; caller holds the walkthrough lock. Returns the new entry (with its hash). */
 export function appendCommandLog(file: string, e: Omit<CommandLogEntry, "seq" | "prev" | "hash">): CommandLogEntry {
+  return appendLogEntry(file, e as unknown as Record<string, unknown>) as unknown as CommandLogEntry;
+}
+
+/** Any hash-chained entry (run_cli calls, plan_append records). Same chain, same verification. */
+export function appendLogEntry(file: string, e: Record<string, unknown>): { seq: number; hash: string; prev: string } & Record<string, unknown> {
   const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
   const last = lines.length ? (JSON.parse(lines[lines.length - 1]) as CommandLogEntry) : undefined;
   const base = { seq: lines.length + 1, ...e, prev: last?.hash ?? GENESIS };
-  const full: CommandLogEntry = { ...base, hash: entryHash(base) };
+  const full = { ...base, hash: entryHash(base as never) };
   appendFileSync(file, `${JSON.stringify(full)}\n`, { flag: "a" });
   return full;
 }

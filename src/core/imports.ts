@@ -18,17 +18,33 @@ export const MCP_IMPORT_PRESETS: McpImportConnector[] = [
 const CRED_KEY = /(pass(word|wd)?|secret|token|api[-_]?key|auth(orization)?|credential|cookie|session[-_]?key|private[-_]?key|^sk$|^pk$|access[-_]?key)/i;
 export function sanitizeParams(params: unknown, redactor: Redactor): unknown {
   const walk = (v: unknown): unknown => {
-    if (typeof v === "string") return redactor.text(stripUserinfo(v));
+    if (typeof v === "string") return scrub(v, redactor);
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === "object") {
       const out: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v)) if (x !== undefined) out[redactor.text(k)] = CRED_KEY.test(k) ? MASK : walk(x);
+      for (const [k, x] of Object.entries(v)) if (x !== undefined) out[scrub(k, redactor)] = CRED_KEY.test(k) ? MASK : walk(x);
       return out;
     }
     return v;
   };
   return walk(params);
 }
+/**
+ * Generic secret patterns, applied to imported results and params on top of env-known secrets: Langfuse keys,
+ * Bearer tokens, Authorization / Cookie / X-Api-Key header values, OpenAI-style `sk-…`, AWS `AKIA…`, Aliyun `LTAI…`.
+ */
+const GENERIC: [RegExp, string][] = [
+  [/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)(["']?\s*[:=]\s*["']?)([^"'\r\n,}]+)/gi, `$1$2${MASK}`],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, `Bearer ${MASK}`],
+  [/\b[sp]k-lf-[A-Za-z0-9_-]{4,}/g, MASK],
+  [/\bsk-[A-Za-z0-9_-]{16,}/g, MASK],
+  [/\bAKIA[0-9A-Z]{16}\b/g, MASK],
+  [/\bLTAI[0-9A-Za-z]{12,30}\b/g, MASK],
+];
+export const redactGeneric = (s: string) => GENERIC.reduce((acc, [re, to]) => acc.replace(re, to), s);
+/** Full scrub for anything imported from another MCP: userinfo, generic patterns, then env secrets. */
+export const scrub = (s: string, redactor: Redactor) => redactor.text(redactGeneric(stripUserinfo(s)));
+
 /** `mongodb://user:pw@host` → `mongodb://[REDACTED]@host` (anywhere in a string). */
 export const stripUserinfo = (s: string) => s.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@:]+(:[^/\s@]*)?@/gi, `$1${MASK}@`);
 
