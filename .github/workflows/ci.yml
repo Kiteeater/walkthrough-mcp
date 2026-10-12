@@ -45,3 +45,28 @@ jobs:
           name: walkthrough-html
           path: e2e-output/
           if-no-files-found: error
+
+  # Fresh clone → `npm ci && npm run demo`, exactly what the README tells a newcomer to do.
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      # mongodb-memory-server downloads its mongod binary once (at npm ci); cache it so the demo itself is offline.
+      - name: Cache mongod binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run demo | tee demo.log
+      - name: Assert the audit page (verdict sentence, chain, sign-off on the first screen)
+        run: |
+          html="$(sed -n 's/^audit page: //p' demo.log)"
+          node examples/assert-trace-chain.mjs "${html%index.html}walkthrough.json"
+          grep -q '发现 1 个问题' demo.log
+          mkdir -p demo-output && cp "$html" demo-output/
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: demo-audit-page, path: demo-output/, if-no-files-found: warn }

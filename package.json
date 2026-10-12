@@ -19,7 +19,8 @@
     "build": "tsc -p tsconfig.json",
     "pretest": "npm run build",
     "test": "vitest run",
-    "e2e": "bash examples/run-e2e.sh"
+    "e2e": "bash examples/run-e2e.sh",
+    "demo": "npm run build && node examples/demo.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

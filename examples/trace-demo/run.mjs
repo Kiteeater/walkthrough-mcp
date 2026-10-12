@@ -6,9 +6,11 @@ import { MongoClient } from "mongodb";
 import { startMockLangfuse } from "./mock-langfuse.mjs";
 import { startMockPrometheus } from "./mock-prometheus.mjs";
 
-const root = process.argv[2] ?? ".";
+const args = process.argv.slice(2);
+const docker = args.includes("--docker"); // use an already running Mongo container instead of the in-process one
+const root = args.find((a) => !a.startsWith("--")) ?? ".";
 let mms;
-let url = process.env.MONGO_URL;
+let url = process.env.MONGO_URL ?? (docker ? "mongodb://127.0.0.1:27017" : undefined);
 if (!url) { const { MongoMemoryServer } = await import("mongodb-memory-server"); mms = await MongoMemoryServer.create(); url = mms.getUri(); }
 const c = new MongoClient(url);
 await c.db("shop").collection("orders").deleteMany({});
@@ -23,7 +25,10 @@ const promToken = process.env.WALKTHROUGH_PROMETHEUS_TOKEN ?? `prom-${Math.rando
 const prom = await startMockPrometheus(3102, promToken);
 const env = { ...process.env, MONGO_URL: url, LANGFUSE_URL: "http://127.0.0.1:3100", LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
   WALKTHROUGH_PROMETHEUS_URL: "http://127.0.0.1:3102", WALKTHROUGH_PROMETHEUS_TOKEN: promToken };
-const child = spawn(process.execPath, ["dist/demo-agent/trace-run.js", "examples/trace-demo/walkthrough.trace.json", "--root", root], { env, stdio: ["ignore", "inherit", "inherit"] });
+let child;
+const cleanup = async () => { try { child?.kill("SIGTERM"); } catch { /* gone */ } lf.close(); prom.close(); if (mms) await mms.stop(); };
+for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, async () => { await cleanup(); process.exit(130); });
+child = spawn(process.execPath, ["dist/demo-agent/trace-run.js", "examples/trace-demo/walkthrough.trace.json", "--root", root], { env, stdio: ["ignore", "inherit", "inherit"] });
 const code = await new Promise((r) => child.on("exit", (c) => r(c ?? 1)));
-lf.close(); prom.close(); if (mms) await mms.stop();
+await cleanup();
 process.exit(code);
