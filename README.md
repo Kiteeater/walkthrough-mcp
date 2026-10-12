@@ -329,17 +329,22 @@ The built-in `mqadmin` connector only runs query subcommands. Each one has its o
 | `topicRoute`, `topicClusterList` | `-n`, `-t` |
 | `consumerProgress` | `-n`, `-g`, `-t`, `-s`, `-c` |
 | `consumerStatus` | `-n`, `-g`, `-i` |
-| `brokerStatus` | `-n`, `-b`, `-c` |
-| `queryMsgById` | `-n`, `-t`, `-i`, `-c` |
+| `brokerStatus` | `-n`, `-c` |
 | `queryMsgByKey` | `-n`, `-t`, `-k`, `-b`, `-m`, `-c`, `-l` |
 | `queryMsgByUniqueKey` | `-n`, `-i`, `-t`, `-c`, `-s` |
 
 Names and options were checked against the Apache RocketMQ `rocketmq-all-5.5.1` tools module (`MQAdminStartup` and
 each subcommand's `buildCommandlineOptions()`). Options that cause side effects are deliberately left out:
-`queryMsgById -s` (resends the message), and `-g`/`-d` on `queryMsgById`/`queryMsgByUniqueKey` (pushes the message to
-a consumer). So is `clusterList -i` (repeats forever), along with options that take no value. `-e`, `-f` and `-p`
-(`queryMsgByKey` end time and key type, `queryMsgById` body format, `queryMsgByUniqueKey` end time) are also
-unavailable, because they collide with the global credential/eval flag denylist.
+`-g`/`-d` on `queryMsgByUniqueKey` (pushes the message to a consumer). So is `clusterList -i` (repeats forever), along
+with options that take no value. `-e` and `-p` (`queryMsgByKey` end time and key type, `queryMsgByUniqueKey` end time)
+are also unavailable, because they collide with the global credential/eval flag denylist.
+
+Connections are limited to the name server and the brokers it reports:
+- **`queryMsgById` is rejected.** mqadmin decodes a broker IP:port from the offset msgId and connects there directly,
+  bypassing the fixed name server (`MQAdminImpl.viewMessage`). The error points to `queryMsgByUniqueKey -t <topic> -i
+  <uniqueKey>` and `queryMsgByKey -t <topic> -k <key>`; both resolve brokers through the name server's topic route.
+- **`brokerStatus -b` is rejected.** It connects straight to the given address. `brokerStatus -c <cluster>` looks the
+  brokers up through the name server and still works.
 
 - Write and admin subcommands (`updateTopic`, `deleteTopic`, `sendMessage`, `resetOffsetByTime`, `updateSubGroup`,
   `wipeWritePerm`, …) are rejected before anything is spawned. So is any argument not listed for the subcommand
@@ -359,25 +364,25 @@ unavailable, because they collide with the global credential/eval flag denylist.
   ```
 
   Calls that passed `-n <address>` keep working once that address is listed. `NAMESRV_ADDR` from the environment is no
-  longer passed through, so add that address to `namesrvs` too. `queryMsgById` now requires `-t <topic>`, as mqadmin
-  itself does.
+  longer passed through, so add that address to `namesrvs` too. `queryMsgById` and `brokerStatus -b` are no longer
+  available (see above).
 - **Credentials** (ACL access and secret keys) come only from mqadmin's own tools config file. They are never taken
   from env or argv, and all output goes through the Redactor.
-- **Message bodies.** mqadmin 5.5.1 doesn't print bodies. `queryMsgById` and `queryMsgByUniqueKey` write each body raw
+- **Message bodies.** mqadmin 5.5.1 doesn't print bodies. `queryMsgByUniqueKey` writes each body raw
   to `/tmp/rocketmq/msgbodys/<msgId>` on the host and print `Message Body Path: <file>`. After the call, the core
   reads each such file, redacts it, cuts it to `messageBody.maxChars` (default 2048, with a `…[truncated N chars]`
   marker), stores it in the evidence on one line (newlines escaped), and deletes the original. A file is read and
   deleted only if all of these hold:
   - It sits directly in that directory, under a hex id name.
-  - It belongs to this query's `-i` (or to the `UNIQ_KEY` of a message whose `OffsetID` was asked for).
+  - It belongs to this query's `-i`.
   - It was written during this call.
   - It is a regular file: symlinks are refused, the file is opened with `O_NOFOLLOW`, and dev/inode must match
     between lstat, open and unlink.
 
   `-i` must be hex message id(s), so path syntax is rejected before anything runs. Anything else is left in place and
   marked `[not read: …]`. `queryMsgByKey` prints only a msgId/offset table and writes no body file.
-- **Known gaps (tracked in #25, #26):** `brokerStatus -b` and the IP:port encoded in a `queryMsgById` offset msgId both
-  make mqadmin connect directly to a broker, so they are exceptions to "no pivot".
+- **Known gaps:** none open for the mqadmin preset. The direct-connect paths (#25, #26) are closed as described above,
+  and the old blank-line body capper (#27) was removed: bodies are only read from body files, capped as a whole.
 - `profile` (optional) is a label recorded in the command log alongside the CLI name, version and output sha256. It
   is not passed to mqadmin, which has no profile flag (`appendProfile: false`).
 
