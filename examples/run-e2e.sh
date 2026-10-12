@@ -46,6 +46,7 @@ node examples/assert-trace-chain.mjs "$tdir/walkthrough.json"
 grep -q 'class="step prov-agent"' "$tdir/index.html"
 grep -q 'class="step prov-core"' "$tdir/index.html"
 grep -q 'data-needs-review=' "$tdir/index.html"
+grep -q '追查中追加' "$tdir/index.html"
 set +x
 if grep -rqF "$LANGFUSE_SECRET_KEY" "$tdir"; then echo "langfuse secret leaked into output" >&2; exit 1; fi
 set -x
