@@ -74,15 +74,16 @@ npm run demo -- --docker  # start a throwaway mongo container (random loopback p
 MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthrough_demo database is wiped
 ```
 
-**Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
-buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
+**Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus, a **mock**
+`mqadmin` binary (output in the rocketmq-all-5.5.1 format, `examples/trace-demo/mock-mqadmin.mjs`) and the buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
 connected, and none is needed. For the five company sources only the integration seams exist, and all five are
 supported:
 - Prometheus: `query_metrics` and alert watches.
 - Langfuse and MongoDB: through their own MCP servers plus `import_mcp_result`.
-- Aliyun: the `run_cli` read-only allowlist.
+- Aliyun: the `run_cli` read-only allowlist. The demo doesn't exercise cloud logs yet.
 - RocketMQ: `run_cli` read-only `mqadmin` queries with a fixed name server; see
-  [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo doesn't exercise it yet.
+  [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo uses it to rule out a message
+  backlog, described below.
 
 See
 [docs/read-only-access.md](docs/read-only-access.md) for what access to request for each.
@@ -98,6 +99,14 @@ The audit page's first screen (readable in ~30 s): one-sentence verdict, root-ca
 sign-off. The check summary reads `N 通过 · N 失败 · N 需复核 · N 无结论` (each opens its list). Times show in the
 viewer's local zone (UTC ISO in the tooltip); without JS they fall back to `WALKTHROUGH_TZ` / `TZ` / the system zone.
 Everything else is collapsed. Step 1 of the demo chain is walkthrough's own `replay_request` of the failing call.
+
+Under the finding there is also a **已排除** block for hypotheses that were checked and excluded. These are stored in
+the finding's `ruled_out`; they are never root-cause steps and are not in the finding's `evidenceIds`. In the demo,
+walkthrough runs `mqadmin consumerProgress -g order-pricing-consumer -t ORDER_CREATED` itself through the real mqadmin
+preset: the allowlist applies, the name server is a random loopback port fixed in `namesrvs`, the output goes through
+the Redactor, and the command is hash-chained in `commands.jsonl`. `Consume Diff Total: 0` shows there is no backlog,
+so the page shows 「查过消息堆积，消费正常，排除 MQ 问题」 together with that evidence's full sha256. The root-cause chain
+(HTTP 500 → metric → Langfuse → MongoDB → `pricing.js:3`) is unchanged.
 
 ![audit page first screen](docs/audit-page.png)
 

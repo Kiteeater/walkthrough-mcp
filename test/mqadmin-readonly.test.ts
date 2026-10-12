@@ -1,65 +1,18 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLI_ENV_DENY, CliRejectedError, PRESET_CONNECTORS, cliArgv, collectMessageBodies, type ConnectorConfig } from "../src/core/index.js";
 import { mockCore } from "./helpers.js";
+// @ts-expect-error plain ESM helper without types
+import { writeMockMqadmin } from "../examples/trace-demo/mock-mqadmin.mjs";
 
 const TOKEN = "mq-fake-token-7c1d9e2a";
 const NS = "namesrv.internal:9876";
 const preset = PRESET_CONNECTORS.find((c) => c.name === "mqadmin")!;
 const mq: ConnectorConfig = { ...preset, namesrvs: [NS], profile: "readonly-ops" };
 
-/**
- * Mock mqadmin reproducing the 5.5.1 output format (rocketmq-all-5.5.1, efa1be5):
- *  - queryMsgById: QueryMsgByIdSubCommand.printMsg L59-163 (`%-20s %s%n` lines, `Message Body Path:` L142-145, no
- *    body printed without -f, then `%n%nWARN: No Consumer`), body written raw by createBodyFile L166-180 to
- *    `/tmp/rocketmq/msgbodys/<msg.getMsgId()>`.
- *  - queryMsgByUniqueKey: showMessage L82-116 (no OffsetID line, `Message Body Path:` L102), createBodyFile L119-138.
- * Behaviour comes from cfg.json next to the binary: dir (stands in for /tmp/rocketmq/msgbodys), body, fileId
- * (defaults to the -i value), noWrite, delayMs, waitFiles, listAll (print a path line for every file in dir, like a hostile output).
- */
-function mockMqadmin(bin: string, cfg: Record<string, unknown>): string {
-  const p = join(bin, "mqadmin");
-  writeFileSync(join(bin, "cfg.json"), JSON.stringify(cfg));
-  writeFileSync(p, `#!/usr/bin/env node
-const fs=require("fs"),path=require("path");
-const cfg=JSON.parse(fs.readFileSync(path.join(__dirname,"cfg.json"),"utf8"));
-const a=process.argv.slice(2);
-if(a[0]==="--version"){console.log("mqadmin 5.5.1-mock");process.exit(0)}
-fs.appendFileSync(path.join(__dirname,"calls.jsonl"),JSON.stringify({argv:a,env:Object.keys(process.env)})+"\\n");
-const opt=(f)=>{const i=a.indexOf(f);return i>=0?a[i+1]:undefined};
-const out=(k,v)=>process.stdout.write(k.padEnd(20)+" "+v+"\\n");
-const sub=a[0];
-if(sub==="queryMsgById"||sub==="queryMsgByUniqueKey"){
-  const id=opt("-i"), fileId=cfg.fileId||id, file=path.join(cfg.dir,fileId);
-  if(!cfg.noWrite){fs.mkdirSync(cfg.dir,{recursive:true});fs.writeFileSync(file,cfg.body||"")}
-  let paths=[file];
-  const finish=()=>{
-    if(sub==="queryMsgById") out("OffsetID:",id);
-    out("Topic:",opt("-t")); out("Tags:","[TagA]"); out("Keys:","[ord-1]"); out("Queue ID:",3); out("Queue Offset:",42);
-    out("CommitLog Offset:",4660); out("Reconsume Times:",0); out("Born Timestamp:","2026-10-13 07:00:00,123");
-    out("Store Timestamp:","2026-10-13 07:00:00,130"); out("Born Host:","10.0.0.8:53412"); out("Store Host:","10.0.0.5:10911");
-    out("System Flag:",0); out("Properties:","{UNIQ_KEY="+fileId+", KEYS=ord-1, TAGS=TagA}");
-    for(const x of paths) out("Message Body Path:",x);
-    process.stdout.write("\\n\\nWARN: No Consumer");
-  };
-  // waitFiles (barrier for the concurrency test): wait until that many body files exist, take the listing, then wait
-  // until every process has taken its listing before printing, so no core deletes a file before all have listed.
-  const wait=(cond,then)=>{const t0=Date.now();const t=()=>(!cond()&&Date.now()-t0<5000)?setTimeout(t,20):then();t()};
-  const list=()=>{ if(cfg.listAll) paths=fs.readdirSync(cfg.dir).map((f)=>path.join(cfg.dir,f)); };
-  setTimeout(()=>{
-    if(!cfg.waitFiles){list();return finish();}
-    wait(()=>fs.readdirSync(cfg.dir).length>=cfg.waitFiles,()=>{
-      list(); fs.writeFileSync(path.join(__dirname,"listed-"+id),"");
-      wait(()=>fs.readdirSync(__dirname).filter((f)=>f.startsWith("listed-")).length>=cfg.waitFiles,finish);
-    });
-  },cfg.delayMs||0);
-} else console.log("TOPIC-STATUS orders brokerOffset=42 "+a.join(" "));
-`);
-  chmodSync(p, 0o755);
-  return p;
-}
+const mockMqadmin = (bin: string, cfg: Record<string, unknown>): string => writeMockMqadmin(bin, cfg);
 
 const ID_A = "0A00000100002A9F0000000000001234";
 const ID_B = "0A00000100002A9F0000000000005678";
@@ -251,5 +204,16 @@ describe("mqadmin via run_cli with a mock binary", () => {
     expect(t2).toMatch(new RegExp(`${ID_B} \\[read by core, original deleted\\]`));
     expect(t2).toMatch(new RegExp(`${ID_A}\\nMessage Body: +\\[not read: not this query's message id\\]`));
     expect(readdirSync(s.dir)).toEqual([]);
+  });
+});
+
+describe("mock mqadmin consumerProgress (5.5.1 format)", () => {
+  it("prints the per-queue table and totals; Diff Total reflects broker − consumer offsets", async () => {
+    const s = setup({ queues: [[0, 10, 7], [1, 5, 5]] });
+    const id = await s.start();
+    const r = await s.core.runCli(id, { connector: "mqadmin", argv: ["consumerProgress", "-g", "g1", "-t", "orders"] });
+    const text = s.ev(id, r.evidence.id);
+    expect(text).toMatch(/^orders +broker-a +0 +10 +7 +3 +0 +\S/m);
+    expect(text).toMatch(/^Consume Diff Total: 3$/m);
   });
 });

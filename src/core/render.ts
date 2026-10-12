@@ -87,6 +87,15 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
     }));
     return items.length ? `<div class="corroborating" data-corroborating="${items.length}"><b>同时观测到的信号</b> <span class="meta">（佐证，不属于根因链）</span>${items.join("")}</div>` : "";
   };
+  /** Hypotheses checked and excluded: shown next to the finding, outside the root-cause chain, with full sha256. */
+  const ruledOutLine = (f: (typeof findings)[number]) => {
+    const items = (f.ruled_out ?? []).map((r) => {
+      const evs = r.evidence_ids.map((e) => w.evidence.find((x) => x.id === e)).filter(Boolean);
+      const st = r.check_id ? results.find((x) => x.checkId === r.check_id)?.status : undefined;
+      return `<div class="ruled-out-item"${r.check_id ? ` data-check="${esc(r.check_id)}"` : ""} data-evidence="${esc(evs.map((e) => e!.id).join(","))}">🚫 ${esc(r.claim)}${st ? ` <span class="meta">（检查 ${esc(r.check_id!)}：${esc(STATUS_ZH[st] ?? st)}）</span>` : ""}${evs.map((e) => `<div class="meta">${esc(e!.id)} · ${e!.executedBy === "agent" ? "agent 自报" : "walkthrough 执行"} · ${esc(e!.source)} · sha256 <code class="sha256" data-sha256="${esc(e!.sha256)}">${esc(e!.sha256)}</code></div>`).join("")}</div>`;
+    });
+    return items.length ? `<div class="ruled-out" data-ruled-out="${items.length}"><b>已排除</b> <span class="meta">（查过，不属于根因链）</span>${items.join("")}</div>` : "";
+  };
   const watches = w.alertWatches ?? [];
   const unmatchedAlerts = watches.flatMap((aw) => aw.unmatched.map((u) => ({ ...u, ev: aw.evidenceId })));
   const outcomeTxt = (aw: (typeof watches)[number]) => aw.outcome === "interrupted" ? "⚠ 盯守中断（数据不完整，不代表窗口内无告警）" : aw.outcome === "stopped_early" ? "窗口结束前已收取" : "窗口已走完";
@@ -150,8 +159,8 @@ ${checkCounts}</div>
 ${blockedLine}
 ${top ? `<div class="top-finding problem" data-problem="1" data-finding="${esc(top.id)}" data-checks="${problems[0].checkIds.length}">${problemHead(problems[0])}<h4>根因链 <span class="meta">（${esc(top.title)}）</span></h4>
 ${firstChain(top)}
-<div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}</div>` : ""}
-${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f, i) => `<li class="problem" data-problem="${i + 2}" data-finding="${esc(f.id)}" data-checks="${problems[i + 1].checkIds.length}">${problemHead(problems[i + 1])}<span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
+<div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}${ruledOutLine(top)}</div>` : ""}
+${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f, i) => `<li class="problem" data-problem="${i + 2}" data-finding="${esc(f.id)}" data-checks="${problems[i + 1].checkIds.length}">${problemHead(problems[i + 1])}<span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}${ruledOutLine(f)}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
 ${unattributed.length ? `<details class="unattributed" data-unattributed="${unattributed.length}"><summary>未归入任何问题的失败检查（${unattributed.length}）</summary><ul>${unattributed.map(checkLi).join("")}</ul></details>` : ""}
 ${alertsBlock ? `<details class="alerts-more"><summary>告警盯守详情</summary>${alertsBlock}</details>` : ""}
 ${w.goal ? `<p class="goal meta">目标：${esc(w.goal)}</p>` : ""}
@@ -236,6 +245,7 @@ table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px soli
 .prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
 li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
 .chip.interrupted,.alert-window.interrupted{background:#82071e;color:#fff;padding:2px 6px}.auto-finalized{background:#fff8c5;border:1px solid #d4a72c;padding:.3rem .5rem;margin:.4rem 0}.aw.interrupted{color:#82071e}
+.ruled-out{border-left:4px solid #57606a;background:#f6f8fa;padding:.3rem .6rem;margin:.4rem 0}.ruled-out code.sha256{font-size:.75em;word-break:break-all}
 .corroborating{border-left:4px dashed #8250df;background:#fbefff;padding:.3rem .6rem;margin:.4rem 0}.also-matched{color:#8250df;font-style:italic}
 .alert-confirm{margin:.2rem 0;padding:.2rem .5rem;background:#ffebe9;border-left:4px solid #cf222e}.unmatched-alerts{background:#fff8c5;padding:.4rem .6rem;margin:.4rem 0}.alert-window{font-size:.85rem;color:#444}
 .rc-chain{margin:.3rem 0 .3rem 1.2rem;padding:0}.rc-step{margin:.25rem 0}.prov.none{background:#eee;color:#555}.top-finding h3{margin:.6rem 0 .2rem;font-size:1.05rem}.headline code{font-size:1.4rem}

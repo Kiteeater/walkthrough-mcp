@@ -5,6 +5,7 @@ import { prometheusFromEnv } from "./metrics.js";
 import { PlaywrightCapturer, type Capturer } from "./capture.js";
 import { createSandboxFactory } from "./sandbox.js";
 import { WalkthroughCore } from "./walkthrough.js";
+import type { ConnectorConfig } from "./runcli.js";
 
 export * from "./types.js";
 export * from "./redact.js";
@@ -23,8 +24,8 @@ export * from "./argv.js";
 export * from "./runcli.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
-export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer(), replay?: ReplayConfig): WalkthroughCore {
-  return new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer, replay: replay ?? replayConfigFrom(root), prometheus: prometheusFromEnv() });
+export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer(), replay?: ReplayConfig, connectors?: ConnectorConfig[]): WalkthroughCore {
+  return new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer, replay: replay ?? replayConfigFrom(root), prometheus: prometheusFromEnv(), ...(connectors ? { connectors } : {}) });
 }
 
 /** `replay` block of `<root>/walkthrough.config.json`, if any (or the file named by WALKTHROUGH_CONFIG). */
