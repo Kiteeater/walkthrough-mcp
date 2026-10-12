@@ -49,8 +49,14 @@ npm run demo            # in-process MongoDB (mongodb-memory-server), no Docker
 npm run demo -- --docker  # use a MongoDB already running on 127.0.0.1:27017 (or $MONGO_URL)
 ```
 
-From zero it starts MongoDB, a mock Langfuse, a mock Prometheus and the buggy orders service
-(`examples/trace-demo`), then the demo agent runs the whole flow — `plan_checks` → `start_watch` → trigger
+**Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
+buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
+connected, and none is needed. Of the five company sources only the integration seams exist: Prometheus
+(`query_metrics`, alert watches), Langfuse/MongoDB (via their own MCP servers + `import_mcp_result`) and Aliyun
+(`run_cli` read-only allowlist) are supported; **RocketMQ read-only commands are not supported yet**. See
+[docs/read-only-access.md](docs/read-only-access.md) for what access to request for each.
+
+From zero it starts these, then the demo agent runs the whole flow — `plan_checks` → `start_watch` → trigger
 `GET /api/orders/ord-3/total` → evidence → `evaluate_check` → follow the 500 through Langfuse and MongoDB →
 `collect_watch` → report — and prints the verdict and the audit page path. Everything is shut down at the end (also on
 Ctrl-C). After `npm ci` it needs no network: the mongod binary is downloaded once by `npm ci` and cached in
