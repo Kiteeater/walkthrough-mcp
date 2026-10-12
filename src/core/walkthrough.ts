@@ -3,6 +3,11 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { Capturer } from "./capture.js";
 import { Redactor } from "./redact.js";
+import {
+  appendCommandLog, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
+  type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
+} from "./runcli.js";
+import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
 import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
@@ -25,6 +30,12 @@ export interface CoreDeps {
   capturer: Capturer;
   redactor?: Redactor;
   now?: () => Date;
+  /** run_cli connectors (default: read-only presets aliyun / mqadmin / mongosh). */
+  connectors?: ConnectorConfig[];
+}
+
+export interface RunCliInput {
+  checkId?: string; connector: string; argv?: string[]; template?: MongoTemplate; timeoutS?: number; cwd?: string;
 }
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
@@ -178,6 +189,79 @@ export class WalkthroughCore {
     this.save(w);
     return full;
     });
+  }
+
+  private readonly versions = new Map<string, string>();
+
+  private async cliVersion(c: ConnectorConfig, env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
+    const key = `${c.name}\0${c.binary}`;
+    if (!this.versions.has(key)) {
+      const r = await run(c.binary, c.versionArgs ?? ["--version"], { cwd, env, timeoutMs: 5_000, maxBytes: 4096 });
+      this.versions.set(key, r.exitCode === 0 ? this.redactor.text(r.output.trim().split("\n")[0] ?? "").slice(0, 120) || "unknown" : "unknown");
+    }
+    return this.versions.get(key)!;
+  }
+
+  /**
+   * run_cli: execute a whitelisted read-only CLI ourselves (spawn(file,args), no shell), store the redacted output as
+   * evidence (executedBy core) and append a hash-chained line to commands.jsonl. Rejections throw CliRejectedError and
+   * never spawn anything.
+   */
+  runCli(id: string, input: RunCliInput): Promise<{ evidence: Evidence; log: CommandLogEntry; exitCode: number }> {
+    return this.withLock(id, async () => {
+      const w = this.load(id);
+      if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
+      const c = (this.deps.connectors ?? PRESET_CONNECTORS).find((x) => x.name === input.connector);
+      if (!c) throw new CliRejectedError(`unknown connector: ${input.connector}`);
+      let argv: string[];
+      if (c.kind === "mongo") {
+        if (input.argv?.length) throw new CliRejectedError("mongosh accepts only a query template (find|aggregate|countDocuments), not argv");
+        argv = mongoArgv(c, input.template as MongoTemplate);
+      } else {
+        if (input.template) throw new CliRejectedError(`${c.name} takes argv, not a template`);
+        argv = cliArgv(c, input.argv ?? []);
+      }
+      const root = resolve(w.sandbox.cwd);
+      const cwd = resolve(root, input.cwd ?? ".");
+      if (cwd !== root && !cwd.startsWith(root + sep)) throw new CliRejectedError(`cwd outside the walkthrough root: ${input.cwd}`);
+      const env = allowlistEnv([...(w.sandbox.local?.passEnv ?? []), ...(c.passEnv ?? [])]);
+      const version = await this.cliVersion(c, env, cwd);
+      const timeoutMs = Math.min(Math.max(1, input.timeoutS ?? 60), 600) * 1000;
+      const res = await run(c.binary, argv, { cwd, env, timeoutMs });
+      const shown = argv.map((a) => this.redactor.text(a));
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.txt`;
+      writeFileSync(join(this.dir(id), rel), this.redactor.text(`$ ${c.name} ${JSON.stringify(shown)}\nexit ${res.exitCode}\n\n${res.output}`));
+      const sha = sha256File(join(this.dir(id), rel));
+      const evidence: Evidence = {
+        id: evId, type: "response", kind: "cli_output", path: rel, executedBy: "core",
+        source: `run_cli:${c.name} ${shown.join(" ")}`.slice(0, 500), ...(input.checkId ? { checkId: input.checkId } : {}), sha256: sha, createdAt: this.ts(),
+      };
+      const log = appendCommandLog(join(this.dir(id), "commands.jsonl"), {
+        ts: evidence.createdAt, walkthroughId: id, ...(input.checkId ? { checkId: input.checkId } : {}), connector: c.name,
+        cli: { name: c.binary.split("/").pop()!, version, ...(c.profile ? { profile: c.profile } : {}) },
+        argv: shown, cwd: input.cwd ?? ".", exitCode: res.exitCode, outputSha256: sha, evidenceId: evId, executedBy: "core",
+      });
+      w.evidence.push(evidence);
+      w.commandLogHead = { seq: log.seq, hash: log.hash };
+      this.save(w);
+      return { evidence, log, exitCode: res.exitCode };
+    });
+  }
+
+  /** Verify the command log chain, its head, and that each entry's output hash still matches its evidence file. */
+  verifyCommandLog(id: string): { ok: boolean; entries: number; error?: string } {
+    const w = this.load(id);
+    const file = join(this.dir(id), "commands.jsonl");
+    const r = verifyCommandLog(file, w.commandLogHead);
+    if (!r.ok || !existsSync(file)) return r;
+    for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
+      const e = JSON.parse(line) as CommandLogEntry;
+      const ev = w.evidence.find((x) => x.id === e.evidenceId);
+      const p = ev && join(this.dir(id), ev.path);
+      if (!ev || ev.sha256 !== e.outputSha256 || !existsSync(p!) || sha256File(p!) !== e.outputSha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: evidence ${e.evidenceId} missing or modified` };
+    }
+    return r;
   }
 
   private sandboxCommand(w: Walkthrough, action: "up" | "down"): string {

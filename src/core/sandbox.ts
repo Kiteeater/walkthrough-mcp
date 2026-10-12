@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { parseCommand, UnsafeCommandError } from "./argv.js";
 import type { SandboxConfig } from "./types.js";
 
 export interface ExecResult { exitCode: number; output: string }
@@ -10,21 +11,28 @@ export interface Sandbox {
   logs(service: string): Promise<string>;
 }
 
-export function sh(command: string, cwd: string, timeoutMs = 300_000, env: NodeJS.ProcessEnv = process.env): Promise<ExecResult> {
+/** Run one command line WITHOUT a shell: parsed to argv and spawned as spawn(file, args). Unsafe syntax exits 126. */
+export function sh(command: string | string[], cwd: string, timeoutMs = 300_000, env: NodeJS.ProcessEnv = process.env): Promise<ExecResult> {
+  let parsed;
+  try { parsed = parseCommand(command, env); } catch (e) {
+    if (e instanceof UnsafeCommandError) return Promise.resolve({ exitCode: 126, output: `rejected: ${e.message}` });
+    throw e;
+  }
+  return run(parsed.file, parsed.args, { cwd, env: { ...env, ...parsed.env }, timeoutMs });
+}
+
+/** spawn(file, args) with captured output and a hard timeout; shell is never enabled. */
+export function run(file: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number; maxBytes?: number }): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn("bash", ["-lc", command], { cwd, env });
+    const child = spawn(file, args, { cwd: o.cwd, env: o.env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.stdout.on("data", (d) => (output += d));
-    child.stderr.on("data", (d) => (output += d));
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, output });
-    });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ exitCode: 127, output: String(err) });
-    });
+    const cap = o.maxBytes ?? 5_000_000;
+    const add = (d: Buffer) => { if (output.length < cap) output += d; };
+    const timer = setTimeout(() => child.kill("SIGKILL"), o.timeoutMs ?? 300_000);
+    child.stdout.on("data", add);
+    child.stderr.on("data", add);
+    child.on("close", (code) => { clearTimeout(timer); resolve({ exitCode: code ?? 1, output }); });
+    child.on("error", (err) => { clearTimeout(timer); resolve({ exitCode: 127, output: String(err) }); });
   });
 }
 
@@ -36,8 +44,8 @@ export class ComposeSandbox implements Sandbox {
   exec(command: string) { return sh(command, this.cfg.cwd); }
   async logs(service: string) {
     if (!/^[\w.-]+$/.test(service)) throw new Error(`invalid service name: ${service}`);
-    const tpl = this.cfg.logs ?? "docker compose logs --no-color {service}";
-    return (await sh(tpl.replaceAll("{service}", service), this.cfg.cwd)).output;
+    const tpl = parseCommand(this.cfg.logs ?? "docker compose logs --no-color {service}");
+    return (await sh([tpl.file, ...tpl.args].map((a) => a.replaceAll("{service}", service)), this.cfg.cwd)).output;
   }
 }
 
@@ -63,12 +71,18 @@ export class LocalSandbox implements Sandbox {
   async up(): Promise<ExecResult> {
     if (this.child && this.child.exitCode === null) return { exitCode: 0, output: "already running" };
     this.buffer = "";
-    const child = spawn("bash", ["-c", this.upCmd], { cwd: this.cfg.cwd, env: this.env, detached: true });
+    let cmd;
+    try { cmd = parseCommand(this.upCmd, this.env); } catch (e) {
+      if (e instanceof UnsafeCommandError) return { exitCode: 126, output: `rejected: ${e.message}` };
+      throw e;
+    }
+    const child = spawn(cmd.file, cmd.args, { cwd: this.cfg.cwd, env: { ...this.env, ...cmd.env }, detached: true, shell: false });
+    child.on("error", (err) => (this.buffer += String(err)));
     this.child = child;
     child.stdout?.on("data", (d) => (this.buffer += d));
     child.stderr?.on("data", (d) => (this.buffer += d));
     await new Promise((r) => setTimeout(r, 300));
-    if (child.exitCode !== null) return { exitCode: child.exitCode || 1, output: this.buffer };
+    if (child.exitCode !== null || child.pid === undefined) return { exitCode: child.exitCode || 127, output: this.buffer };
     return { exitCode: 0, output: `started pid ${child.pid}` };
   }
   async down(): Promise<ExecResult> {

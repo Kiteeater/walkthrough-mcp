@@ -164,4 +164,6 @@ export interface Walkthrough {
   checkResults?: CheckResult[];
   findings?: Finding[];
   signoff?: SignOff;
+  /** Last entry of the append-only run_cli command log (commands.jsonl); detects tail truncation. */
+  commandLogHead?: { seq: number; hash: string };
 }

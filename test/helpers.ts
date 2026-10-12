@@ -1,9 +1,9 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Redactor, WalkthroughCore, type Capturer, type Sandbox } from "../src/core/index.js";
+import { Redactor, WalkthroughCore, type Capturer, type ConnectorConfig, type Sandbox } from "../src/core/index.js";
 
-export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?: string; output?: string } = {}) {
+export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?: string; output?: string; connectors?: ConnectorConfig[] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "wt-"));
   const sandbox: Sandbox = {
     up: async () => ({ exitCode: 0, output: opts.output ?? "up ok" }),
@@ -13,7 +13,7 @@ export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?:
   };
   const capturer: Capturer = { screenshot: async (_u, out) => writeFileSync(out, Buffer.from("fake-png")) };
   const core = new WalkthroughCore({
-    root, sandboxFactory: () => sandbox, capturer, redactor: opts.redactor ?? new Redactor(opts.secrets ?? []),
+    root, sandboxFactory: () => sandbox, capturer, redactor: opts.redactor ?? new Redactor(opts.secrets ?? []), connectors: opts.connectors,
   });
   return { core, root };
 }
