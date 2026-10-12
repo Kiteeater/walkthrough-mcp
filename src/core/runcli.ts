@@ -37,6 +37,15 @@ export interface ConnectorConfig {
   /** mongo: connection string WITHOUT credentials (use the shell's own auth / a read-only user). */
   uri?: string;
   versionArgs?: string[];
+  /**
+   * Values accepted for `-n` (name server address). The agent may only pick one of these; if it omits `-n` and the
+   * list is non-empty, the first entry is appended by us. Default: none, so any `-n` is rejected (no pivot to other hosts).
+   */
+  namesrvs?: string[];
+  /** Message-body capping for subcommands that print message bodies: bodies are redacted, then cut to `maxChars`. */
+  messageBody?: { subcommands: string[]; maxChars: number };
+  /** Append `--profile <profile>` to argv (default true). False for CLIs without a profile flag; the name is still logged. */
+  appendProfile?: boolean;
   /** Host env var names passed to the CLI in addition to the sandbox defaults. */
   passEnv?: string[];
 }
@@ -61,12 +70,18 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
   },
   {
     name: "mqadmin", binary: "mqadmin",
-    allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["consumerProgress"], ["consumerStatus"], ["queryMsgById"], ["queryMsgByKey"], ["brokerStatus"]],
+    // Query-only subcommands (names as in `mqadmin help`). Write/admin ones (updateTopic, deleteTopic, sendMessage,
+    // resetOffsetByTime, updateSubGroup, wipeWritePerm, …) are simply absent and therefore rejected.
+    allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["topicClusterList"], ["consumerProgress"], ["consumerStatus"],
+      ["queryMsgById"], ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
     args: {
-      clusterList: ["-n"], topicList: ["-n"], topicStatus: ["-n", "-t"], topicRoute: ["-n", "-t"],
+      clusterList: ["-n"], topicList: ["-n"], topicStatus: ["-n", "-t"], topicRoute: ["-n", "-t"], topicClusterList: ["-n", "-t"],
       consumerProgress: ["-n", "-g"], consumerStatus: ["-n", "-g", "-i"], queryMsgById: ["-n", "-i"],
-      queryMsgByKey: ["-n", "-t", "-k"], brokerStatus: ["-n", "-b", "-c"],
+      queryMsgByKey: ["-n", "-t", "-k"], queryMsgByUniqueKey: ["-n", "-i", "-t"], brokerStatus: ["-n", "-b", "-c"],
     },
+    namesrvs: [], // set in config: the fixed name server address(es) the agent may query
+    messageBody: { subcommands: ["queryMsgById", "queryMsgByKey", "queryMsgByUniqueKey"], maxChars: 2048 },
+    appendProfile: false,
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
 ];
@@ -137,6 +152,7 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
   if (!prefix) throw new CliRejectedError(`${c.name}: subcommand not in whitelist: ${argv.slice(0, 2).join(" ")}`);
   const allowed = c.args?.[prefix.join(" ")] ?? [];
   const rest = argv.slice(prefix.length);
+  let sawNamesrv = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     const eq = a.startsWith("-") ? a.indexOf("=") : -1;
@@ -150,8 +166,14 @@ export function cliArgv(c: ConnectorConfig, argv: string[]): string[] {
     }
     if (/^--?[A-Za-z]/.test(value)) throw new CliRejectedError(`${c.name}: ${flag} value looks like a flag: ${JSON.stringify(value)}`);
     if (flag === "--region" && !(c.regions ?? []).includes(value)) throw new CliRejectedError(`${c.name}: region not in allowlist: ${JSON.stringify(value)}`);
+    if (c.namesrvs && flag === "-n") {
+      if (!c.namesrvs.includes(value)) throw new CliRejectedError(`${c.name}: -n name server not in allowlist: ${JSON.stringify(value)}`);
+      sawNamesrv = true;
+    }
   }
-  return c.profile ? [...argv, "--profile", c.profile] : argv;
+  let out = argv;
+  if (c.namesrvs && !sawNamesrv && c.namesrvs.length && allowed.includes("-n")) out = [...out, "-n", c.namesrvs[0]];
+  return c.profile && c.appendProfile !== false ? [...out, "--profile", c.profile] : out;
 }
 
 export interface CommandLogEntry {
@@ -197,4 +219,15 @@ export function verifyCommandLog(file: string, head?: { seq: number; hash: strin
 }
 
 /** Env vars that would redirect or re-credential a cloud CLI (endpoint, region, keys). Never passed to run_cli children. */
-export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_)/i;
+export const CLI_ENV_DENY = /^(ALIBABA_CLOUD_|ALICLOUD_|ALIYUN_|ACS_|NAMESRV_ADDR$|ROCKETMQ_)/i;
+
+/**
+ * Cap message bodies in query output: each `Message Body:` value (up to the next blank line) is passed through
+ * `redact` FIRST (so a secret is never cut in half and partially kept), then cut to `maxChars`.
+ */
+export function capMessageBodies(output: string, maxChars: number, redact: (s: string) => string): string {
+  return output.replace(/(Message Body:[ \t]*)([\s\S]*?)(?=\r?\n\s*\r?\n|$)/g, (_m, head: string, body: string) => {
+    const r = redact(body);
+    return r.length <= maxChars ? head + r : `${head}${r.slice(0, maxChars)}…[truncated ${r.length - maxChars} chars]`;
+  });
+}

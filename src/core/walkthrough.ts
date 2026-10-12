@@ -9,7 +9,7 @@ import { Redactor } from "./redact.js";
 import {
   appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
-  CLI_ENV_DENY,
+  CLI_ENV_DENY, capMessageBodies,
 } from "./runcli.js";
 import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
@@ -723,6 +723,7 @@ export class WalkthroughCore {
       const version = await this.cliVersion(c, env, cwd);
       const timeoutMs = Math.min(Math.max(1, input.timeoutS ?? 60), 600) * 1000;
       const res = await run(c.binary, argv, { cwd, env, timeoutMs });
+      if (c.messageBody?.subcommands.includes(argv[0])) res.output = capMessageBodies(res.output, c.messageBody.maxChars, (t) => this.redactor.text(t));
       const shown = argv.map((a) => this.redactor.text(a));
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.txt`;

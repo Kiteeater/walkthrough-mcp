@@ -302,6 +302,35 @@ trace to `pricing.js:3`: `HTTP 500 → Langfuse trace → Mongo doc → file:lin
 - **mongosh** never takes agent argv: only fixed `find` / `aggregate` / `countDocuments` templates; `$out`, `$merge`,
   `$where`, `$function`, `$accumulator` are rejected at any depth.
 
+### mqadmin (RocketMQ) read-only preset
+
+The built-in `mqadmin` connector only runs query subcommands. Each one has its own argument allowlist:
+
+| subcommand | allowed args |
+|---|---|
+| `clusterList`, `topicList` | `-n` |
+| `topicStatus`, `topicRoute`, `topicClusterList` | `-n`, `-t` |
+| `consumerProgress` | `-n`, `-g` |
+| `consumerStatus` | `-n`, `-g`, `-i` |
+| `brokerStatus` | `-n`, `-b`, `-c` |
+| `queryMsgById` | `-n`, `-i` |
+| `queryMsgByKey` | `-n`, `-t`, `-k` |
+| `queryMsgByUniqueKey` | `-n`, `-i`, `-t` |
+
+- Write and admin subcommands (`updateTopic`, `deleteTopic`, `sendMessage`, `resetOffsetByTime`, `updateSubGroup`,
+  `wipeWritePerm`, …) are rejected before anything is spawned. So is any argument not listed for the subcommand
+  (for example `--namesrvAddr`).
+- **The name server is fixed in config.** `-n` is accepted only when its value is in the connector's `namesrvs` list.
+  If `-n` is omitted, we append the first configured entry. The preset ships with an empty list, so you must set it,
+  e.g. `{ ...mqadmin, namesrvs: ["namesrv.internal:9876"] }`. `NAMESRV_ADDR` and `ROCKETMQ_*` are stripped from the
+  child env, so the address can't be redirected through the environment either.
+- **Credentials** (ACL access and secret keys) come only from mqadmin's own tools config file. They are never taken
+  from env or argv, and all output goes through the Redactor.
+- **Message bodies** printed by `queryMsgById`, `queryMsgByKey` and `queryMsgByUniqueKey` are redacted first, then cut
+  to `messageBody.maxChars` (default 2048) with a `…[truncated N chars]` marker, before being saved as evidence.
+- `profile` (optional) is a label recorded in the command log alongside the CLI name, version and output sha256. It
+  is not passed to mqadmin, which has no profile flag (`appendProfile: false`).
+
 `verify_command_log` recomputes the hash chain of `commands.jsonl` (each entry hashes its content plus the previous
 hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or
 truncated entries.

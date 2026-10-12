@@ -23,7 +23,7 @@ console.log("ok "+process.argv.slice(2).join(" "));
 
 function setup(extra: Partial<Record<string, string>> = {}) {
   const bin = mkdtempSync(join(tmpdir(), "wt-bin-"));
-  const connectors: ConnectorConfig[] = PRESET_CONNECTORS.map((c) => ({ ...c, binary: fakeBin(bin, c.name, extra[c.name]) }));
+  const connectors: ConnectorConfig[] = PRESET_CONNECTORS.map((c) => ({ ...c, binary: fakeBin(bin, c.name, extra[c.name]), ...(c.name === "mqadmin" ? { namesrvs: ["ns:9876"] } : {}) }));
   const { core, root } = mockCore({ secrets: [SECRET], connectors });
   const calls = () => (existsSync(join(bin, "calls.jsonl")) ? readFileSync(join(bin, "calls.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]) : []);
   const start = async () => (await core.startWalkthrough({ title: "cli", sandbox: { cwd: root, up: "true", down: "true" } })).id;
