@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,10 +9,16 @@ import { describe, expect, it } from "vitest";
  * The CLI top-level-awaits runFlow -> waitForUrl -> fetch(). If that fetch never settles and holds no
  * ref'd handle (here: a stub that returns a bare pending promise), the event loop drains and Node exits 13
  * with no output. waitForUrl must give every attempt a ref'd deadline so the run always settles.
- * Runs against dist/ (CI builds before testing).
+ * Runs against dist/ (`pretest` builds it).
  */
+const CLI = resolve("dist/cli/index.js");
 describe("exit 13: waitForUrl with a fetch that never settles", () => {
+  it("dist/cli/index.js exists (run via npm test so pretest builds it)", () => {
+    expect(existsSync(CLI), `${CLI} missing — run npm run build`).toBe(true);
+  });
+
   it("the CLI run settles with a timeout error instead of Node exiting 13", () => {
+    expect(existsSync(CLI), `${CLI} missing`).toBe(true);
     const dir = mkdtempSync(join(tmpdir(), "wt-exit13-"));
     const cfg = join(dir, "flow.json");
     writeFileSync(cfg, JSON.stringify({
@@ -22,10 +28,10 @@ describe("exit 13: waitForUrl with a fetch that never settles", () => {
     const script = join(dir, "run.mjs");
     writeFileSync(script, `globalThis.fetch = () => new Promise(() => {});
 process.argv = [process.argv[0], "walkthrough", "run", "--config", ${JSON.stringify(cfg)}, "--root", ${JSON.stringify(dir)}];
-await import(${JSON.stringify("file://" + resolve("dist/cli/index.js"))});`);
+await import(${JSON.stringify("file://" + CLI)});`);
     const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 20_000 });
-    expect(r.status, r.stderr).not.toBe(13);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/timed out waiting for http:\/\/127\.0\.0\.1:9\/health/);
+    expect(r.status, `exit ${r.status}; stderr: ${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain("timed out");
+    expect(r.stderr).toContain("timed out waiting for http://127.0.0.1:9/health");
   });
 });
