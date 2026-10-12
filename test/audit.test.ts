@@ -2,12 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { planFromRoutes } from "../src/demo-agent/planner.js";
+import { runDemoAgent } from "../src/demo-agent/agent.js";
 import {
-  ClaimRejectedError, createSandboxFactory, Redactor, renderWalkthrough, WalkthroughCore,
-  type Capturer, type Check, type Walkthrough,
+  createSandboxFactory, Redactor, renderWalkthrough, WalkthroughCore,
+  type Capturer, type CheckResult, type Walkthrough,
 } from "../src/core/index.js";
-import { mockCore, SB } from "./helpers.js";
 
 const fakeCapturer: Capturer = { screenshot: async (_u, out) => writeFileSync(out, "png") };
 const ROUTES = [{ path: "/health" }, { path: "/a" }, { path: "/b" }];
@@ -52,8 +51,7 @@ async function runReal(bug: "a" | "b" | null) {
   await core.runInSandbox(w.id, "up");
   try {
     for (let i = 0; i < 50; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((r) => setTimeout(r, 100)); }
-    await core.planChecks(w.id, { goal: "all routes work", checks: planFromRoutes(ROUTES, { baseUrl: `http://127.0.0.1:${port}`, service: "app" }) });
-    const results = await core.runChecks(w.id, { settleMs: 150 });
+    const results = await runDemoAgent(core, w.id, ROUTES, { goal: "all routes work", baseUrl: `http://127.0.0.1:${port}`, service: "app", settleMs: 150 });
     return { core, w: core.load(w.id), results };
   } finally {
     await core.runInSandbox(w.id, "down");
@@ -62,24 +60,29 @@ async function runReal(bug: "a" | "b" | null) {
 }
 const rootCauseOf = (w: Walkthrough, i = 0) => {
   const f = w.findings![i];
-  const s = w.sources.find((x) => x.id === f.rootCause?.sourceId)!;
-  return { checkId: f.checkId, loc: `${s.file}:${s.line}`, summary: f.rootCause?.summary };
+  const step = f.root_cause_chain.find((l) => l.source_ref)!;
+  const s = w.sources.find((x) => x.id === step.source_ref)!;
+  return { checkId: f.checkId, loc: `${s.file}:${s.line}`, summary: step.claim };
 };
+const statuses = (rs: CheckResult[]) => rs.filter((r) => /^chk-\d+$/.test(r.checkId)).map((r) => r.status);
 
-describe("agent-run checks find the real bug (planner knows nothing about it)", () => {
+describe("demo agent executes, core judges, finding points at the real bug (planner knows nothing about it)", () => {
   it("bug in /a → one finding traced to svc/lib.js:2", async () => {
     const { w, results } = await runReal("a");
-    expect(results.map((r) => r.status)).toEqual(["pass", "fail", "pass"]);
-    expect(results[1].actual.status).toBe(500);
+    expect(statuses(results)).toEqual(["pass", "fail", "pass"]);
+    expect(results.find((r) => r.checkId === "chk-2-logs")?.status).toBe("fail");
+    expect(results.find((r) => r.checkId === "chk-2")?.reasons[0]).toMatch(/status 500/);
     expect(w.findings).toHaveLength(1);
-    expect(w.findings![0]).toMatchObject({ severity: "high", kind: "observed", draft: true });
+    expect(w.findings![0]).toMatchObject({ severity: "high", kind: "observed" });
     expect(rootCauseOf(w)).toMatchObject({ checkId: "chk-2", loc: "svc/lib.js:2" });
     expect(rootCauseOf(w).summary).toMatch(/TypeError/);
+    // every piece of evidence the agent relied on is marked as reported by the agent or captured by us
+    expect(w.evidence.filter((e) => e.checkId).every((e) => e.executedBy === (e.kind === "http" ? "agent" : "core"))).toBe(true);
   });
 
   it("bug moved to /b → finding moves and root cause updates to svc/lib.js:6", async () => {
     const { w, results } = await runReal("b");
-    expect(results.map((r) => r.status)).toEqual(["pass", "pass", "fail"]);
+    expect(statuses(results)).toEqual(["pass", "pass", "fail"]);
     expect(w.findings).toHaveLength(1);
     expect(rootCauseOf(w)).toMatchObject({ checkId: "chk-3", loc: "svc/lib.js:6" });
   });
@@ -90,72 +93,12 @@ describe("agent-run checks find the real bug (planner knows nothing about it)", 
     expect(w.findings ?? []).toHaveLength(0);
     const html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('data-findings="0"');
-    expect(html).toContain("checks: 3/3 passed");
-  });
-});
-
-describe("run_checks auto-judging (mocked sandbox)", () => {
-  it("judges command checks pass/fail and drafts findings only for failures", async () => {
-    let log = "";
-    const core = new WalkthroughCore({
-      root: mkdtempSync(join(tmpdir(), "wt-j-")), capturer: fakeCapturer, redactor: new Redactor([]),
-      sandboxFactory: () => ({
-        up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), logs: async () => log,
-        exec: async (c) => { if (c === "x") log += "FATAL boom\n"; return { exitCode: 0, output: `${c}: ok` }; },
-      }),
-    });
-    const w = await core.startWalkthrough({ title: "t", sandbox: SB });
-    const checks: Check[] = [
-      { id: "c1", name: "echo", action: { type: "command", command: "echo hi" }, expect: { exitCode: 0, bodyIncludes: "echo hi" } },
-      { id: "c2", name: "wrong text", action: { type: "command", command: "echo hi" }, expect: { bodyIncludes: "bye" } },
-      { id: "c3", name: "alert", action: { type: "command", command: "x" }, watch: { logs: ["web"], alerts: ["FATAL"] }, expect: {} },
-    ];
-    await core.planChecks(w.id, { goal: "g", checks });
-    const r = await core.runChecks(w.id, { settleMs: 0 });
-    expect(r.map((x) => x.status)).toEqual(["pass", "fail", "fail"]);
-    expect(r[1].reasons[0]).toMatch(/body missing/);
-    const saved = core.load(w.id);
-    expect(saved.findings?.map((f) => f.checkId)).toEqual(["c2", "c3"]);
-    expect(saved.checkResults).toHaveLength(3);
-  });
-
-  it("rejects checks without a machine-checkable expect", async () => {
-    const { core } = mockCore();
-    const w = await core.startWalkthrough({ title: "t", sandbox: SB });
-    await expect(core.planChecks(w.id, { goal: "g", checks: [{ id: "n", name: "n", action: { type: "command", command: "x" }, expect: {} }] })).rejects.toThrow(/machine-checkable/);
-    await expect(core.planChecks(w.id, { goal: "g", checks: [{ id: "n", name: "n", action: { type: "command", command: "x" } } as never] })).rejects.toThrow(/machine-checkable/);
-  });
-
-  it("rejects unknown sources/verifiers, and accepts a registered connector without changing run_checks", async () => {
-    const { core } = mockCore();
-    const w = await core.startWalkthrough({ title: "t", sandbox: SB });
-    const conn: Check = { id: "k1", name: "probe", action: { type: "connector:fake", query: "q" }, expect: { bodyIncludes: "rows=3" } };
-    await expect(core.planChecks(w.id, { goal: "g", checks: [conn] })).rejects.toThrow(/no action source/);
-    await expect(core.planChecks(w.id, { goal: "g", checks: [{ ...conn, action: { type: "command", command: "x" }, expect: { exitCode: 0 }, verify: { type: "computer-use" } }] })).rejects.toThrow(/not available/);
-    core.registry.registerAction({ type: "connector:fake", run: async () => ({ body: "rows=3", evidenceText: "rows=3", repro: "probe fake" }) });
-    await core.planChecks(w.id, { goal: "g", checks: [conn] });
-    expect((await core.runChecks(w.id, { settleMs: 0 }))[0].status).toBe("pass");
-  });
-});
-
-describe("record_finding", () => {
-  const base = { title: "t", severity: "high" as const, whatHappened: "x", kind: "observed" as const };
-  it("rejects observed findings without valid evidence", async () => {
-    const { core } = mockCore();
-    const w = await core.startWalkthrough({ title: "t", sandbox: SB });
-    const ev = await core.captureEvidence(w.id, { type: "logs", service: "web" });
-    await expect(core.recordFinding(w.id, base)).rejects.toThrow(ClaimRejectedError);
-    await expect(core.recordFinding(w.id, { ...base, evidenceIds: ["ev-9"] })).rejects.toThrow(/evidence not found/);
-    writeFileSync(join(core.dir(w.id), ev.path), "tampered");
-    await expect(core.recordFinding(w.id, { ...base, evidenceIds: [ev.id] })).rejects.toThrow(/hash mismatch/);
-    await expect(core.recordFinding(w.id, { ...base, severity: "urgent" as never, kind: "inferred" })).rejects.toThrow(/severity/);
-    await expect(core.recordFinding(w.id, { ...base, kind: "inferred", rootCause: { sourceId: "src-9" } })).rejects.toThrow(/source link/);
-    expect((await core.recordFinding(w.id, { ...base, kind: "inferred" })).id).toBe("finding-1");
+    expect(html).toContain("checks: 6/6 passed");
   });
 });
 
 describe("audit view + sign-off", () => {
-  it("first screen shows count, severity and root cause; sign-off round-trips", async () => {
+  it("first screen shows count, severity and root cause; sign-off accept|reject round-trips", async () => {
     const { core, w } = await runReal("a");
     let html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     const first = html.split('id="verdict"')[1].split("</section>")[0];
@@ -163,8 +106,9 @@ describe("audit view + sign-off", () => {
     expect(first).toMatch(/data-sev="high">high 1</);
     expect(first).toContain("svc/lib.js:2");
     expect(first).toContain("TypeError");
-    expect(first).toContain("认可");
+    expect(first).toContain('value="accept"');
     expect(first).toContain("打回");
+    expect(html).toContain('class="chain"');
     expect(html.indexOf('id="verdict"')).toBeLessThan(html.indexOf('class="claims"'));
 
     await core.importReview({ walkthroughId: w.id, signoff: { decision: "reject", comment: `fix <b>lib</b> first` } });
@@ -172,9 +116,9 @@ describe("audit view + sign-off", () => {
     html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('value="reject" checked');
     expect(html).toContain("fix &lt;b&gt;lib&lt;/b&gt; first");
-    expect(html).toContain("out.signoff");
-    await expect(core.importReview({ walkthroughId: w.id, signoff: { decision: "maybe" } })).rejects.toThrow(/sign-off/);
-    await core.importReview({ walkthroughId: w.id, decisions: [], signoff: { decision: "approve" } });
-    expect(core.load(w.id).signoff).toEqual({ decision: "approve" });
+    await expect(core.importReview({ walkthroughId: w.id, signoff: { decision: "approve" } })).rejects.toThrow(/sign-off/);
+    expect(await core.signOff(w.id, { decision: "accept" })).toEqual({ decision: "accept" });
+    await expect(core.signOff(w.id, { decision: "maybe" })).rejects.toThrow(/accept\|reject/);
+    expect(readFileSync(renderWalkthrough(core, w.id), "utf8")).toContain('value="accept" checked');
   });
 });

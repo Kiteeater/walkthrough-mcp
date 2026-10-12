@@ -8,19 +8,28 @@ Built on WeZZard's walkthrough idea: audit the execution result, not the code.
 Humans only audit the **final result**: which problems the agent found, how it reported them, and the root-cause
 trace. Everything in between is the agent's job, with no human in the loop:
 
-1. The agent plans its checks (`plan_checks`). Every check needs a **machine-checkable expectation**
-   (`status`, `statusRange`, `bodyIncludes`, `exitCode`, or `watch.alerts`); a check without one is rejected.
-2. `run_checks` executes them in the sandbox, stores every response and log slice as sha256 evidence, and
-   **the core, not the agent, judges pass/fail** against the expectation.
-3. Each failed check auto-drafts an observed finding. The root cause is traced by grepping the captured logs for a
-   stack trace and mapping the first in-project frame to `file:line` (`link_source`).
-4. `render_walkthrough` produces an audit view. The first screen shows only conclusions: number of findings, a
+1. The agent plans its checks (`plan_checks`): `{id, intent, method: cli|mcp|ui|http|script, target,
+   expect{type: status|count|regex|threshold|absent, value}, severity_if_fail}`. A check without a machine-checkable
+   `expect` is rejected. The response carries `next_actions` telling the agent how to proceed with each check.
+2. **The agent executes every check itself** (its own tools, an external MCP, computer use) and submits the raw,
+   unedited output with `capture_evidence(type=submit, check_id, kind, source, content)`. walkthrough can also
+   capture screenshots and sandbox logs itself; evidence is marked "reported by agent" or "captured by walkthrough",
+   redacted, and sha256-hashed.
+3. `evaluate_check(check_id, evidence_ids)`: **the core judges pass / fail / inconclusive**. The call carries no
+   verdict, evidence must belong to that check and be unmodified, and nothing else can change the result.
+4. The agent records findings with `record_finding(title, severity, symptom, repro_steps[], root_cause_chain[{claim,
+   kind: observed|inferred, evidence_ids, source_ref?}])`. Observed steps must cite verified evidence.
+5. `render_walkthrough` produces an audit view. The first screen shows only conclusions: number of findings, a
    severity breakdown, and a one-line root cause (with the source line) per finding. Each finding expands into its
-   evidence chain; per-claim Agree/Flag is optional and collapsed.
-5. A human gives one report-level sign-off (认可 / 打回 + comment), exported to `review.json` and imported back.
+   root-cause chain and evidence; per-claim Agree/Flag is optional and collapsed.
+6. A human gives one report-level sign-off (`sign_off`: accept 认可 / reject 打回 + comment), in the page via
+   `review.json` + `import-review`, or through the tool.
 
-Planning belongs to the agent. The example's deterministic, rule-based planner lives in `src/demo-agent/`
-(outside the core), so the demo needs no LLM: it derives one generic check per declared route and knows nothing about bugs.
+Planning and execution belong to the agent. The example's deterministic stand-in lives in `src/demo-agent/`
+(outside the core), so the demo needs no LLM: it derives generic checks per declared route (2xx + no error alerts
+in the logs during that request), sends the requests itself, submits the output, and traces stack frames from the
+log evidence. It knows nothing about bugs. Run it with
+`node dist/demo-agent/run.js examples/walkthrough.config.json examples/orders-service/routes.json`.
 
 ## Install
 
@@ -81,17 +90,17 @@ and `walkthrough-html.png` (a screenshot of the rendered page).
 }
 ```
 
-Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `capture_evidence` (screenshot | logs),
-`link_source` (file + line), `record_claim` (observed | inferred), `plan_checks`, `run_checks`,
-`record_finding` (title, severity critical/high/medium/low, what happened, repro, root cause = source link and/or
-log evidence id, evidence ids, observed | inferred), `render_walkthrough`.
+Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `plan_checks`, `capture_evidence`
+(submit | screenshot | logs), `evaluate_check`, `record_finding`, `link_source` (file + line), `record_claim`
+(observed | inferred), `render_walkthrough`, `sign_off` (accept | reject).
 
 ### Pluggable sources (seam for environment connectors)
 
-Check actions (`action.type`: `http`, `command`, later `connector:<name>`), observations (`observe[].source`:
-`log`, later `connector:<name>`) and verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use`
-reserved) all go through a registry in `src/core/registry.ts`. New read-only connectors register there without
-touching `run_checks` or `record_finding`; their results become sha256 evidence like everything else.
+Action sources (`http`, `command`, later `connector:<name>`), observe sources (`log`, later `connector:<name>`) and
+verifiers (`verify.type`: `rule` today; `script`, `playwright`, `computer-use` reserved) go through a registry in
+`src/core/registry.ts`. `evaluate_check` only talks to the verifier registry. Action and observe sources are the
+execution seam the agent uses (the demo agent sends its HTTP requests through `http`), so a new read-only
+connector is registered there and its output is submitted and judged like everything else.
 
 ## Evidence format
 

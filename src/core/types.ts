@@ -1,5 +1,7 @@
-/** `response` = captured HTTP response or command output from a check. */
+/** `response` = HTTP response / command output / MCP result submitted for a check. */
 export type EvidenceType = "screenshot" | "logs" | "response";
+/** Design-doc evidence kinds for capture_evidence. */
+export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {
@@ -9,8 +11,13 @@ export interface Evidence {
   path: string;
   sha256: string;
   createdAt: string;
-  /** What produced it: a URL for screenshots, `docker:<service>` for logs. */
+  /** What produced it: a URL for screenshots, `docker:<service>` for logs, `agent:<tool>` for submitted output. */
   source: string;
+  kind?: EvidenceKind;
+  /** Check this evidence was submitted for. */
+  checkId?: string;
+  /** `core` = we executed/captured it; `agent` = raw output reported by the host agent. */
+  executedBy?: "core" | "agent";
 }
 
 export type ClaimKind = "observed" | "inferred";
@@ -47,57 +54,69 @@ export interface LogObserve { source: "log"; service: string }
 export interface ConnectorObserve { source: `connector:${string}`; [key: string]: unknown }
 export type ObserveSpec = LogObserve | ConnectorObserve;
 
+/** How the agent executes a check (design doc §工具). The MCP never executes it; the agent does. */
+export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
+/**
+ * Machine-checkable expectation, judged by the core over the submitted evidence:
+ * - status: `value` = number | [min, max]; read from `HTTP <code>` in http evidence (or `"status": n` JSON)
+ * - count: `value` = { pattern?, eq?, min?, max? } (or a number = eq); counts regex matches, or JSON array length / non-empty lines
+ * - regex: `value` = pattern that must match
+ * - threshold: `value` = { pattern (one capture group with a number), min?, max? }
+ * - absent: `value` = pattern that must NOT match
+ */
+export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent";
+export interface Expect { type: ExpectType; value: unknown }
+
 export interface Check {
   id: string;
-  name: string;
-  action: CheckAction;
-  /** Typed observation sources captured around the action (e.g. `{source: "log", service}`). */
-  observe?: ObserveSpec[];
-  /** Shorthand: log services to watch, and alert patterns that must NOT appear in observed logs. */
-  watch?: { logs?: string[]; alerts?: string[] };
-  /** Verifier type; `rule` (default) ships in v1, `script` / `playwright` / `computer-use` are reserved. */
+  intent: string;
+  method: CheckMethod;
+  /** What to act on: URL, command, MCP tool, page… (free text for the agent; not executed by the core). */
+  target: string;
+  expect: Expect;
+  severity_if_fail: Severity;
+  /** Verifier type; `rule` (default) ships now, `script` / `playwright` / `computer-use` are reserved. */
   verify?: { type: string; [key: string]: unknown };
-  /** Expected result. HTTP: `status` (exact) or `statusRange` [min,max]; command: `exitCode`. */
-  expect: { status?: number; statusRange?: [number, number]; bodyIncludes?: string; exitCode?: number };
 }
 
+export type Verdict = "pass" | "fail" | "inconclusive";
+
+/** Written only by evaluate_check (the core). There is no API for the agent to set or change it. */
 export interface CheckResult {
   checkId: string;
-  status: "pass" | "fail";
+  status: Verdict;
   reasons: string[];
-  actual: { status?: number; exitCode?: number };
   evidenceIds: string[];
-  findingId?: string;
   at: string;
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";
 
-export interface RootCause {
-  /** Source link id (file:line) the failure was traced to. */
-  sourceId?: string;
-  /** Logs evidence id containing the stack trace / error. */
-  logEvidenceId?: string;
-  /** One-line explanation, e.g. the error message. */
-  summary?: string;
+/** One step of a root-cause chain: symptom → … → cause. Observed steps must cite verified evidence. */
+export interface RootCauseLink {
+  claim: string;
+  kind: ClaimKind;
+  evidence_ids: string[];
+  /** Source link id (file:line) from link_source. */
+  source_ref?: string;
 }
 
 export interface Finding {
   id: string;
   title: string;
   severity: Severity;
-  whatHappened: string;
-  repro: string[];
-  rootCause?: RootCause;
+  symptom: string;
+  repro_steps: string[];
+  root_cause_chain: RootCauseLink[];
+  /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
+  /** observed only if every chain step is observed. */
   kind: ClaimKind;
-  /** Auto-drafted from a failed check (agent can refine it). */
-  draft?: boolean;
   checkId?: string;
 }
 
 export interface SignOff {
-  decision: "approve" | "reject";
+  decision: "accept" | "reject";
   comment?: string;
 }
 

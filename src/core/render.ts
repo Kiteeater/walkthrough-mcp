@@ -20,7 +20,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const evidenceHtml = (ids: string[]) => ids.map((evId) => {
     const ev = w.evidence.find((e) => e.id === evId);
     if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
-    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.type)} · ${esc(ev.source)} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
+    const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? "reported by agent" : "captured by walkthrough"} · ${esc(ev.source)} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
     const body = ev.type === "screenshot"
       ? `<img src="${esc(ev.path)}" alt="${esc(ev.id)}">`
       : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>(empty)</em>"}</pre>`;
@@ -33,11 +33,14 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
   const results = w.checkResults ?? [];
   const SEV = ["critical", "high", "medium", "low"] as const;
   const sevCount = (s: string) => findings.filter((f) => f.severity === s).length;
+  /** Deepest chain step with a source ref (else the last step) is the root cause shown on the first screen. */
+  const rootStep = (f: (typeof findings)[number]) => [...f.root_cause_chain].reverse().find((l) => l.source_ref) ?? f.root_cause_chain.at(-1);
   const rootCauseLine = (f: (typeof findings)[number]) => {
-    const src = srcOf(f.rootCause?.sourceId);
-    if (!src) return f.rootCause?.summary ? esc(f.rootCause.summary) : "<em>root cause not traced</em>";
+    const step = rootStep(f);
+    const src = srcOf(step?.source_ref);
+    if (!src) return step ? esc(step.claim) : "<em>root cause not traced</em>";
     const code = core.sourceLine(src.file, src.line);
-    return `<code class="loc">${esc(src.file)}:${src.line}</code> — ${esc(f.rootCause?.summary ?? src.note ?? "")}${code ? `<div class="code"><code>${src.line} | ${esc(code)}</code></div>` : ""}`;
+    return `<code class="loc">${esc(src.file)}:${src.line}</code> — ${esc(src.note ?? step?.claim ?? "")}${code ? `<div class="code"><code>${src.line} | ${esc(code)}</code></div>` : ""}`;
   };
   const passed = results.filter((r) => r.status === "pass").length;
   const verdict = `<section class="verdict" id="verdict">
@@ -51,27 +54,29 @@ ${w.goal ? `<p class="goal">Goal: ${esc(w.goal)}</p>` : ""}
 <div class="rc">Root cause: ${rootCauseLine(f)}</div><a href="#${esc(f.id)}" onclick="document.getElementById('${esc(f.id)}').open=true">evidence chain ▸</a></li>`).join("\n")}</ol>
 <div class="signoff" data-prior="${esc(w.signoff?.decision ?? "")}">
 <b>报告签核 Sign-off:</b>
-<label><input type="radio" name="signoff" value="approve"${w.signoff?.decision === "approve" ? " checked" : ""}> 认可</label>
+<label><input type="radio" name="signoff" value="accept"${w.signoff?.decision === "accept" ? " checked" : ""}> 认可</label>
 <label><input type="radio" name="signoff" value="reject"${w.signoff?.decision === "reject" ? " checked" : ""}> 打回</label>
 <textarea id="signoff-comment" placeholder="comment">${esc(w.signoff?.comment ?? "")}</textarea>
 <button id="export">Export review.json</button>
-${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">Signed: <b>${w.signoff.decision === "approve" ? "认可" : "打回"}</b>${w.signoff.comment ? ` — ${esc(w.signoff.comment)}` : ""}</div>` : ""}
+${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">Signed: <b>${w.signoff.decision === "accept" ? "认可" : "打回"}</b>${w.signoff.comment ? ` — ${esc(w.signoff.comment)}` : ""}</div>` : ""}
 </div>
 </section>`;
   const findingDetails = findings.map((f) => {
-    const src = srcOf(f.rootCause?.sourceId);
-    const chain = [...new Set([...(f.rootCause?.logEvidenceId ? [f.rootCause.logEvidenceId] : []), ...f.evidenceIds])];
-    return `<details class="finding" id="${esc(f.id)}"><summary><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${esc(f.title)}${f.draft ? ' <span class="meta">(auto-drafted from ' + esc(f.checkId ?? "check") + ")</span>" : ""}</summary>
-<p><b>What happened:</b> ${esc(f.whatHappened)}</p>
-${f.repro.length ? `<p><b>Repro:</b></p><ol>${f.repro.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
-<p><b>Root cause trace:</b> ${f.rootCause?.logEvidenceId ? `stack trace in ${esc(f.rootCause.logEvidenceId)}` : "no log evidence"}${src ? ` → <code>${esc(src.file)}:${src.line}</code> (${esc(src.id)})` : ""}</p>
-<p><b>Evidence chain:</b></p>${evidenceHtml(chain)}
+    const steps = f.root_cause_chain.map((l, i) => {
+      const src = srcOf(l.source_ref);
+      return `<li class="step"><span class="badge ${esc(l.kind)}">${esc(l.kind)}</span> ${esc(l.claim)}${src ? ` → <code>${esc(src.file)}:${src.line}</code>` : ""}${l.evidence_ids.length ? ` <span class="meta">[${esc(l.evidence_ids.join(", "))}]</span>` : ""}${i < f.root_cause_chain.length - 1 ? " ↓" : ""}</li>`;
+    }).join("");
+    return `<details class="finding" id="${esc(f.id)}"><summary><span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${esc(f.title)}${f.checkId ? ' <span class="meta">(from ' + esc(f.checkId) + ")</span>" : ""}</summary>
+<p><b>Symptom:</b> ${esc(f.symptom)}</p>
+${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
+<p><b>Root-cause chain:</b></p><ol class="chain">${steps}</ol>
+<p><b>Evidence:</b></p>${evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
   const checksTable = (w.checks ?? []).length ? `<details class="checks"><summary>Checks the agent ran (${results.length})</summary>
-<table><tr><th>check</th><th>expected</th><th>result</th><th>evidence</th></tr>${(w.checks ?? []).map((c) => {
+<table><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr>${(w.checks ?? []).map((c) => {
     const r = results.find((x) => x.checkId === c.id);
-    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.name)}</td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
+    return `<tr class="${esc(r?.status ?? "notrun")}"><td>${esc(c.id)} ${esc(c.intent)}<div class="meta">${esc(c.method)}: ${esc(c.target)}</div></td><td><code>${esc(JSON.stringify(c.expect))}</code></td><td>${esc(r?.status ?? "not run")}${r?.reasons.length ? `: ${esc(r.reasons.join("; "))}` : ""}</td><td>${esc((r?.evidenceIds ?? []).join(", "))}</td></tr>`;
   }).join("")}</table></details>` : "";
 
   const sections = w.claims.map((c, i) => {
@@ -113,7 +118,7 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 .code code{display:block;background:#f6f8fa;padding:.3rem .5rem;margin-top:.2rem;white-space:pre-wrap}
 .signoff{margin-top:1rem;padding-top:.75rem;border-top:1px solid #ddd}.signoff textarea{width:100%;height:3rem;margin:.4rem 0}
 details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0}summary{cursor:pointer;font-weight:600}
-table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}Commands ran as host child processes without isolation.</p>` : ""}

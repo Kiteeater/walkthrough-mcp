@@ -16,21 +16,21 @@ img{max-width:100%;border:1px solid #ccc}pre{background:#f6f8fa;padding:.5rem;ov
 .code code{display:block;background:#f6f8fa;padding:.3rem .5rem;margin-top:.2rem;white-space:pre-wrap}
 .signoff{margin-top:1rem;padding-top:.75rem;border-top:1px solid #ddd}.signoff textarea{width:100%;height:3rem;margin:.4rem 0}
 details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0}summary{cursor:pointer;font-weight:600}
-table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}
 </style></head><body>
 <h1>Sample change: order totals from line items (local backend)</h1>
 <p><span class="badge local" title="local run, not isolated">本地运行、未隔离</span> Commands ran as host child processes without isolation.</p>
-<p class="meta">walkthrough wt-20261012190204-dd3de4 · 1 findings · 5 checks · 2 claims · 11 evidence items</p>
+<p class="meta">walkthrough wt-20261012191517-2cf7ff · 1 findings · 10 checks · 2 claims · 12 evidence items</p>
 <section class="verdict" id="verdict">
 <div class="headline" data-findings="1">发现 <b>1</b> 个问题 · 1 finding</div>
 <div class="sev"><span class="chip critical" data-sev="critical">critical 0</span><span class="chip high" data-sev="high">high 1</span><span class="chip medium" data-sev="medium">medium 0</span><span class="chip low" data-sev="low">low 0</span>
-<span class="checks-sum">checks: 4/5 passed</span></div>
+<span class="checks-sum">checks: 8/10 passed</span></div>
 <p class="goal">Goal: Verify every declared route of orders-service still works after the change</p>
 <ol class="finding-list"><li data-finding="finding-1"><span class="chip high">high</span> <span class="badge observed">observed</span> <b>GET /api/orders — status 500, expected 200-299</b>
 <div class="rc">Root cause: <code class="loc">examples/orders-service/orders.js:9</code> — TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)<div class="code"><code>9 | return order.items.reduce((sum, item) =&gt; sum + item.price * item.qty, 0);</code></div></div><a href="#finding-1" onclick="document.getElementById('finding-1').open=true">evidence chain ▸</a></li></ol>
 <div class="signoff" data-prior="reject">
 <b>报告签核 Sign-off:</b>
-<label><input type="radio" name="signoff" value="approve"> 认可</label>
+<label><input type="radio" name="signoff" value="accept"> 认可</label>
 <label><input type="radio" name="signoff" value="reject" checked> 打回</label>
 <textarea id="signoff-comment" placeholder="comment">fix the traced root cause, then re-run the walkthrough</textarea>
 <button id="export">Export review.json</button>
@@ -38,11 +38,15 @@ table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px soli
 </div>
 </section>
 <h2>Findings — evidence chain</h2>
-<details class="finding" id="finding-1"><summary><span class="chip high">high</span> GET /api/orders — status 500, expected 200-299 <span class="meta">(auto-drafted from chk-3)</span></summary>
-<p><b>What happened:</b> GET /api/orders failed: status 500, expected 200-299; alert &quot;Error:&quot; in logs. Logs show &quot;TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)&quot; at examples/orders-service/orders.js:9.</p>
+<details class="finding" id="finding-1"><summary><span class="chip high">high</span> GET /api/orders — status 500, expected 200-299 <span class="meta">(from chk-3)</span></summary>
+<p><b>Symptom:</b> chk-3: status 500, expected 200-299 | chk-3-logs: found /Error:|Unhandled|FATAL/: &quot;Error:&quot;. app logged &quot;TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)&quot;.</p>
 <p><b>Repro:</b></p><ol><li><code>Start the sandbox: exec node server.js</code></li><li><code>curl -i -X GET &quot;http://localhost:3000/api/orders&quot;</code></li></ol>
-<p><b>Root cause trace:</b> stack trace in ev-6 → <code>examples/orders-service/orders.js:9</code> (src-1)</p>
-<p><b>Evidence chain:</b></p><figure><div class="meta">ev-6 · logs · local:app (during chk-3) · sha256 bfb35223444b… · 2026-10-12T19:02:05.055Z</div><pre>GET /api/orders
+<p><b>Root-cause chain:</b></p><ol class="chain"><li class="step"><span class="badge observed">observed</span> GET /api/orders answers 2xx: FAIL — status 500, expected 200-299 <span class="meta">[ev-6]</span> ↓</li><li class="step"><span class="badge observed">observed</span> no error alerts in app logs during GET /api/orders: FAIL — found /Error:|Unhandled|FATAL/: &quot;Error:&quot; <span class="meta">[ev-7]</span> ↓</li><li class="step"><span class="badge observed">observed</span> the stack trace&#39;s first in-project frame is examples/orders-service/orders.js:9 (TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)) → <code>examples/orders-service/orders.js:9</code> <span class="meta">[ev-7]</span></li></ol>
+<p><b>Evidence:</b></p><figure><div class="meta">ev-6 · http · reported by agent · agent:fetch curl -i -X GET &quot;http://localhost:3000/api/orders&quot; · sha256 40ac1618b108… · 2026-10-12T19:15:18.186Z</div><pre>GET http://localhost:3000/api/orders
+HTTP 500 Internal Server Error
+
+{&quot;error&quot;:&quot;internal error&quot;}</pre></figure>
+<figure><div class="meta">ev-7 · log · captured by walkthrough · local:app · sha256 bfb35223444b… · 2026-10-12T19:15:18.187Z</div><pre>GET /api/orders
 request failed: GET /api/orders
 TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)
     at orderTotal (/workspace/walkthrough-mcp/examples/orders-service/orders.js:9:22)
@@ -54,13 +58,9 @@ TypeError: Cannot read properties of undefined (reading &#39;reduce&#39;)
     at parserOnIncoming (node:_http_server:1141:12)
     at HTTPParser.parserOnHeadersComplete (node:_http_common:118:17)
 </pre></figure>
-<figure><div class="meta">ev-5 · response · GET /api/orders · sha256 40ac1618b108… · 2026-10-12T19:02:05.054Z</div><pre>GET http://localhost:3000/api/orders
-HTTP 500 Internal Server Error
-
-{&quot;error&quot;:&quot;internal error&quot;}</pre></figure>
 </details>
-<details class="checks"><summary>Checks the agent ran (5)</summary>
-<table><tr><th>check</th><th>expected</th><th>result</th><th>evidence</th></tr><tr class="pass"><td>chk-1 GET /health</td><td><code>{&quot;statusRange&quot;:[200,299]}</code></td><td>pass</td><td>ev-1, ev-2</td></tr><tr class="pass"><td>chk-2 GET /</td><td><code>{&quot;statusRange&quot;:[200,299]}</code></td><td>pass</td><td>ev-3, ev-4</td></tr><tr class="fail"><td>chk-3 GET /api/orders</td><td><code>{&quot;statusRange&quot;:[200,299]}</code></td><td>fail: status 500, expected 200-299; alert &quot;Error:&quot; in logs</td><td>ev-5, ev-6</td></tr><tr class="pass"><td>chk-4 GET /api/orders/1</td><td><code>{&quot;statusRange&quot;:[200,299]}</code></td><td>pass</td><td>ev-7, ev-8</td></tr><tr class="pass"><td>chk-5 GET /api/orders/3</td><td><code>{&quot;statusRange&quot;:[200,299]}</code></td><td>pass</td><td>ev-9, ev-10</td></tr></table></details>
+<details class="checks"><summary>Checks the agent ran (10)</summary>
+<table><tr><th>check</th><th>expected (judged by core)</th><th>result</th><th>evidence</th></tr><tr class="pass"><td>chk-1 GET /health answers 2xx<div class="meta">http: GET http://localhost:3000/health</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>pass</td><td>ev-2</td></tr><tr class="pass"><td>chk-1-logs no error alerts in app logs during GET /health<div class="meta">cli: logs:app (delta during chk-1)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>pass</td><td>ev-3</td></tr><tr class="pass"><td>chk-2 GET / answers 2xx<div class="meta">http: GET http://localhost:3000/</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>pass</td><td>ev-4</td></tr><tr class="pass"><td>chk-2-logs no error alerts in app logs during GET /<div class="meta">cli: logs:app (delta during chk-2)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>pass</td><td>ev-5</td></tr><tr class="fail"><td>chk-3 GET /api/orders answers 2xx<div class="meta">http: GET http://localhost:3000/api/orders</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>fail: status 500, expected 200-299</td><td>ev-6</td></tr><tr class="fail"><td>chk-3-logs no error alerts in app logs during GET /api/orders<div class="meta">cli: logs:app (delta during chk-3)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>fail: found /Error:|Unhandled|FATAL/: &quot;Error:&quot;</td><td>ev-7</td></tr><tr class="pass"><td>chk-4 GET /api/orders/1 answers 2xx<div class="meta">http: GET http://localhost:3000/api/orders/1</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>pass</td><td>ev-8</td></tr><tr class="pass"><td>chk-4-logs no error alerts in app logs during GET /api/orders/1<div class="meta">cli: logs:app (delta during chk-4)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>pass</td><td>ev-9</td></tr><tr class="pass"><td>chk-5 GET /api/orders/3 answers 2xx<div class="meta">http: GET http://localhost:3000/api/orders/3</div></td><td><code>{&quot;type&quot;:&quot;status&quot;,&quot;value&quot;:[200,299]}</code></td><td>pass</td><td>ev-10</td></tr><tr class="pass"><td>chk-5-logs no error alerts in app logs during GET /api/orders/3<div class="meta">cli: logs:app (delta during chk-5)</div></td><td><code>{&quot;type&quot;:&quot;absent&quot;,&quot;value&quot;:&quot;Error:|Unhandled|FATAL&quot;}</code></td><td>pass</td><td>ev-11</td></tr></table></details>
 <details class="claims"><summary>Per-claim review (optional, 2 claims)</summary>
 <div class="summary" id="summary">
 <span>observed: <b data-count="observed">1</b></span>
@@ -73,7 +73,7 @@ HTTP 500 Internal Server Error
 <p><span class="badge local" title="local run, not isolated">本地运行、未隔离</span> <span class="badge observed">observed</span> Yes: the home page rendered and lists the order endpoints.</p>
 
 <div class="review agree">Review: <strong>agree</strong> — <span class="review-note">home page screenshot matches</span></div>
-<figure><div class="meta">ev-11 · screenshot · http://localhost:3000/ · sha256 4ec21b2a10bb… · 2026-10-12T19:02:06.579Z</div><img src="evidence/ev-11.png" alt="ev-11"></figure>
+<figure><div class="meta">ev-12 · screenshot · captured by walkthrough · http://localhost:3000/ · sha256 4ec21b2a10bb… · 2026-10-12T19:15:19.706Z</div><img src="evidence/ev-12.png" alt="ev-12"></figure>
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
 <input class="note" placeholder="note (optional)" value="home page screenshot matches"><span class="state"></span></div>
 </section>
@@ -88,7 +88,7 @@ HTTP 500 Internal Server Error
 </section>
 </details>
 <script>
-const WID="wt-20261012190204-dd3de4";const decisions={};
+const WID="wt-20261012191517-2cf7ff";const decisions={};
 document.querySelectorAll(".claim").forEach(s=>{
   const st=s.querySelector(".state");if(s.dataset.prior){decisions[s.dataset.claim]=s.dataset.prior;st.textContent=s.dataset.prior;}
   s.querySelectorAll("button[data-d]").forEach(b=>b.onclick=()=>{decisions[s.dataset.claim]=b.dataset.d;st.textContent=b.dataset.d;});

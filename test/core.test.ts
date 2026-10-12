@@ -9,7 +9,7 @@ describe("core", () => {
     const { core, root } = mockCore();
     const w = core.startWalkthrough({ title: "t", sandbox: SB, id: "wt-fixed" });
     const ev = await core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" });
-    expect(Object.keys(ev).sort()).toEqual(["createdAt", "id", "path", "sha256", "source", "type"]);
+    expect(Object.keys(ev).sort()).toEqual(["createdAt", "executedBy", "id", "kind", "path", "sha256", "source", "type"]);
     const file = join(root, ".walkthrough", "wt-fixed", ev.path);
     expect(ev.path).toBe("evidence/ev-1.png");
     expect(sha256File(file)).toBe(ev.sha256);
