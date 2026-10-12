@@ -198,8 +198,17 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
 - **Provenance**: agent-reported HAR/screenshots alone give at most `pass_needs_review`, same as other imports.
 - **No computer use on the host?** `capture_page(check_id, url)` makes walkthrough load the page with Playwright and
   store screenshot + HAR + DOM text as core-executed evidence (needs `npx playwright install chromium`; CI e2e has it).
-  It has no SSRF policy of its own (the browser loads whatever the page references): use it only against your own
-  service inside the sandbox.
+  It uses the **same policy as replay** (needs `replay.allowHosts`): the URL is pre-checked before a browser starts,
+  and every main-frame navigation, including each redirect hop, is intercepted (`route`) and fetched by walkthrough's
+  own fetcher (allowlist + IP rules, DNS resolved once, connection pinned to that IP), then handed to Chromium. So
+  the main document can't be redirected or DNS-rebound to a forbidden address. Navigations and sub-resources are
+  logged in the `capture_page` entry of `commands.jsonl`.
+  **Known gap:** sub-resources (scripts, images, XHR/fetch, iframes, websockets) are loaded by Chromium itself with its
+  own DNS: they are logged, **not blocked**, and not pinned. A page on an allowlisted host can make the browser request
+  internal addresses. Tracked in [#11](https://github.com/Kiteeater/walkthrough-mcp/issues/11); until then use
+  `capture_page` only against your own service inside the sandbox.
+- **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
+  `?code=…` (e.g. a product or error code) shows up as `[REDACTED]`; judge on the status/body instead.
 
 ### replay_request (core-executed)
 
@@ -219,11 +228,16 @@ Configure it in `walkthrough.config.json` (no `replay` block → replay is disab
 - Host must be in `allowHosts` (optionally `host:port`). Redirects are not followed automatically: each hop goes
   through the allowlist and IP checks again (max 3).
 - IP policy, checked on the address actually connected to (DNS resolved once per hop, connection pinned to that IP and
-  the socket's remote address re-checked, so DNS rebinding can't swap it): cloud metadata (`169.254.169.254`,
-  `fd00:ec2::254`, `100.100.100.200`) is **always** denied; private (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`,
-  `fc00::/7`), link-local (`169.254/16`, `fe80::/10`) and loopback (`127/8`, `::1`) are denied unless the CIDR is
-  listed in `allowCidrs`. Loopback exceptions must be exact hosts (`127.0.0.1/32`, `::1/128`); wider loopback ranges
-  are ignored. IPv4-mapped IPv6 (`::ffff:127.0.0.1`, `::ffff:a9fe:a9fe`) is normalised to IPv4 first.
+  the socket's remote address re-checked, so DNS rebinding can't swap it):
+  - cloud metadata (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`) is **always** denied, even if listed;
+  - private (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `fc00::/7`), link-local (`169.254/16`, `fe80::/10`),
+    loopback (`127/8`, `::1`), `0/8`, multicast (`224/4`, `ff00::/8`), reserved (`240/4`), benchmarking
+    (`198.18/15`), Teredo (`2001::/32`) and NAT64 local-use (`64:ff9b:1::/48`) are denied unless the CIDR is listed
+    in `allowCidrs`. The allowed private/loopback scope is exactly the configured CIDRs; loopback exceptions must be
+    exact hosts (`127.0.0.1/32`, `::1/128`), wider loopback ranges are ignored;
+  - IPv6 forms that embed an IPv4 address are judged by the IPv4 rules: IPv4-mapped `::ffff:0:0/96`
+    (`::ffff:127.0.0.1`, `::ffff:a9fe:a9fe`), IPv4-compatible `::/96` (`::127.0.0.1`), NAT64 `64:ff9b::/96`
+    (`64:ff9b::a9fe:a9fe`) and 6to4 `2002::/16` (`2002:a9fe:a9fe::1`). To allow one, list the IPv4 form.
 - The local demo lists `127.0.0.1/32` explicitly; nothing is reachable on loopback by default.
 
 Demo (`node examples/ui-demo/run.mjs`, part of `examples/run-e2e.sh`): the orders page calls `/api/orders` and shows

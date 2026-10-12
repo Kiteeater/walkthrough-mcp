@@ -13,6 +13,11 @@ if (!f) fail("no high finding for ui-orders");
 const ids = f.evidenceIds.map(ev);
 if (!ids.some((e) => e.type === "screenshot" && e.executedBy === "agent")) fail("finding does not cite the agent screenshot");
 if (!ids.some((e) => e.type === "har" && e.executedBy === "core" && e.source.startsWith("replay:"))) fail("finding does not cite the core replay");
+for (const l of f.root_cause_chain) {
+  const evs = l.evidence_ids.map(ev);
+  if (evs.length && evs.every((e) => e.executedBy === "agent" || e.type === "screenshot") && l.kind === "observed") fail(`step "${l.claim}" relies only on agent/screenshot evidence but is observed`);
+}
+if (!f.root_cause_chain.some((l) => l.kind === "observed" && l.evidence_ids.map(ev).some((e) => e.executedBy === "core"))) fail("no observed step backed by core evidence");
 const log = readFileSync(join(dir, "commands.jsonl"), "utf8");
 if (!/"type":"replay".*"status":500/.test(log)) fail("replay 500 not in command log");
 const html = readFileSync(join(dir, "index.html"), "utf8");

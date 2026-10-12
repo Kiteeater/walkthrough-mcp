@@ -52,7 +52,8 @@ try {
     symptom: "The orders page renders a red error banner instead of the order list.",
     repro_steps: [`open ${base}/orders`, `GET ${base}/api/orders → 500`],
     root_cause_chain: [
-      { claim: "the page shows the error banner (screenshot, human audit only)", kind: "observed", evidence_ids: [shot.id] },
+      // Backed only by the agent's screenshot (agent-reported, never judged) → inferred, not observed.
+      { claim: "the page shows the error banner (agent screenshot, human audit only)", kind: "inferred", evidence_ids: [shot.id] },
       { claim: "GET /api/orders → 500: agent's HAR, confirmed by walkthrough's own replay", kind: "observed", evidence_ids: [har.id, replay.id] },
       { claim: "listOrders → orderTotal reads items of legacy order 3, which has none", kind: "inferred", evidence_ids: [], source_ref: srcLink.id },
     ],
