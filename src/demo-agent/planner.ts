@@ -6,44 +6,33 @@ import { DEFAULT_ALERTS, type Check } from "../core/index.js";
 /** A route declared by the service under test. Carries no knowledge of which route is buggy. */
 export interface RouteSpec { method?: string; path: string; expectStatus?: number; expectIncludes?: string }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
- * Deterministic rule-based planner (no LLM): every declared route gets the same generic check —
- * request it, expect a 2xx (or the declared status), and watch the service logs for error alerts.
+ * Every declared route gets the same generic checks (design-doc schema):
+ * - `chk-N`: request it, expect a 2xx (or the declared status)
+ * - `chk-N-logs`: the service logs during that request contain no error alerts
+ * - `chk-N-body` (only if declared): the body contains the declared text
  */
 export function planFromRoutes(routes: RouteSpec[], opts: { baseUrl: string; service?: string; alerts?: string[] }): Check[] {
-  return routes.map((r, i) => {
+  const base = opts.baseUrl.replace(/\/$/, "");
+  const alerts = (opts.alerts ?? DEFAULT_ALERTS).map(escapeRe).join("|");
+  return routes.flatMap((r, i): Check[] => {
     const method = (r.method ?? "GET").toUpperCase();
-    return {
-      id: `chk-${i + 1}`,
-      name: `${method} ${r.path}`,
-      action: { type: "http", method, url: opts.baseUrl.replace(/\/$/, "") + r.path },
-      watch: { logs: [opts.service ?? "app"], alerts: opts.alerts ?? DEFAULT_ALERTS },
-      expect: {
-        ...(r.expectStatus ? { status: r.expectStatus } : { statusRange: [200, 299] as [number, number] }),
-        ...(r.expectIncludes ? { bodyIncludes: r.expectIncludes } : {}),
-      },
-    };
+    const id = `chk-${i + 1}`;
+    const target = `${method} ${base}${r.path}`;
+    return [
+      { id, intent: `${method} ${r.path} answers ${r.expectStatus ?? "2xx"}`, method: "http", target,
+        expect: { type: "status", value: r.expectStatus ?? [200, 299] }, severity_if_fail: "high" },
+      { id: `${id}-logs`, intent: `no error alerts in ${opts.service ?? "app"} logs during ${method} ${r.path}`, method: "cli",
+        target: `logs:${opts.service ?? "app"} (delta during ${id})`, expect: { type: "absent", value: alerts }, severity_if_fail: "high" },
+      ...(r.expectIncludes ? [{ id: `${id}-body`, intent: `${method} ${r.path} body includes the declared text`, method: "http" as const, target,
+        expect: { type: "regex" as const, value: escapeRe(r.expectIncludes) }, severity_if_fail: "medium" as const }] : []),
+    ];
   });
 }
 
 export function loadRoutes(file: string): RouteSpec[] {
   const data = JSON.parse(readFileSync(file, "utf8")) as { routes?: RouteSpec[] } | RouteSpec[];
   return Array.isArray(data) ? data : data.routes ?? [];
-}
-
-
-// CLI: node dist/demo-agent/planner.js <flow-template.json> <routes.json> <out.json>
-// Writes a flow config whose plan.checks were derived from the routes (the agent's "plan").
-if (process.argv[1]?.endsWith("planner.js") && process.argv.length >= 5) {
-  const [tpl, routesFile, out] = process.argv.slice(2);
-  const { writeFileSync } = await import("node:fs");
-  const { dirname, resolve, relative } = await import("node:path");
-  const cfg = JSON.parse(readFileSync(tpl, "utf8"));
-  const { baseUrl = "http://localhost:3000", service = "app", goal } = cfg.agent ?? {};
-  cfg.plan = { goal, checks: planFromRoutes(loadRoutes(routesFile), { baseUrl, service }) };
-  delete cfg.agent;
-  cfg.sandbox.cwd = relative(dirname(resolve(out)), resolve(dirname(tpl), cfg.sandbox.cwd));
-  writeFileSync(out, JSON.stringify(cfg, null, 2));
-  console.log(`planned ${cfg.plan.checks.length} checks -> ${out}`);
 }

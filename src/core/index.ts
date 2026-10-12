@@ -15,6 +15,7 @@ export * from "./checks.js";
 export * from "./registry.js";
 export * from "./sources.js";
 export * from "./schemas.js";
+export * from "./settle.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
 export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer()): WalkthroughCore {

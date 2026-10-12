@@ -9,9 +9,8 @@ export LC_ALL=C
 
 npm run build >/dev/null
 rm -rf .walkthrough examples/output
-# The demo agent plans its checks from the declared routes (no knowledge of any bug).
-node dist/demo-agent/planner.js examples/walkthrough.local.json examples/orders-service/routes.json examples/.generated.local.json
-result="$(node dist/cli/index.js run --sandbox local --config examples/.generated.local.json --root .)"
+# The demo agent plans from the declared routes (no knowledge of any bug), executes, submits evidence; the core judges.
+result="$(node dist/demo-agent/run.js examples/walkthrough.local.json examples/orders-service/routes.json --sandbox local --root .)"
 echo "$result"
 id="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$result")"
 dir=".walkthrough/$id"
@@ -34,7 +33,7 @@ grep -q '本地运行、未隔离' "$dir/index.html"
 grep -q 'class="review flag"' "$dir/index.html"
 grep -q 'data-count="agreed">1<' "$dir/index.html"
 grep -q 'id="verdict"' "$dir/index.html"
-node -e 'const w=require(process.argv[1]);console.log("checks:",w.checkResults.map(r=>r.checkId+"="+r.status).join(" "));for(const f of w.findings||[])console.log("finding:",f.severity,f.title)' "$PWD/$dir/walkthrough.json"
+node examples/assert-findings.mjs "$dir/walkthrough.json"
 if grep -rqF "$DEMO_API_KEY" "$dir"; then echo "secret leaked into output" >&2; exit 1; fi
 
 mkdir -p examples/output && cp -r "$dir"/. examples/output/

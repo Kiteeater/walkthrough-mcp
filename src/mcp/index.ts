@@ -3,7 +3,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createCore, planChecksShape, recordFindingShape, renderWalkthrough } from "../core/index.js";
+import {
+  captureEvidenceShape, captureInput, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
+} from "../core/index.js";
 
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
 const server = new McpServer({ name: "walkthrough-mcp", version: "0.1.0" });
@@ -26,9 +28,8 @@ server.tool("run_in_sandbox", "Bring the sandbox up/down or exec a command in it
   id, action: z.enum(["up", "down", "exec"]), command: z.string().optional(),
 }, (a) => wrap(() => core.runInSandbox(a.id, a.action, a.command))());
 
-server.tool("capture_evidence", "Capture a screenshot (url) or docker logs (service) as hashed evidence.", {
-  id, type: z.enum(["screenshot", "logs"]), url: z.string().optional(), service: z.string().optional(),
-}, (a) => wrap(() => core.captureEvidence(a.id, a.type === "screenshot" ? { type: "screenshot", url: a.url ?? "" } : { type: "logs", service: a.service ?? "" }))());
+server.tool("capture_evidence", "Submit raw output you obtained yourself (type=submit, check_id, kind, source, content), or have walkthrough capture a screenshot/logs. Stored redacted with sha256.",
+  captureEvidenceShape, (a) => wrap(() => core.captureEvidence(a.id, captureInput(a)))());
 
 server.tool("link_source", "Link a source file and line.", {
   id, file: z.string(), line: z.number().int(), note: z.string().optional(),
@@ -39,14 +40,17 @@ server.tool("record_claim", "Record a claim. observed claims must cite existing,
   evidenceIds: z.array(z.string()).optional(), sourceIds: z.array(z.string()).optional(),
 }, (a) => wrap(() => core.recordClaim(a.id, a))());
 
-server.tool("plan_checks", "Record the checks you will run for a goal. Each needs a machine-checkable expect.", planChecksShape,
+server.tool("plan_checks", "Record your check plan. Every check needs a machine-checkable expect. Returns next_actions.", planChecksShape,
   (a) => wrap(() => core.planChecks(a.id, { goal: a.goal, checks: a.checks as never }))());
 
-server.tool("run_checks", "Run all planned checks in the sandbox, capture evidence, auto-judge pass/fail, draft findings.", { id },
-  (a) => wrap(() => core.runChecks(a.id))());
+server.tool("evaluate_check", "walkthrough judges a check pass/fail/inconclusive from its evidence. You cannot set or override the verdict.", evaluateCheckShape,
+  (a) => wrap(() => core.evaluateCheck(a.id, { checkId: a.check_id, evidenceIds: a.evidence_ids }))());
 
-server.tool("record_finding", "Record a finding. observed findings must cite existing, unmodified evidence ids.", recordFindingShape,
+server.tool("record_finding", "Record a finding with symptom, repro_steps and root_cause_chain. Observed steps must cite verified evidence.", recordFindingShape,
   (a) => wrap(() => core.recordFinding(a.id, a))());
+
+server.tool("sign_off", "Record the human's report-level decision (accept|reject).", signOffShape,
+  (a) => wrap(() => core.signOff(a.id, a))());
 
 server.tool("render_walkthrough", "Render the walkthrough to static HTML.", { id },
   (a) => wrap(() => ({ html: renderWalkthrough(core, a.id) }))());

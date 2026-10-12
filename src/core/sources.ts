@@ -1,6 +1,7 @@
-import { judge } from "./checks.js";
+import { withDeadline } from "./settle.js";
+import { evaluateExpect } from "./checks.js";
 import { Registry } from "./registry.js";
-import type { CommandAction, HttpAction, LogObserve } from "./types.js";
+import type { Check, CommandAction, HttpAction, LogObserve } from "./types.js";
 
 export const httpSource = {
   type: "http" as const,
@@ -8,8 +9,10 @@ export const httpSource = {
     const method = a.method ?? "GET";
     const repro = `curl -i -X ${method} ${JSON.stringify(a.url)}`;
     try {
-      const res = await fetch(a.url, { method, body: a.body, headers: a.headers, signal: AbortSignal.timeout(15_000) });
-      const body = await res.text();
+      const { res, body } = await withDeadline(async (signal) => {
+        const r = await fetch(a.url, { method, body: a.body, headers: a.headers, signal });
+        return { res: r, body: await r.text() };
+      }, 15_000, `${method} ${a.url}`);
       return { status: res.status, body, repro, evidenceText: `${method} ${a.url}\nHTTP ${res.status} ${res.statusText}\n\n${body}` };
     } catch (e) {
       return { body: "", repro, evidenceText: `${method} ${a.url}\nrequest failed: ${(e as Error).message}` };
@@ -36,7 +39,7 @@ export const logSource = {
   },
 };
 
-export const ruleVerifier = { type: "rule", verify: async (...args: Parameters<typeof judge>) => judge(...args) };
+export const ruleVerifier = { type: "rule", verify: async (check: Check, texts: string[]) => evaluateExpect(check.expect, texts) };
 
 /** Built-in sources. PR 5 adds `connector:<name>` action/observe sources via the same registry. */
 export function defaultRegistry(): Registry {

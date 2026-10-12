@@ -1,7 +1,7 @@
 {
-  "id": "wt-20261012190204-dd3de4",
+  "id": "wt-20261012191517-2cf7ff",
   "title": "Sample change: order totals from line items (local backend)",
-  "createdAt": "2026-10-12T19:02:04.068Z",
+  "createdAt": "2026-10-12T19:15:17.197Z",
   "sandbox": {
     "backend": "local",
     "cwd": "/workspace/walkthrough-mcp/examples/orders-service",
@@ -19,105 +19,147 @@
       "id": "run-1",
       "command": "exec node server.js",
       "exitCode": 0,
-      "output": "started pid 252072",
-      "createdAt": "2026-10-12T19:02:04.373Z"
+      "output": "started pid 266143",
+      "createdAt": "2026-10-12T19:15:17.503Z"
     },
     {
       "id": "run-2",
       "command": "kill local process group",
       "exitCode": 0,
       "output": "stopped local process\n",
-      "createdAt": "2026-10-12T19:02:06.590Z"
+      "createdAt": "2026-10-12T19:15:19.717Z"
     }
   ],
   "evidence": [
     {
       "id": "ev-1",
-      "type": "response",
-      "path": "evidence/ev-1.txt",
-      "sha256": "449f91274e0709429cdb0a82706d5fd443b60d0fb672ed7b55155b2bef8ad6ed",
-      "createdAt": "2026-10-12T19:02:04.645Z",
-      "source": "GET /health"
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-1.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "sha256": "d4fdfa161dc64ddc6c3d70fbdcd18158d36207e754dc6b8ca6fb4aabb34059c4",
+      "createdAt": "2026-10-12T19:15:17.564Z"
     },
     {
       "id": "ev-2",
-      "type": "logs",
-      "path": "evidence/ev-2.log",
-      "sha256": "b2b440e7cacd673582ff81cfd235100f20c15e8389f248e85965d5a97c93b9c2",
-      "createdAt": "2026-10-12T19:02:04.645Z",
-      "source": "local:app (during chk-1)"
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-2.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3000/health\"",
+      "checkId": "chk-1",
+      "sha256": "449f91274e0709429cdb0a82706d5fd443b60d0fb672ed7b55155b2bef8ad6ed",
+      "createdAt": "2026-10-12T19:15:17.771Z"
     },
     {
       "id": "ev-3",
-      "type": "response",
-      "path": "evidence/ev-3.txt",
-      "sha256": "26272c441e2ee24811226030d1bf3e0cddf97212524deb86e05c1b277fb4acf1",
-      "createdAt": "2026-10-12T19:02:04.849Z",
-      "source": "GET /"
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-3.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-1-logs",
+      "sha256": "b2b440e7cacd673582ff81cfd235100f20c15e8389f248e85965d5a97c93b9c2",
+      "createdAt": "2026-10-12T19:15:17.771Z"
     },
     {
       "id": "ev-4",
-      "type": "logs",
-      "path": "evidence/ev-4.log",
-      "sha256": "e120c1625982c2fd785ce9ccb81d519b2bc8ba59c68469557db040d4cd0293d7",
-      "createdAt": "2026-10-12T19:02:04.850Z",
-      "source": "local:app (during chk-2)"
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-4.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3000/\"",
+      "checkId": "chk-2",
+      "sha256": "26272c441e2ee24811226030d1bf3e0cddf97212524deb86e05c1b277fb4acf1",
+      "createdAt": "2026-10-12T19:15:17.978Z"
     },
     {
       "id": "ev-5",
-      "type": "response",
-      "path": "evidence/ev-5.txt",
-      "sha256": "40ac1618b1083e89f81a2920469ded2d0fa410be49930fed602bd932e430772b",
-      "createdAt": "2026-10-12T19:02:05.054Z",
-      "source": "GET /api/orders"
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-5.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-2-logs",
+      "sha256": "e120c1625982c2fd785ce9ccb81d519b2bc8ba59c68469557db040d4cd0293d7",
+      "createdAt": "2026-10-12T19:15:17.979Z"
     },
     {
       "id": "ev-6",
-      "type": "logs",
-      "path": "evidence/ev-6.log",
-      "sha256": "bfb35223444ba0d69275da5c33e9d5269a198cfffd3d90c6c31c430ae7a70459",
-      "createdAt": "2026-10-12T19:02:05.055Z",
-      "source": "local:app (during chk-3)"
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-6.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3000/api/orders\"",
+      "checkId": "chk-3",
+      "sha256": "40ac1618b1083e89f81a2920469ded2d0fa410be49930fed602bd932e430772b",
+      "createdAt": "2026-10-12T19:15:18.186Z"
     },
     {
       "id": "ev-7",
-      "type": "response",
-      "path": "evidence/ev-7.txt",
-      "sha256": "e075e008cde6dcea62506a186bec4a119fc0fd92849b17654c6340dd14e65015",
-      "createdAt": "2026-10-12T19:02:05.263Z",
-      "source": "GET /api/orders/1"
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-7.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-3-logs",
+      "sha256": "bfb35223444ba0d69275da5c33e9d5269a198cfffd3d90c6c31c430ae7a70459",
+      "createdAt": "2026-10-12T19:15:18.187Z"
     },
     {
       "id": "ev-8",
-      "type": "logs",
-      "path": "evidence/ev-8.log",
-      "sha256": "10c988a6404e8de48a008c3fcca882f90c2902b951cdc4f151fbaca120c4eaea",
-      "createdAt": "2026-10-12T19:02:05.264Z",
-      "source": "local:app (during chk-4)"
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-8.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3000/api/orders/1\"",
+      "checkId": "chk-4",
+      "sha256": "e075e008cde6dcea62506a186bec4a119fc0fd92849b17654c6340dd14e65015",
+      "createdAt": "2026-10-12T19:15:18.396Z"
     },
     {
       "id": "ev-9",
-      "type": "response",
-      "path": "evidence/ev-9.txt",
-      "sha256": "c6cac6598554eaa7ca3cf9e1af962bf0615fedc28f40fb4fc9d431346ebf0661",
-      "createdAt": "2026-10-12T19:02:05.467Z",
-      "source": "GET /api/orders/3"
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-9.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-4-logs",
+      "sha256": "10c988a6404e8de48a008c3fcca882f90c2902b951cdc4f151fbaca120c4eaea",
+      "createdAt": "2026-10-12T19:15:18.397Z"
     },
     {
       "id": "ev-10",
-      "type": "logs",
-      "path": "evidence/ev-10.log",
-      "sha256": "0935dbe80e55abe1f8342444e91ae0971f55d66add5472464bd7d867a6725930",
-      "createdAt": "2026-10-12T19:02:05.468Z",
-      "source": "local:app (during chk-5)"
+      "type": "response",
+      "kind": "http",
+      "path": "evidence/ev-10.txt",
+      "executedBy": "agent",
+      "source": "agent:fetch curl -i -X GET \"http://localhost:3000/api/orders/3\"",
+      "checkId": "chk-5",
+      "sha256": "c6cac6598554eaa7ca3cf9e1af962bf0615fedc28f40fb4fc9d431346ebf0661",
+      "createdAt": "2026-10-12T19:15:18.604Z"
     },
     {
       "id": "ev-11",
+      "type": "logs",
+      "kind": "log",
+      "path": "evidence/ev-11.log",
+      "source": "local:app",
+      "executedBy": "core",
+      "checkId": "chk-5-logs",
+      "sha256": "0935dbe80e55abe1f8342444e91ae0971f55d66add5472464bd7d867a6725930",
+      "createdAt": "2026-10-12T19:15:18.605Z"
+    },
+    {
+      "id": "ev-12",
       "type": "screenshot",
-      "path": "evidence/ev-11.png",
+      "kind": "screenshot",
+      "path": "evidence/ev-12.png",
+      "source": "http://localhost:3000/",
+      "executedBy": "core",
       "sha256": "4ec21b2a10bb15ef3d0c20bd2a4d145a66e46e55394629a9ae255ea0cf3d1e3d",
-      "createdAt": "2026-10-12T19:02:06.579Z",
-      "source": "http://localhost:3000/"
+      "createdAt": "2026-10-12T19:15:19.706Z"
     }
   ],
   "sources": [
@@ -141,7 +183,7 @@
       "conclusion": "Yes: the home page rendered and lists the order endpoints.",
       "kind": "observed",
       "evidenceIds": [
-        "ev-11"
+        "ev-12"
       ],
       "sourceIds": [],
       "review": {
@@ -168,128 +210,128 @@
   "checks": [
     {
       "id": "chk-1",
-      "name": "GET /health",
-      "action": {
-        "type": "http",
-        "method": "GET",
-        "url": "http://localhost:3000/health"
-      },
-      "watch": {
-        "logs": [
-          "app"
-        ],
-        "alerts": [
-          "Error:",
-          "Unhandled",
-          "FATAL"
-        ]
-      },
+      "intent": "GET /health answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3000/health",
       "expect": {
-        "statusRange": [
+        "type": "status",
+        "value": [
           200,
           299
         ]
-      }
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-1-logs",
+      "intent": "no error alerts in app logs during GET /health",
+      "method": "cli",
+      "target": "logs:app (delta during chk-1)",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
     },
     {
       "id": "chk-2",
-      "name": "GET /",
-      "action": {
-        "type": "http",
-        "method": "GET",
-        "url": "http://localhost:3000/"
-      },
-      "watch": {
-        "logs": [
-          "app"
-        ],
-        "alerts": [
-          "Error:",
-          "Unhandled",
-          "FATAL"
-        ]
-      },
+      "intent": "GET / answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3000/",
       "expect": {
-        "statusRange": [
+        "type": "status",
+        "value": [
           200,
           299
         ]
-      }
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-2-logs",
+      "intent": "no error alerts in app logs during GET /",
+      "method": "cli",
+      "target": "logs:app (delta during chk-2)",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
     },
     {
       "id": "chk-3",
-      "name": "GET /api/orders",
-      "action": {
-        "type": "http",
-        "method": "GET",
-        "url": "http://localhost:3000/api/orders"
-      },
-      "watch": {
-        "logs": [
-          "app"
-        ],
-        "alerts": [
-          "Error:",
-          "Unhandled",
-          "FATAL"
-        ]
-      },
+      "intent": "GET /api/orders answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3000/api/orders",
       "expect": {
-        "statusRange": [
+        "type": "status",
+        "value": [
           200,
           299
         ]
-      }
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-3-logs",
+      "intent": "no error alerts in app logs during GET /api/orders",
+      "method": "cli",
+      "target": "logs:app (delta during chk-3)",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
     },
     {
       "id": "chk-4",
-      "name": "GET /api/orders/1",
-      "action": {
-        "type": "http",
-        "method": "GET",
-        "url": "http://localhost:3000/api/orders/1"
-      },
-      "watch": {
-        "logs": [
-          "app"
-        ],
-        "alerts": [
-          "Error:",
-          "Unhandled",
-          "FATAL"
-        ]
-      },
+      "intent": "GET /api/orders/1 answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3000/api/orders/1",
       "expect": {
-        "statusRange": [
+        "type": "status",
+        "value": [
           200,
           299
         ]
-      }
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-4-logs",
+      "intent": "no error alerts in app logs during GET /api/orders/1",
+      "method": "cli",
+      "target": "logs:app (delta during chk-4)",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
     },
     {
       "id": "chk-5",
-      "name": "GET /api/orders/3",
-      "action": {
-        "type": "http",
-        "method": "GET",
-        "url": "http://localhost:3000/api/orders/3"
-      },
-      "watch": {
-        "logs": [
-          "app"
-        ],
-        "alerts": [
-          "Error:",
-          "Unhandled",
-          "FATAL"
-        ]
-      },
+      "intent": "GET /api/orders/3 answers 2xx",
+      "method": "http",
+      "target": "GET http://localhost:3000/api/orders/3",
       "expect": {
-        "statusRange": [
+        "type": "status",
+        "value": [
           200,
           299
         ]
-      }
+      },
+      "severity_if_fail": "high"
+    },
+    {
+      "id": "chk-5-logs",
+      "intent": "no error alerts in app logs during GET /api/orders/3",
+      "method": "cli",
+      "target": "logs:app (delta during chk-5)",
+      "expect": {
+        "type": "absent",
+        "value": "Error:|Unhandled|FATAL"
+      },
+      "severity_if_fail": "high"
     }
   ],
   "checkResults": [
@@ -297,70 +339,95 @@
       "checkId": "chk-1",
       "status": "pass",
       "reasons": [],
-      "actual": {
-        "status": 200
-      },
       "evidenceIds": [
-        "ev-1",
         "ev-2"
       ],
-      "at": "2026-10-12T19:02:04.646Z"
+      "at": "2026-10-12T19:15:17.773Z"
+    },
+    {
+      "checkId": "chk-1-logs",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-3"
+      ],
+      "at": "2026-10-12T19:15:17.774Z"
     },
     {
       "checkId": "chk-2",
       "status": "pass",
       "reasons": [],
-      "actual": {
-        "status": 200
-      },
       "evidenceIds": [
-        "ev-3",
         "ev-4"
       ],
-      "at": "2026-10-12T19:02:04.851Z"
+      "at": "2026-10-12T19:15:17.980Z"
+    },
+    {
+      "checkId": "chk-2-logs",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-5"
+      ],
+      "at": "2026-10-12T19:15:17.981Z"
     },
     {
       "checkId": "chk-3",
       "status": "fail",
       "reasons": [
-        "status 500, expected 200-299",
-        "alert \"Error:\" in logs"
+        "status 500, expected 200-299"
       ],
-      "actual": {
-        "status": 500
-      },
       "evidenceIds": [
-        "ev-5",
         "ev-6"
       ],
-      "at": "2026-10-12T19:02:05.056Z",
-      "findingId": "finding-1"
+      "at": "2026-10-12T19:15:18.188Z"
+    },
+    {
+      "checkId": "chk-3-logs",
+      "status": "fail",
+      "reasons": [
+        "found /Error:|Unhandled|FATAL/: \"Error:\""
+      ],
+      "evidenceIds": [
+        "ev-7"
+      ],
+      "at": "2026-10-12T19:15:18.189Z"
     },
     {
       "checkId": "chk-4",
       "status": "pass",
       "reasons": [],
-      "actual": {
-        "status": 200
-      },
       "evidenceIds": [
-        "ev-7",
         "ev-8"
       ],
-      "at": "2026-10-12T19:02:05.264Z"
+      "at": "2026-10-12T19:15:18.398Z"
+    },
+    {
+      "checkId": "chk-4-logs",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-9"
+      ],
+      "at": "2026-10-12T19:15:18.399Z"
     },
     {
       "checkId": "chk-5",
       "status": "pass",
       "reasons": [],
-      "actual": {
-        "status": 200
-      },
       "evidenceIds": [
-        "ev-9",
         "ev-10"
       ],
-      "at": "2026-10-12T19:02:05.469Z"
+      "at": "2026-10-12T19:15:18.606Z"
+    },
+    {
+      "checkId": "chk-5-logs",
+      "status": "pass",
+      "reasons": [],
+      "evidenceIds": [
+        "ev-11"
+      ],
+      "at": "2026-10-12T19:15:18.607Z"
     }
   ],
   "findings": [
@@ -368,22 +435,40 @@
       "id": "finding-1",
       "title": "GET /api/orders — status 500, expected 200-299",
       "severity": "high",
-      "whatHappened": "GET /api/orders failed: status 500, expected 200-299; alert \"Error:\" in logs. Logs show \"TypeError: Cannot read properties of undefined (reading 'reduce')\" at examples/orders-service/orders.js:9.",
-      "repro": [
+      "symptom": "chk-3: status 500, expected 200-299 | chk-3-logs: found /Error:|Unhandled|FATAL/: \"Error:\". app logged \"TypeError: Cannot read properties of undefined (reading 'reduce')\".",
+      "repro_steps": [
         "Start the sandbox: exec node server.js",
         "curl -i -X GET \"http://localhost:3000/api/orders\""
       ],
-      "rootCause": {
-        "logEvidenceId": "ev-6",
-        "sourceId": "src-1",
-        "summary": "TypeError: Cannot read properties of undefined (reading 'reduce')"
-      },
+      "root_cause_chain": [
+        {
+          "claim": "GET /api/orders answers 2xx: FAIL — status 500, expected 200-299",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-6"
+          ]
+        },
+        {
+          "claim": "no error alerts in app logs during GET /api/orders: FAIL — found /Error:|Unhandled|FATAL/: \"Error:\"",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-7"
+          ]
+        },
+        {
+          "claim": "the stack trace's first in-project frame is examples/orders-service/orders.js:9 (TypeError: Cannot read properties of undefined (reading 'reduce'))",
+          "kind": "observed",
+          "evidence_ids": [
+            "ev-7"
+          ],
+          "source_ref": "src-1"
+        }
+      ],
       "evidenceIds": [
-        "ev-5",
-        "ev-6"
+        "ev-6",
+        "ev-7"
       ],
       "kind": "observed",
-      "draft": true,
       "checkId": "chk-3"
     }
   ],
