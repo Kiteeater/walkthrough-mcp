@@ -73,15 +73,22 @@ export function redactHar(text: string, redactor: Redactor): string {
     const rq = e.request ?? ({} as HarEntry["request"]), rs = e.response ?? ({} as HarEntry["response"]);
     rq.url = redactUrl(String(rq.url ?? ""), redactor);
     rq.headers = hdrs(rq.headers); rq.cookies = cookies(rq.cookies); rq.queryString = qs(rq.queryString);
-    if (rq.postData?.text) rq.postData.text = scrub(rq.postData.text, redactor);
+    if (rq.postData?.text) rq.postData.text = scrub(redactUrlsIn(rq.postData.text, redactor), redactor);
     if (rq.postData?.params) rq.postData.params = rq.postData.params.map((p) => ({ ...p, value: SECRET_PARAM.test(p.name) ? MASK : scrub(String(p.value ?? ""), redactor) }));
     rs.headers = hdrs(rs.headers); rs.cookies = cookies(rs.cookies);
-    if (rs.content?.text) rs.content.text = scrub(rs.content.text, redactor);
+    if (rs.content?.text) {
+      // URLs embedded in bodies (e.g. page HTML with ?token=… links) go through redactUrl; base64 text bodies are
+      // decoded first so the redaction actually sees them.
+      const c = rs.content as { text: string; encoding?: string; mimeType?: string };
+      if (c.encoding === "base64" && /^(text\/|application\/(json|javascript|xml|x-www-form-urlencoded)|image\/svg)/i.test(c.mimeType ?? "")) {
+        c.text = Buffer.from(scrub(redactUrlsIn(Buffer.from(c.text, "base64").toString("utf8"), redactor), redactor), "utf8").toString("base64");
+      } else if (c.encoding !== "base64") c.text = scrub(redactUrlsIn(c.text, redactor), redactor);
+    }
     if (typeof rs.redirectURL === "string") rs.redirectURL = redactUrl(rs.redirectURL as string, redactor);
   }
   // Final pass over every string value (not the serialised text, so JSON escaping stays valid) catches fields we
   // don't model (pages, _initiator, comments…).
-  const walk = (v: unknown): unknown => typeof v === "string" ? scrub(v, redactor) : Array.isArray(v) ? v.map(walk)
+  const walk = (v: unknown): unknown => typeof v === "string" ? scrub(/https?:\/\//.test(v) && v.length < 1_000_000 ? redactUrlsIn(v, redactor) : v, redactor) : Array.isArray(v) ? v.map(walk)
     : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [scrub(k, redactor), walk(x)])) : v;
   return JSON.stringify(walk(har), null, 2);
 }

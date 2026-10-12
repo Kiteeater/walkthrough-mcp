@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PlaywrightCapturer, Redactor, redactUrlsIn, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { PlaywrightCapturer, Redactor, redactHar, redactUrlsIn, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
 import { SB } from "./helpers.js";
 
 const require = createRequire(import.meta.url);
@@ -50,9 +50,9 @@ navigator.serviceWorker ? navigator.serviceWorker.register("/sw.js").then(() => 
 });
 afterAll(() => srv.close());
 
-function mk(resolver: (h: string) => Promise<string>, extraHosts: string[] = []) {
+function mk(resolver: (h: string) => Promise<string>, extraHosts: string[] = [], secrets: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "wt-block-"));
-  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: new PlaywrightCapturer(), redactor: new Redactor([]), resolver,
+  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: new PlaywrightCapturer(), redactor: new Redactor(secrets), resolver,
     // 169.254.169.254 / 10.x / 192.168.x are allowlisted on purpose so the IP rules (not the allowlist) must stop them.
     replay: { allowHosts: [`demo.local:${port}`, `rebind.local:${port}`, "169.254.169.254", "10.0.0.5", "192.168.1.10", ...extraHosts], allowCidrs: ["127.0.0.1/32"] } });
   return { core, root };
@@ -65,10 +65,13 @@ async function planned(core: WalkthroughCore) {
 
 describe("capture_page blocks every bypass (real Chromium)", () => {
   it.skipIf(!hasChromium)("img/script to metadata+private IPs, iframe, window.open, WebSocket, redirect to blocked host, userinfo: blocked + recorded + redacted", async () => {
-    const { core, root } = mk(async () => "127.0.0.1");
+    // Known fake secrets go into the Redactor (as a deployment would configure them). SECRETS.plain is deliberately
+    // NOT: it must still be masked because every query value of a blocked URL is treated as a secret.
+    const { core, root } = mk(async () => "127.0.0.1", [], [SECRETS.q, SECRETS.key, SECRETS.pw, SECRETS.lf]);
     const id = await planned(core);
     const before = hits.length;
     const evs = await core.capturePage(id, { checkId: "p", url: `http://demo.local:${port}/attack` });
+    expect(evs.map((e) => e.path)).toEqual(expect.arrayContaining([expect.stringMatching(/\.har$/)]));
     const blockedEv = evs.find((e) => e.kind === "blocked")!;
     expect(blockedEv).toBeDefined();
     const doc = JSON.parse(readFileSync(join(core.dir(id), blockedEv.path), "utf8"));
@@ -138,5 +141,17 @@ describe("blocked-request redaction (unit)", () => {
     expect(r).not.toContain(SECRETS.pw);
     expect(r).not.toContain(SECRETS.q);
     expect(r).toContain("page=2");
+  });
+  it("redactHar runs URL redaction over response bodies (plain and base64 text) and post data", () => {
+    const body = `<img src="http://x.example/a.png?token=BODYtok112233&id=7">`;
+    const har = JSON.stringify({ log: { entries: [
+      { request: { method: "GET", url: "http://h/", headers: [] }, response: { status: 200, headers: [], content: { mimeType: "text/html", text: body } } },
+      { request: { method: "POST", url: "http://h/p", headers: [], postData: { text: `go=http://y.example/?access_token=POSTtok445566` } }, response: { status: 200, headers: [], content: { mimeType: "text/html", encoding: "base64", text: Buffer.from(body).toString("base64") } } },
+    ] } });
+    const out = redactHar(har, new Redactor([]));
+    const decoded = out + Buffer.from(JSON.parse(out).log.entries[1].response.content.text, "base64").toString();
+    expect(decoded).not.toContain("BODYtok112233");
+    expect(decoded).not.toContain("POSTtok445566");
+    expect(decoded).toContain("id=7");
   });
 });
