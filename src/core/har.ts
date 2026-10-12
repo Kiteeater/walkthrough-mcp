@@ -14,8 +14,28 @@ export const HAR_MAX_BYTES = 5 * 1024 * 1024;
 /** Max bytes accepted for one screenshot. */
 export const SCREENSHOT_MAX_BYTES = 10 * 1024 * 1024;
 
-const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token|x-csrf-token|x-amz-security-token)$/i;
-const SECRET_PARAM = /(token|key|secret|sig(nature)?|password|passwd|pwd|auth|session|credential|code)$/i;
+/** Header NAMES that carry credentials, by pattern (X-Access-Token, Api-Key, X-Goog-Api-Key, X-Session-Id, Set-Cookie…). */
+export const SECRET_HEADER = /(authorization|cookie|token|api-?key|apikey|secret|session|auth|csrf|xsrf|signature|password|jwt|ticket|credential)/i;
+/**
+ * Query/form param NAMES, matched on the whole name or its last `-`/`_`/`.` segment, so `barcode`, `zipcode`, `monkey`
+ * are kept but `access_token`, `api_key`, `X-Amz-Signature`, `sid`, `jwt`, `ticket`, `code` are masked.
+ */
+export const SECRET_PARAM = /^(?:.*[-_.])?(?:access[-_]?token|refresh[-_]?token|id[-_]?token|token|key|api[-_]?key|apikey|secret|client[-_]?secret|sig|signature|password|passwd|pwd|auth|session|session[-_]?id|sessionid|sid|jwt|ticket|code|credential|credentials|security[-_]?token)$/i;
+
+/** Max length of an agent-supplied regex; longer patterns are rejected. */
+export const MAX_REGEX_LEN = 200;
+/**
+ * Compile an agent-supplied regex with a ReDoS guard: length cap, no backreferences, and no quantified group that
+ * itself contains a quantifier (`(a+)+`, `(a|aa)*`-style nesting). Throws on anything else.
+ */
+export function safeRegex(p: string, flags = ""): RegExp {
+  if (typeof p !== "string" || !p) throw new Error("regex must be a non-empty string");
+  if (p.length > MAX_REGEX_LEN) throw new Error(`regex longer than ${MAX_REGEX_LEN} chars`);
+  if (/\\[1-9]|\\k</.test(p)) throw new Error("regex backreferences are not allowed");
+  if (/\((?:[^()\\]|\\.)*(?:[+*]|\{\d+,?\d*\})(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d+,?\d*\})/.test(p)) throw new Error("nested quantifiers are not allowed (ReDoS guard)");
+  if (/\((?:[^()]*\|[^()]*)\)\s*[+*]/.test(p)) throw new Error("quantified alternation is not allowed (ReDoS guard)");
+  return new RegExp(p, flags);
+}
 
 export function parseHar(text: string): Har | undefined {
   try {
@@ -71,11 +91,11 @@ export function uiExpectProblem(v: unknown): string | undefined {
   if (!o || typeof o !== "object") return "ui value must be {har:{urlMatch,status}} or {text:{contains}}";
   if (!!o.har === !!o.text) return "ui value needs exactly one of har or text";
   if (o.har) {
-    try { new RegExp(o.har.urlMatch); } catch { return "ui har.urlMatch is not a valid regex"; }
     if (typeof o.har.urlMatch !== "string" || !o.har.urlMatch) return "ui har.urlMatch is required";
+    try { safeRegex(o.har.urlMatch); } catch (e) { return `ui har.urlMatch: ${(e as Error).message}`; }
     const s = o.har.status;
     if (!(typeof s === "number" || (Array.isArray(s) && s.length === 2 && s.every((x) => typeof x === "number")))) return "ui har.status must be a number or [min, max]";
-    if (o.har.bodyMatch !== undefined) try { new RegExp(o.har.bodyMatch); } catch { return "ui har.bodyMatch is not a valid regex"; }
+    if (o.har.bodyMatch !== undefined) try { safeRegex(o.har.bodyMatch); } catch (e) { return `ui har.bodyMatch: ${(e as Error).message}`; }
   } else if (typeof o.text?.contains !== "string" || !o.text.contains) return "ui text.contains must be a non-empty string";
   return undefined;
 }
@@ -87,11 +107,11 @@ export function uiExpectProblem(v: unknown): string | undefined {
 export function judgeUi(v: UiExpect, texts: string[]): { status: "pass" | "fail" | "inconclusive"; reasons: string[] } {
   const hars = texts.map(parseHar);
   if (v.har) {
-    const re = new RegExp(v.har.urlMatch);
-    const hits = hars.flatMap((h) => h?.log.entries ?? []).filter((e) => re.test(String(e.request?.url)) && (!v.har!.method || e.request?.method?.toUpperCase() === v.har!.method.toUpperCase()));
+    const re = safeRegex(v.har.urlMatch);
+    const hits = hars.flatMap((h) => h?.log.entries ?? []).filter((e) => re.test(String(e.request?.url).slice(0, 2048)) && (!v.har!.method || e.request?.method?.toUpperCase() === v.har!.method.toUpperCase()));
     if (!hits.length) return { status: "inconclusive", reasons: [`no HAR entry matching /${v.har.urlMatch}/`] };
     const [lo, hi] = Array.isArray(v.har.status) ? v.har.status : [v.har.status, v.har.status];
-    const bad = hits.filter((e) => !(e.response?.status >= lo && e.response?.status <= hi) || (v.har!.bodyMatch && !new RegExp(v.har!.bodyMatch, "m").test(e.response?.content?.text ?? "")));
+    const bad = hits.filter((e) => !(e.response?.status >= lo && e.response?.status <= hi) || (v.har!.bodyMatch && !safeRegex(v.har!.bodyMatch, "m").test((e.response?.content?.text ?? "").slice(0, 65536))));
     return bad.length
       ? { status: "fail", reasons: bad.map((e) => `${e.request.method} ${e.request.url} → ${e.response?.status}, expected ${lo === hi ? lo : `${lo}-${hi}`}${v.har!.bodyMatch ? ` with body /${v.har!.bodyMatch}/` : ""}`) }
       : { status: "pass", reasons: [] };

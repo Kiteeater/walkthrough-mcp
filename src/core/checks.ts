@@ -10,7 +10,7 @@ const num = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 function compiles(p: unknown): p is string {
-  if (typeof p !== "string" || !p) return false;
+  if (typeof p !== "string" || !p || p.length > 500) return false; // length cap on agent-supplied patterns
   try { new RegExp(p, "m"); return true; } catch { return false; }
 }
 
