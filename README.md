@@ -180,6 +180,54 @@ truncated entries.
   reachable. Tracking issue: [#8](https://github.com/Kiteeater/walkthrough-mcp/issues/8).
 - The allowlist is only as safe as the flags it lists; review additions to `args` like code.
 
+## UI evidence (screenshots, HAR) and replay
+
+The host agent drives the page itself (computer use / Playwright MCP) and hands over what it got with
+`capture_evidence(type=submit, kind=screenshot|har)`; DOM text goes in as `kind=http`. All of it is **agent-reported**.
+
+- **Screenshots are never judged.** They are for human audit only: the audit view shows them next to the network
+  evidence. A check backed only by a screenshot is `inconclusive`, whatever the expectation.
+- **`expect.type: "ui"`** judges network or text: `{"har": {"urlMatch": "/api/orders$", "status": [200, 299], "bodyMatch?": "...", "method?": "GET"}}`
+  reads HAR entries; `{"text": {"contains": "..."}}` reads DOM text. Exactly one of the two.
+- **HAR redaction** before anything is stored: `Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`… header values and
+  all cookie values are masked; secret-looking query params (`token`, `access_token`, `key`, `api_key`, `secret`, `sig`,
+  `signature`, `password`, `session`, `code`…) are masked in URLs and `queryString`; request and response bodies (and
+  every other string) go through the generic secret patterns plus env-secret redaction.
+- **HAR/screenshot by `path`**: the file must resolve (realpath, so symlinks are followed) to a regular file inside
+  `.walkthrough/`; HAR ≤ 5 MB, screenshot ≤ 10 MB. Content submitted inline has the same caps.
+- **Provenance**: agent-reported HAR/screenshots alone give at most `pass_needs_review`, same as other imports.
+- **No computer use on the host?** `capture_page(check_id, url)` makes walkthrough load the page with Playwright and
+  store screenshot + HAR + DOM text as core-executed evidence (needs `npx playwright install chromium`; CI e2e has it).
+
+### replay_request (core-executed)
+
+`replay_request(check_id, evidence_id, url_match?, method?)` takes **one** request from a HAR item and walkthrough
+sends it itself; the result is stored as a one-entry HAR (`executedBy: core`) and appended to the hash-chained
+`commands.jsonl`. So a UI finding can be confirmed by evidence we executed, and judged as a normal pass/fail.
+
+Configure it in `walkthrough.config.json` (no `replay` block → replay is disabled):
+
+```json
+{ "replay": { "allowHosts": ["orders.staging.example.com", "127.0.0.1:3300"], "allowCidrs": ["127.0.0.1/32"],
+              "auth": { "header": "Authorization", "valueEnv": "WALKTHROUGH_TEST_ACCOUNT_AUTH" } } }
+```
+
+- Only `GET` / `HEAD`. Only the method and URL come from the HAR; its cookies, `Authorization` and other headers and
+  body are never sent. If the target needs auth, the test-account value comes from the env var named in config.
+- Host must be in `allowHosts` (optionally `host:port`). Redirects are not followed automatically: each hop goes
+  through the allowlist and IP checks again (max 3).
+- IP policy, checked on the address actually connected to (DNS resolved once per hop, connection pinned to that IP and
+  the socket's remote address re-checked, so DNS rebinding can't swap it): cloud metadata (`169.254.169.254`,
+  `fd00:ec2::254`, `100.100.100.200`) is **always** denied; private (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`,
+  `fc00::/7`), link-local (`169.254/16`, `fe80::/10`) and loopback (`127/8`, `::1`) are denied unless the CIDR is
+  listed in `allowCidrs`. Loopback exceptions must be exact hosts (`127.0.0.1/32`, `::1/128`); wider loopback ranges
+  are ignored. IPv4-mapped IPv6 (`::ffff:127.0.0.1`, `::ffff:a9fe:a9fe`) is normalised to IPv4 first.
+- The local demo lists `127.0.0.1/32` explicitly; nothing is reachable on loopback by default.
+
+Demo (`node examples/ui-demo/run.mjs`, part of `examples/run-e2e.sh`): the orders page calls `/api/orders` and shows
+"Failed to load orders"; the agent's screenshot shows the banner, its HAR shows the 500, walkthrough replays
+`GET /api/orders` → 500, and the check is a normal `fail`. The finding shows the screenshot and the replay side by side.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:

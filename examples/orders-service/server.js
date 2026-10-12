@@ -21,6 +21,22 @@ const server = http.createServer((req, res) => {
       const order = getOrder(Number(m[1]));
       return order ? json(res, 200, order) : json(res, 404, { error: "not found" });
     }
+    if (req.url === "/orders") {
+      // Orders page: the frontend calls /api/orders and shows an error banner when it fails.
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(`<!doctype html><html><body style="font-family:sans-serif"><h1>Orders</h1><div id="out">loading…</div>
+<script>
+fetch("/api/orders").then(async (r) => {
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const rows = await r.json();
+  document.getElementById("out").innerHTML = rows.map((o) => "<p>#" + o.id + " " + o.customer + " " + o.total + "</p>").join("");
+}).catch((e) => {
+  const out = document.getElementById("out");
+  out.style.cssText = "color:#fff;background:#cf222e;padding:8px";
+  out.textContent = "Failed to load orders (" + e.message + ")";
+});
+</script></body></html>`);
+    }
     res.writeHead(200, { "content-type": "text/html" });
     res.end(`<!doctype html><html><body style="font-family:sans-serif"><h1>orders-service</h1>
 <p>Endpoints: <code>/api/orders</code>, <code>/api/orders/:id</code></p></body></html>`);

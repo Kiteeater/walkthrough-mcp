@@ -34,6 +34,15 @@ server.tool("capture_evidence", "Submit raw output you obtained yourself (type=s
 server.tool("import_mcp_result", "Import a result you got from another READ-ONLY MCP server (mongodb / langfuse / aliyun). Stored as agent-reported evidence (lower trust), hashed and redacted; must link to earlier evidence by a shared key.",
   importMcpResultShape, (a) => wrap(() => core.importMcpResult(a.id, importInput(a as never)))());
 
+server.tool("capture_page", "method: ui fallback when you have no computer use: walkthrough loads the page with Playwright and stores screenshot + HAR + DOM text (executed by walkthrough).", {
+  id, check_id: z.string(), url: z.string(),
+}, (a) => wrap(() => core.capturePage(a.id, { checkId: a.check_id, url: a.url }))());
+
+server.tool("replay_request", "walkthrough re-sends ONE GET/HEAD request from a HAR evidence item itself (executed by walkthrough): host must be in replay.allowHosts, private/metadata IPs denied, HAR cookies/auth never sent, redirects re-checked.", {
+  id, check_id: z.string(), evidence_id: z.string().describe("HAR evidence to take the request from"),
+  url_match: z.string().optional().describe("regex picking the HAR entry"), method: z.enum(["GET", "HEAD"]).optional(),
+}, (a) => wrap(() => core.replayHar(a.id, { checkId: a.check_id, evidenceId: a.evidence_id, urlMatch: a.url_match, method: a.method }))());
+
 server.tool("link_source", "Link a source file and line.", {
   id, file: z.string(), line: z.number().int(), note: z.string().optional(),
 }, (a) => wrap(() => core.linkSource(a.id, a))());

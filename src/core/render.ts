@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WalkthroughCore } from "./walkthrough.js";
+import { harSummary, parseHar } from "./har.js";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -21,10 +22,12 @@ export function renderWalkthrough(core: WalkthroughCore, id: string): string {
     const ev = w.evidence.find((e) => e.id === evId);
     if (!ev) return `<p class="missing">missing evidence ${esc(evId)}</p>`;
     const meta = `<div class="meta">${esc(ev.id)} · ${esc(ev.kind ?? ev.type)} · ${ev.executedBy === "agent" ? '<span class="prov agent">reported by agent · agent 自报</span>' : '<span class="prov core">executed by walkthrough · 我们执行</span>'} · ${esc(ev.source)}${ev.mcpCall ? ` · <code class="mcpcall">${esc(ev.mcpCall.server)}.${esc(ev.mcpCall.tool)}(${esc(JSON.stringify(ev.mcpCall.params))})</code>` : ""}${ev.links?.length ? ` · linked ${esc(ev.links.map((l) => `${l.evidenceId} by "${l.key}"`).join(", "))}` : ""} · sha256 ${esc(ev.sha256.slice(0, 12))}… · ${esc(ev.createdAt)}</div>`;
+    const har = ev.type === "har" ? parseHar(core.readEvidenceText(w, ev)) : undefined;
     const body = ev.type === "screenshot"
-      ? `<img src="${esc(ev.path)}" alt="${esc(ev.id)}">`
+      ? `<details class="shot" open><summary>screenshot (for human audit only · 仅供人工核对，不参与判定)</summary><a href="${esc(ev.path)}"><img src="${esc(ev.path)}" alt="${esc(ev.id)}"></a></details>`
+      : har ? `<pre class="har-summary">${esc(harSummary(har))}</pre><details><summary>HAR (redacted)</summary><pre>${esc(core.readEvidenceText(w, ev).slice(0, 8000))}</pre></details>`
       : `<pre>${esc(core.readEvidenceText(w, ev).slice(-8000)) || "<em>(empty)</em>"}</pre>`;
-    return `<figure>${meta}${body}</figure>`;
+    return `<figure data-type="${esc(ev.type)}" data-prov="${ev.executedBy === "agent" ? "agent" : "core"}">${meta}${body}</figure>`;
   }).join("\n");
   const srcOf = (sid?: string) => (sid ? w.sources.find((x) => x.id === sid) : undefined);
 
@@ -75,7 +78,7 @@ ${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">Signed: <b>${w.sig
 <p><b>Symptom:</b> ${esc(f.symptom)}</p>
 ${f.repro_steps.length ? `<p><b>Repro:</b></p><ol>${f.repro_steps.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
 <p><b>Root-cause chain:</b></p><ol class="chain">${steps}</ol>
-<p><b>Evidence:</b></p>${evidenceHtml(f.evidenceIds)}
+<p><b>Evidence:</b></p>${f.evidenceIds.some((e) => w.evidence.find((x) => x.id === e)?.type === "screenshot") ? `<div class="evgrid ui-pair">${evidenceHtml(f.evidenceIds)}</div>` : evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
   const row = (c: NonNullable<typeof w.checks>[number]) => {
@@ -130,6 +133,7 @@ details{border:1px solid #ddd;border-radius:8px;padding:.5rem 1rem;margin:1rem 0
 table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px solid #ddd;padding:4px}tr.fail td{background:#fff5f5}tr.inconclusive td{background:#fff8e1}tr.pass_needs_review td{background:#fff3cd}
 .prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
 li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
+.evgrid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.evgrid figure{margin:0;min-width:0}
 </style></head><body>
 <h1>${esc(w.title)}</h1>
 ${local ? `<p>${localBadge}Commands ran as host child processes without isolation.</p>` : ""}
