@@ -1,0 +1,22 @@
+{
+  "format": "walkthrough.metric/v1",
+  "endpoint": "http://127.0.0.1:3102/api/v1/query",
+  "query": "sum(rate(http_requests_total{route=\"/api/orders/:id/total\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{route=\"/api/orders/:id/total\"}[5m]))",
+  "time": null,
+  "httpStatus": 200,
+  "response": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [
+        {
+          "metric": {},
+          "value": [
+            1791841274.876,
+            "0.5"
+          ]
+        }
+      ]
+    }
+  }
+}

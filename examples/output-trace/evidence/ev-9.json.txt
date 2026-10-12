@@ -1,10 +1,10 @@
-# reported by agent: langfuse.get_trace({"traceId":"1a411552-763b-45c6-8370-b39a5977be50"})
+# reported by agent: langfuse.get_trace({"traceId":"83f4c3f2-64c9-4109-b193-b7b3b08d8b3c"})
 
 {
-  "id": "1a411552-763b-45c6-8370-b39a5977be50",
+  "id": "83f4c3f2-64c9-4109-b193-b7b3b08d8b3c",
   "name": "GET /api/orders/:id/total",
   "metadata": {
-    "db": "shop",
+    "db": "walkthrough_demo",
     "collection": "orders",
     "orderId": "ord-3"
   },
@@ -15,5 +15,5 @@
       "statusMessage": "Cannot read properties of undefined (reading 'reduce')"
     }
   ],
-  "timestamp": "2026-10-12T19:53:09.039Z"
+  "timestamp": "2026-10-12T21:41:14.542Z"
 }
