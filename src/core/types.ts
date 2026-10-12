@@ -122,6 +122,11 @@ export interface Finding {
   root_cause_chain: RootCauseLink[];
   /** Signals observed at the same time (e.g. firing alerts). Supporting context only, never part of the causal chain. */
   corroborating?: { kind: "alert"; claim: string; evidence_ids: string[]; alertname: string; activeAt?: string; firstSeenAt?: string; alsoMatched: string[] }[];
+  /**
+   * Hypotheses that were checked and excluded (e.g. message backlog). NOT part of the root-cause chain and not in
+   * `evidenceIds`; each cites the core-executed evidence it rests on.
+   */
+  ruled_out?: { claim: string; check_id?: string; evidence_ids: string[] }[];
   /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
   /** observed only if every chain step is observed. */

@@ -4,13 +4,15 @@
 // seeds data, then runs the trace demo agent. Prints the walkthrough result JSON on the last line.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MongoClient } from "mongodb";
 import { startMockLangfuse } from "./mock-langfuse.mjs";
 import { startMockPrometheus } from "./mock-prometheus.mjs";
+import { writeMockMqadmin } from "./mock-mqadmin.mjs";
 import { DemoMongoRefused, planDemoMongo, startDockerMongo } from "./mongo-demo.mjs";
 
 const args = process.argv.slice(2);
@@ -50,13 +52,19 @@ const lfUrl = `http://127.0.0.1:${lf.address().port}`;
 const promToken = process.env.WALKTHROUGH_PROMETHEUS_TOKEN ?? `prom-${Math.random().toString(36).slice(2)}`;
 const prom = await startMockPrometheus(0, promToken, serviceUrl);
 const promUrl = `http://127.0.0.1:${prom.address().port}`;
+// Mock mqadmin (rocketmq-all-5.5.1 output format) in a throwaway dir; the name server address is a random free port
+// fixed in the connector config (namesrvs), so the agent cannot point mqadmin anywhere else.
+const mqDir = mkdtempSync(join(tmpdir(), "wt-demo-mq-"));
+const mqBin = writeMockMqadmin(mqDir, { dir: join(mqDir, "msgbodys") });
+const namesrv = `127.0.0.1:${await freePort()}`;
+cleanups.push(() => rmSync(mqDir, { recursive: true, force: true }));
 // The committed flow config has a ${SERVICE_URL} placeholder; the run uses a generated copy next to it (gitignored).
 const here = dirname(fileURLToPath(import.meta.url));
 const flowPath = join(here, "walkthrough.trace.generated.json");
 writeFileSync(flowPath, readFileSync(join(here, "walkthrough.trace.json"), "utf8").replaceAll("${SERVICE_URL}", serviceUrl).replaceAll("${HEALTH_TOKEN}", healthToken));
 cleanups.push(() => { /* keep the generated config for inspection; it holds no secrets */ });
 const env = { ...process.env, PORT: String(svcPort), DEMO_HEALTH_TOKEN: healthToken, MONGO_URL: url, MONGO_DB: plan.db, LANGFUSE_URL: lfUrl, LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
-  WALKTHROUGH_PROMETHEUS_URL: promUrl, WALKTHROUGH_PROMETHEUS_TOKEN: promToken };
+  WALKTHROUGH_PROMETHEUS_URL: promUrl, WALKTHROUGH_PROMETHEUS_TOKEN: promToken, WALKTHROUGH_DEMO_MQADMIN: mqBin, WALKTHROUGH_DEMO_NAMESRV: namesrv };
 let child;
 cleanups.push(() => lf.close(), () => prom.close(), () => { try { child?.kill("SIGTERM"); } catch { /* gone */ } });
 child = spawn(process.execPath, ["dist/demo-agent/trace-run.js", flowPath, "--root", root], { env, stdio: ["ignore", "inherit", "inherit"] });

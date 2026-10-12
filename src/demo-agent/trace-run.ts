@@ -3,7 +3,7 @@
 // usage: node dist/demo-agent/trace-run.js <flow.json> [--root <dir>]
 // env: MONGO_URL, LANGFUSE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (the agent's OWN access; never given to walkthrough).
 import { parseArgs } from "node:util";
-import { createCore, loadFlowConfig, readJsonFile, Redactor, runFlow } from "../core/index.js";
+import { createCore, loadFlowConfig, PRESET_CONNECTORS, readJsonFile, Redactor, runFlow, type ConnectorConfig } from "../core/index.js";
 import { runTraceAgent, type McpClients } from "./trace.js";
 
 async function main(): Promise<void> {
@@ -29,9 +29,14 @@ async function main(): Promise<void> {
   // Allowlist: the service under test (for replay_request) + Prometheus when configured. Local demo → loopback only.
   const svc = new URL(a.baseUrl);
   const hosts = [svc.host, ...(prom ? [prom.host] : [])];
-  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: [svc, ...(prom ? [prom] : [])].some((u) => u.hostname === "127.0.0.1") ? ["127.0.0.1/32"] : [] });
+  // RocketMQ (read-only, optional): the demo points the real mqadmin preset at a mock binary and fixes the name server.
+  const mqBin = process.env.WALKTHROUGH_DEMO_MQADMIN, mqNs = process.env.WALKTHROUGH_DEMO_NAMESRV;
+  const connectors: ConnectorConfig[] | undefined = mqBin && mqNs
+    ? PRESET_CONNECTORS.map((c) => (c.name === "mqadmin" ? { ...c, binary: mqBin, namesrvs: [mqNs], profile: "demo-readonly" } : c))
+    : undefined;
+  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: [svc, ...(prom ? [prom] : [])].some((u) => u.hostname === "127.0.0.1") ? ["127.0.0.1/32"] : [] }, connectors);
   try {
-    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true }) });
+    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true, ...(connectors ? { mq: { group: "order-pricing-consumer", topic: "ORDER_CREATED" } } : {}) }) });
     console.log(JSON.stringify(r));
   } finally { await mongo.close(); }
 }

@@ -73,4 +73,11 @@ if (!t.links?.some((l) => steps[iHttp].e.some((e) => e.id === l.evidenceId))) fa
 if (!d.links?.some((l) => l.evidenceId === t.id)) fail("mongo evidence not linked to the langfuse evidence");
 const src = w.sources.find((s) => s.id === steps[iSrc].l.source_ref);
 if (!/pricing\.js$/.test(src.file)) fail(`root cause not in pricing.js: ${src.file}`);
+// RocketMQ: backlog checked by walkthrough (mqadmin consumerProgress via run_cli) and shown as RULED OUT, never as a chain step.
+const ro = (f.ruled_out ?? []).find((r) => /排除 MQ 问题/.test(r.claim));
+const mqEv = ro && ev(ro.evidence_ids[0]);
+if (!ro || !mqEv || mqEv.kind !== "cli_output" || mqEv.executedBy !== "core" || !/^run_cli:mqadmin consumerProgress /.test(mqEv.source) || !/^[0-9a-f]{64}$/.test(mqEv.sha256)) fail("no ruled-out MQ item backed by core mqadmin consumerProgress evidence");
+if (!/Consume Diff Total: 0\b/.test(readFileSync(join(dirname(process.argv[2]), mqEv.path), "utf8"))) fail("mqadmin evidence does not show zero backlog");
+if (f.root_cause_chain.some((l) => l.evidence_ids.includes(mqEv.id)) || f.evidenceIds.includes(mqEv.id)) fail("mqadmin evidence spliced into the root-cause chain");
+if (!first.includes(`<div class="ruled-out" data-ruled-out="1"><b>已排除</b>`) || !first.includes(`data-evidence="${mqEv.id}"`) || !first.includes(`data-sha256="${mqEv.sha256}"`)) fail("first screen lacks the ruled-out MQ item with its sha256");
 console.log(`asserted cross-source chain (+ corroborating alert HighOrders5xx fired after the action): HTTP 500 → prometheus 5xx ratio → langfuse.${t.mcpCall.tool} → mongodb.${d.mcpCall.tool} → ${src.file}:${src.line}`);

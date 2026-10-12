@@ -9,7 +9,8 @@ export interface McpClients {
   /** Stand-in for mongodb.find({database, collection, filter}). */
   find(database: string, collection: string, filter: Record<string, unknown>): Promise<unknown[]>;
 }
-export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean; /** Let walkthrough replay the failing request itself (core replay_request). */ replay?: boolean }
+export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean; /** Let walkthrough replay the failing request itself (core replay_request). */ replay?: boolean;
+  /** Rule out a message backlog with mqadmin consumerProgress via run_cli (connector "mqadmin" must be configured). */ mq?: { group: string; topic: string } }
 
 /** 5xx ratio of the orders total route over 5m (one series). */
 const ZH: Record<string, string> = { pass: "通过", fail: "失败", pass_needs_review: "需复核", inconclusive: "无结论" };
@@ -98,11 +99,24 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       const src = await core.linkSource(id, { file: hit.file, line: hit.line, note: hit.message });
       chain.push({ claim: `服务的堆栈指向 ${hit.file}:${hit.line}（${hit.message}）：代码假设每个订单都有 items`, kind: "observed", evidence_ids: [logEv.id], source_ref: src.id });
     }
+    // Rule out an MQ backlog (a common alternative explanation): consumerProgress run by walkthrough through the
+    // read-only mqadmin preset. It is shown as an excluded hypothesis, never as a root-cause step.
+    const ruledOut: { claim: string; check_id: string; evidence_ids: string[] }[] = [];
+    if (o.mq) {
+      const qId = `${main.id}-mq`;
+      await core.planChecks(id, { goal: o.goal, append: true, triggeringEvidenceId: httpEv.id, checks: [
+        { id: qId, intent: `RocketMQ 消费组 ${o.mq.group} 在 ${o.mq.topic} 上没有消息堆积（Consume Diff Total = 0）`, method: "cli", target: `mqadmin consumerProgress -g ${o.mq.group} -t ${o.mq.topic}`, expect: { type: "regex", value: "Consume Diff Total: 0\\b" }, severity_if_fail: "medium" },
+      ] });
+      const q = await core.runCli(id, { connector: "mqadmin", checkId: qId, argv: ["consumerProgress", "-g", o.mq.group, "-t", o.mq.topic] });
+      const qRes = await core.evaluateCheck(id, { checkId: qId, evidenceIds: [q.evidence.id] });
+      if (qRes.status === "pass") ruledOut.push({ claim: `查过消息堆积，消费正常，排除 MQ 问题（mqadmin consumerProgress：${o.mq.group} / ${o.mq.topic} Consume Diff Total = 0）`, check_id: qId, evidence_ids: [q.evidence.id] });
+    }
     await core.recordFinding(id, {
       title: `${main.target.replace(/https?:\/\/[^/]+/, "")} 返回 500：订单文档缺少商品明细`, severity: "high", check_id: main.id,
       symptom: `${main.target} 返回 ${out.status}${traceId ? `（trace ${traceId}）` : ""}`,
       repro_steps: [out.repro, ...(traceId ? [`langfuse.get_trace({traceId: "${traceId}"})`] : []), ...more.slice(1).map((c) => c.target)],
       root_cause_chain: chain,
+      ...(ruledOut.length ? { ruled_out: ruledOut } : {}),
     });
   }
   if (watch) {

@@ -1,0 +1,12 @@
+$ mqadmin ["consumerProgress","-g","order-pricing-consumer","-t","ORDER_CREATED","-n","127.0.0.1:45265"]
+exit 0
+
+#Topic                                                            #Broker Name                      #QID  #Broker Offset        #Consumer Offset      #Diff                #Inflight           #LastTime
+ORDER_CREATED                                                     broker-a                          0     1042                  1042                  0                    0                    2026-10-13 07:00:00
+ORDER_CREATED                                                     broker-a                          1     1038                  1038                  0                    0                    2026-10-13 07:00:00
+ORDER_CREATED                                                     broker-a                          2     1051                  1051                  0                    0                    2026-10-13 07:00:00
+ORDER_CREATED                                                     broker-a                          3     1047                  1047                  0                    0                    2026-10-13 07:00:00
+
+Consume TPS: 12.50
+Consume Diff Total: 0
+Consume Inflight Total: 0
