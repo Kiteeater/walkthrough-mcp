@@ -15,9 +15,13 @@ async function report(trace) {
 
 const json = (res, status, body, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(body)); };
 
+// Tiny 5xx counter the mock Prometheus "scrapes", so HighOrders5xx only fires after a 500 really happened.
+const stats = { orders5xx: 0, first5xxAt: null };
+
 http.createServer(async (req, res) => {
   console.log(`${req.method} ${req.url}`);
   if (req.url === "/health") return json(res, 200, { ok: true });
+  if (req.url === "/metrics.json") return json(res, 200, stats);
   const m = /^\/api\/orders\/([\w-]+)\/total$/.exec(req.url);
   if (!m) return json(res, 404, { error: "not found" });
   const traceId = randomUUID();
@@ -26,6 +30,7 @@ http.createServer(async (req, res) => {
     if (!order) return json(res, 404, { error: "not found" });
     return json(res, 200, { id: order._id, total: orderTotal(order) });
   } catch (err) {
+    stats.orders5xx++; stats.first5xxAt ??= new Date().toISOString();
     console.error(`request failed: ${req.method} ${req.url} trace=${traceId}`);
     console.error(err.stack);
     await report({ id: traceId, name: "GET /api/orders/:id/total", metadata: { db: "shop", collection: "orders", orderId: m[1] },

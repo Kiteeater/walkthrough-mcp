@@ -40,3 +40,5 @@ export function readJsonFile(path: string): unknown {
 export * from "./imports.js";
 export * from "./har.js";
 export * from "./replay.js";
+export * from "./alerts.js";
+export * from "./lockfile.js";

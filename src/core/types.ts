@@ -1,7 +1,7 @@
 /** `response` = HTTP response / command output / MCP result submitted for a check. */
 export type EvidenceType = "screenshot" | "logs" | "response" | "har";
 /** Design-doc evidence kinds for capture_evidence. */
-export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric";
+export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric" | "alert";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {
@@ -84,6 +84,8 @@ export interface Check {
   severity_if_fail: Severity;
   /** Verifier type; `rule` (default) ships now, `script` / `playwright` / `computer-use` are reserved. */
   verify?: { type: string; [key: string]: unknown };
+  /** Prometheus alert label matchers (any one matching → the alert relates to this check). `~` prefix = regex. */
+  alertMatchers?: Record<string, string>[];
   /** Set by the core when the check was appended mid-run (plan_checks append): never supplied by the agent. */
   appended?: { at: string; triggeringEvidenceId: string; logSeq: number };
 }
@@ -118,6 +120,8 @@ export interface Finding {
   symptom: string;
   repro_steps: string[];
   root_cause_chain: RootCauseLink[];
+  /** Signals observed at the same time (e.g. firing alerts). Supporting context only, never part of the causal chain. */
+  corroborating?: { kind: "alert"; claim: string; evidence_ids: string[]; alertname: string; activeAt?: string; firstSeenAt?: string; alsoMatched: string[] }[];
   /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
   /** observed only if every chain step is observed. */
@@ -128,6 +132,8 @@ export interface Finding {
 export interface SignOff {
   decision: "accept" | "reject";
   comment?: string;
+  /** Watches still open at sign-off, auto-finalized with what was observed so far. */
+  autoFinalizedWatches?: { watchId: string; outcome: string }[];
 }
 
 export interface RunRecord {
@@ -174,6 +180,20 @@ export interface Walkthrough {
   checkResults?: CheckResult[];
   findings?: Finding[];
   signoff?: SignOff;
+  /** watch_alerts runs: window, evidence, which firing alerts attached where, which stayed unmatched. */
+  alertWatches?: AlertWatch[];
   /** Last entry of the append-only run_cli command log (commands.jsonl); detects tail truncation. */
   commandLogHead?: { seq: number; hash: string };
+}
+
+export interface AlertWatch {
+  watchId: string; evidenceId: string; start: string; end: string; polls: number;
+  /** completed = window ran out; stopped_early = collected before the deadline; interrupted = poller died (partial data). */
+  outcome: "completed" | "stopped_early" | "interrupted";
+  finalizedBy: "collect" | "sign_off";
+  /** Distinct poll errors (endpoint/policy rejections, non-success responses). A window with only errors is NOT quiet. */
+  errors?: string[];
+  matched: { alertname: string; checkIds: string[]; findingId: string; attached: boolean; activeAt?: string; firstSeenAt?: string }[];
+  unmatched: { alertname: string; labels: Record<string, string>; severity: string; activeAt?: string; firstSeenAt?: string }[];
+  pendingSeen: number;
 }

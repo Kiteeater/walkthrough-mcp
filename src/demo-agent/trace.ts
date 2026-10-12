@@ -19,7 +19,8 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function planTraceChecks(o: TraceOptions): Check[] {
   const base = o.baseUrl.replace(/\/$/, "");
   return o.orders.flatMap((ord, i): Check[] => [
-    { id: `chk-${i + 1}`, intent: `GET /api/orders/${ord}/total answers 2xx`, method: "http", target: `GET ${base}/api/orders/${ord}/total`, expect: { type: "status", value: [200, 299] }, severity_if_fail: "high" },
+    { id: `chk-${i + 1}`, intent: `GET /api/orders/${ord}/total answers 2xx`, method: "http", target: `GET ${base}/api/orders/${ord}/total`, expect: { type: "status", value: [200, 299] }, severity_if_fail: "high",
+      ...(o.metrics ? { alertMatchers: [{ route: "/api/orders/:id/total" }] } : {}) },
     { id: `chk-${i + 1}-logs`, intent: `no error alerts in ${o.service ?? "app"} logs for ${ord}`, method: "cli", target: `logs:${o.service ?? "app"}`, expect: { type: "absent", value: DEFAULT_ALERTS.map(esc).join("|") }, severity_if_fail: "high" },
   ]);
 }
@@ -29,6 +30,12 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
   const plan = planTraceChecks(o);
   await core.planChecks(id, { goal: o.goal, checks: plan });
   await core.captureEvidence(id, { type: "logs", service, delta: true });
+  // Alerts: start a background watch BEFORE acting (it does not lock the walkthrough), wait for a baseline poll,
+  // then act; collect at the end. A firing alert whose labels match a check's alertMatchers is attached to that
+  // check's finding (the traced 500); unrelated firing alerts are listed separately.
+  const watch = o.metrics ? await core.startWatch(id, { windowS: 60, intervalS: 1 }) : undefined;
+  if (watch) await until(() => core.readWatch(watch.id).polls.length >= 1, 5000);
+  const actedAt = new Date().toISOString();
   for (const main of plan.filter((c) => /^chk-\d+$/.test(c.id))) {
     const [method, url] = main.target.split(" ");
     const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never });
@@ -90,4 +97,12 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       root_cause_chain: chain,
     });
   }
+  if (watch) {
+    await until(() => core.readWatch(watch.id).polls.some((p) => p.at > actedAt && p.firing.length > 0), 5000);
+    await core.collectWatch(watch.id);
+  }
+}
+
+async function until(cond: () => boolean, ms: number): Promise<void> {
+  for (const end = Date.now() + ms; Date.now() < end && !cond();) await new Promise((r) => setTimeout(r, 100));
 }
