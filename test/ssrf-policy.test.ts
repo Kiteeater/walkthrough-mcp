@@ -97,6 +97,7 @@ describe("capture_page uses the replay policy for the main page", () => {
     await expect(core.capturePage(id, { checkId: "p", url: `http://demo.local:${port}/away` })).rejects.toThrow(/evil.example/);
     const ok = await core.capturePage(id, { checkId: "p", url: `http://demo.local:${port}/` });
     expect(ok).toHaveLength(3);
+    expect(core.verifyCommandLog(id)).toEqual({ ok: true, entries: 1 }); // capture_page entries verify (evidenceIds[])
   });
 
   // Real Chromium (runs where `npx playwright install chromium` was done, e.g. locally and in CI e2e; skipped otherwise).

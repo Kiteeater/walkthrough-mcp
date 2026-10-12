@@ -15,10 +15,14 @@ import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, safeRegex } from "./har.js";
 import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
-import { METRIC_EVIDENCE, MetricsError, promInstantQuery, type PrometheusConfig } from "./metrics.js";
+import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
+import {
+  ALERTS_EVIDENCE, ALERT_WATCH_MAX_INTERVAL_S, ALERT_WATCH_MAX_POLLS, ALERT_WATCH_MAX_WINDOW_S, ALERT_WATCH_MIN_INTERVAL_S,
+  alertKey, alertMatches, matcherProblem, redactAlert, severityOf, type AlertMatcher, type PromAlert,
+} from "./alerts.js";
 import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
-  Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
+  AlertWatch, Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
   Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
 } from "./types.js";
 
@@ -47,6 +51,8 @@ export interface CoreDeps {
   env?: NodeJS.ProcessEnv;
   /** Read-only Prometheus endpoint (instant queries). Uses `replay` as its host allowlist + IP policy. */
   prometheus?: PrometheusConfig;
+  /** Sleep used between alert polls (injectable for tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ImportMcpInput {
@@ -356,6 +362,101 @@ export class WalkthroughCore {
     });
   }
 
+  /**
+   * watch_alerts: poll Prometheus GET /api/v1/alerts (read-only) over a bounded window. Only `firing` alerts count.
+   * Each firing alert is matched to checks by label matchers (check.alertMatchers + input.matchers): if a matched check
+   * already has a finding, the alert is attached to it as an extra chain step; otherwise a new finding is recorded for
+   * the first matched check. Unmatched firing alerts are listed separately, never force-attached. A quiet window is
+   * still stored as core-executed evidence with its start/end. Every poll and the result go to commands.jsonl.
+   * Note: the walkthrough lock is held for the whole window.
+   */
+  watchAlerts(id: string, input: { windowS: number; intervalS?: number; matchers?: { checkId: string; labels: AlertMatcher }[]; stopOnFiring?: boolean }): Promise<{ evidence: Evidence; watch: AlertWatch; findings: Finding[] }> {
+    return this.withLock(id, async () => {
+      const prom = this.deps.prometheus;
+      if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
+      const cfg = this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("watch_alerts needs replay.allowHosts (same policy as replay)");
+      const windowS = input.windowS, intervalS = input.intervalS ?? 15;
+      if (!Number.isFinite(windowS) || windowS < 1 || windowS > ALERT_WATCH_MAX_WINDOW_S) throw new ClaimRejectedError(`window_s must be 1-${ALERT_WATCH_MAX_WINDOW_S}`);
+      if (!Number.isFinite(intervalS) || intervalS < ALERT_WATCH_MIN_INTERVAL_S || intervalS > ALERT_WATCH_MAX_INTERVAL_S) throw new ClaimRejectedError(`interval_s must be ${ALERT_WATCH_MIN_INTERVAL_S}-${ALERT_WATCH_MAX_INTERVAL_S}`);
+      const polls = Math.min(ALERT_WATCH_MAX_POLLS, Math.floor(windowS / intervalS) + 1);
+      let w = this.load(id);
+      const extra = input.matchers ?? [];
+      for (const x of extra) {
+        if (!(w.checks ?? []).some((c) => c.id === x.checkId)) throw new ClaimRejectedError(`unknown check: ${x.checkId}`);
+        const p = matcherProblem(x.labels); if (p) throw new ClaimRejectedError(p);
+      }
+      for (const c of w.checks ?? []) for (const mm of c.alertMatchers ?? []) { const p = matcherProblem(mm); if (p) throw new ClaimRejectedError(`${c.id}: ${p}`); }
+      const env = this.deps.env ?? process.env;
+      const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
+      let red = this.redactor.with([token, token && `Bearer ${token}`]);
+      const url = promUrl(prom.url, PROM_ALERTS_PATH);
+      const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+      const log = (e: Record<string, unknown>) => { const l = appendLogEntry(join(this.dir(id), "commands.jsonl"), { ts: this.ts(), walkthroughId: id, executedBy: "core", ...e }); w.commandLogHead = { seq: l.seq, hash: l.hash }; };
+      const start = this.ts();
+      const firing = new Map<string, PromAlert>();
+      const pending = new Set<string>();
+      let done = 0;
+      for (let i = 0; i < polls; i++) {
+        if (i) await sleep(intervalS * 1000);
+        let r;
+        try { r = await promGet(prom, cfg, url, PROM_ALERTS_PATH, { resolver: this.deps.resolver, env }); }
+        catch (e) { throw new (e instanceof Error ? (e.constructor as ErrorConstructor) : Error)(red.text(String((e as Error).message))); }
+        red = red.with(r.sentSecrets);
+        if (r.json.status !== "success") throw new MetricsError(red.text(`Prometheus alerts: status ${r.json.status ?? "?"} (HTTP ${r.status}) ${r.json.error ?? ""}`));
+        const alerts = (((r.json.data as { alerts?: PromAlert[] })?.alerts) ?? []).slice(0, 500);
+        let f = 0, p = 0;
+        for (const a of alerts) {
+          if (a?.state === "firing") { f++; if (!firing.has(alertKey(a))) firing.set(alertKey(a), a); }
+          else if (a?.state === "pending") { p++; pending.add(alertKey(a)); }
+        }
+        done++;
+        w = { ...this.load(id), commandLogHead: w.commandLogHead };
+        log({ type: "alerts_poll", endpoint: red.text(url.origin + url.pathname), poll: i + 1, httpStatus: r.status, firing: f, pending: p, hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })) });
+        this.save(w);
+        if (firing.size && input.stopOnFiring !== false) break;
+      }
+      const end = this.ts();
+      // Redact BEFORE anything derived from labels/annotations is written (evidence, findings, HTML).
+      const fired = [...firing.values()].map((a) => redactAlert(a, red));
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.json`;
+      const doc = { format: ALERTS_EVIDENCE, endpoint: red.text(url.origin + url.pathname), window: { start, end, requestedS: windowS, intervalS }, polls: done,
+        firing: fired, pendingSeen: pending.size, note: fired.length ? `${fired.length} firing alert(s) in window` : "no alerts in window" };
+      writeFileSync(join(this.dir(id), rel), red.text(JSON.stringify(doc, null, 2)));
+      const ev: Evidence = { id: evId, type: "response", kind: "alert", path: rel, sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts(), executedBy: "core",
+        source: red.text(`prometheus:${doc.endpoint} ${start}..${end}`) };
+      w.evidence.push(ev);
+      const matchersFor = (c: Check) => [...(c.alertMatchers ?? []), ...extra.filter((x) => x.checkId === c.id).map((x) => x.labels)];
+      const watch: AlertWatch = { evidenceId: evId, start, end, polls: done, matched: [], unmatched: [], pendingSeen: pending.size };
+      const newFindings: Finding[] = [];
+      for (const [i, a] of [...firing.values()].entries()) {
+        const ra = fired[i];
+        const name = ra.labels.alertname ?? "(unnamed alert)";
+        const checkIds = (w.checks ?? []).filter((c) => matchersFor(c).some((mm) => alertMatches(a, mm))).map((c) => c.id);
+        if (!checkIds.length) { watch.unmatched.push({ alertname: name, labels: ra.labels, severity: severityOf(a) }); continue; }
+        const claim = `Prometheus alert ${name} firing${ra.activeAt ? ` since ${ra.activeAt}` : ""} (${Object.entries(ra.labels).filter(([k]) => k !== "alertname").map(([k, v]) => `${k}=${v}`).join(", ")})${ra.annotations.summary ? `: ${ra.annotations.summary}` : ""} — related to ${checkIds.join(", ")}`;
+        const existing = (w.findings ?? []).find((f) => f.checkId && checkIds.includes(f.checkId));
+        if (existing) {
+          existing.root_cause_chain.splice(1, 0, { claim, kind: "observed", evidence_ids: [evId] });
+          if (!existing.evidenceIds.includes(evId)) existing.evidenceIds.push(evId);
+          watch.matched.push({ alertname: name, checkIds, findingId: existing.id, attached: true });
+        } else {
+          const f: Finding = { id: `finding-${(w.findings ?? []).length + 1}`, title: `Alert ${name} firing`, severity: severityOf(a), symptom: claim,
+            repro_steps: [`GET ${doc.endpoint}`], root_cause_chain: [{ claim, kind: "observed", evidence_ids: [evId] }], evidenceIds: [evId], kind: "observed", checkId: checkIds[0] };
+          w.findings = [...(w.findings ?? []), f];
+          newFindings.push(f);
+          watch.matched.push({ alertname: name, checkIds, findingId: f.id, attached: false });
+        }
+      }
+      w.alertWatches = [...(w.alertWatches ?? []), watch];
+      log({ type: "alerts_watch", evidenceId: evId, outputSha256: ev.sha256, start, end, polls: done, firing: fired.length, pendingSeen: pending.size,
+        matched: watch.matched.map((x) => ({ ...x })), unmatched: watch.unmatched.map((x) => x.alertname) });
+      this.save(w);
+      return { evidence: ev, watch, findings: newFindings };
+    });
+  }
+
   private readonly versions = new Map<string, string>();
 
   private async cliVersion(c: ConnectorConfig, env: NodeJS.ProcessEnv, cwd: string): Promise<string> {
@@ -431,6 +532,15 @@ export class WalkthroughCore {
         if (!w.evidence.some((x) => x.id === e.triggeringEvidenceId)) return { ok: false, entries: r.entries, error: `seq ${e.seq}: triggering evidence ${e.triggeringEvidenceId} missing` };
         continue;
       }
+      const multi = (e as unknown as { evidenceIds?: string[] }).evidenceIds;
+      if (Array.isArray(multi)) { // capture_page: several evidence items, each checked against its stored hash
+        for (const x of multi) {
+          const ev2 = w.evidence.find((y) => y.id === x);
+          if (!ev2 || !existsSync(join(this.dir(id), ev2.path)) || sha256File(join(this.dir(id), ev2.path)) !== ev2.sha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: evidence ${x} missing or modified` };
+        }
+        continue;
+      }
+      if (e.evidenceId === undefined && e.type === "alerts_poll") continue; // per-poll record; the watch entry carries the evidence
       const ev = w.evidence.find((x) => x.id === e.evidenceId);
       const p = ev && join(this.dir(id), ev.path);
       if (!ev || ev.sha256 !== e.outputSha256 || !existsSync(p!) || sha256File(p!) !== e.outputSha256) return { ok: false, entries: r.entries, error: `seq ${e.seq}: evidence ${e.evidenceId} missing or modified` };
@@ -510,6 +620,7 @@ export class WalkthroughCore {
         if (!c.intent || !c.target) throw new Error(`check ${c.id}: intent and target are required`);
         if (!SEVERITIES.includes(c.severity_if_fail)) throw new Error(`check ${c.id}: severity_if_fail must be one of ${SEVERITIES.join("|")}`);
         if (c.verify && !this.registry.has("verifier", c.verify.type)) throw new Error(`check ${c.id}: verifier "${c.verify.type}" not available`);
+        for (const mm of c.alertMatchers ?? []) { const p = matcherProblem(mm); if (p) throw new Error(`check ${c.id}: ${p}`); }
         ids.add(c.id);
       }
       if (!input.append) {

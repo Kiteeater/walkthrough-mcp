@@ -9,11 +9,13 @@ const USAGE = `usage:
   walkthrough import-review <review.json> [--root <dir>]
   walkthrough metrics <id> --query <promql> [--check <checkId>] [--time <unix|rfc3339>] [--root <dir>]
       (read-only Prometheus instant query; env WALKTHROUGH_PROMETHEUS_URL [+ WALKTHROUGH_PROMETHEUS_TOKEN];
-       host must be in replay.allowHosts of <root>/walkthrough.config.json)`;
+       host must be in replay.allowHosts of <root>/walkthrough.config.json)
+  walkthrough watch-alerts <id> --window <s> [--interval <s>] [--root <dir>]
+      (read-only GET /api/v1/alerts over a bounded window; window <= 900 s, interval 1-60 s)`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { query: { type: "string" }, check: { type: "string" }, time: { type: "string" }, config: { type: "string" }, sandbox: { type: "string" }, up: { type: "string" }, down: { type: "string" }, root: { type: "string" } },
+  options: { window: { type: "string" }, interval: { type: "string" }, query: { type: "string" }, check: { type: "string" }, time: { type: "string" }, config: { type: "string" }, sandbox: { type: "string" }, up: { type: "string" }, down: { type: "string" }, root: { type: "string" } },
 });
 const [cmd, arg] = positionals;
 const core = createCore(values.root ?? process.cwd());
@@ -26,6 +28,8 @@ try {
     console.log(renderWalkthrough(core, arg));
   } else if (cmd === "metrics" && arg && values.query) {
     console.log(JSON.stringify(await core.queryMetrics(arg, { query: values.query, checkId: values.check, time: values.time })));
+  } else if (cmd === "watch-alerts" && arg && values.window) {
+    console.log(JSON.stringify(await core.watchAlerts(arg, { windowS: Number(values.window), intervalS: values.interval ? Number(values.interval) : undefined })));
   } else if (cmd === "import-review" && arg) {
     console.log(JSON.stringify(await core.importReview(readJsonFile(arg))));
   } else {

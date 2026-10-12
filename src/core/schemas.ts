@@ -12,6 +12,7 @@ export const checkSchema = z.object({
   }),
   severity_if_fail: z.enum(["critical", "high", "medium", "low"]),
   verify: z.object({ type: z.string() }).passthrough().optional(),
+  alertMatchers: z.array(z.record(z.string())).optional().describe("Prometheus alert label matchers relating alerts to this check, e.g. [{alertname: 'HighOrders5xx'}, {route: '~/api/orders.*'}]"),
 });
 
 export const planChecksShape = {
@@ -82,3 +83,14 @@ export const queryMetricsShape = {
   id: z.string(), query: z.string().max(2000).describe("PromQL; aggregate to ONE series, e.g. sum(rate(...))"),
   check_id: z.string().optional(), time: z.string().optional().describe("unix seconds or RFC3339; default now"),
 };
+
+export const WATCH_ALERTS_DESC = "walkthrough watches Prometheus alerts itself (GET /api/v1/alerts only, same endpoint rules as query_metrics) over a bounded window. Firing alerts matching a check's alertMatchers (or the matchers given here) become findings / are attached to that check's finding; unmatched firing alerts are listed separately; a quiet window is recorded as evidence with start/end.";
+export const watchAlertsShape = {
+  id: z.string(),
+  window_s: z.number().int().min(1).max(900).describe("watch window in seconds (max 900)"),
+  interval_s: z.number().int().min(1).max(60).optional().describe("poll interval in seconds (1-60, default 15)"),
+  matchers: z.array(z.object({ check_id: z.string(), labels: z.record(z.string()) })).optional().describe("extra matchers mapping alerts to checks"),
+  stop_on_firing: z.boolean().optional().describe("stop at the first poll with a firing alert (default true)"),
+};
+type Watch = { window_s: number; interval_s?: number; matchers?: { check_id: string; labels: Record<string, string> }[]; stop_on_firing?: boolean };
+export const watchInput = (a: Watch) => ({ windowS: a.window_s, intervalS: a.interval_s, stopOnFiring: a.stop_on_firing, matchers: a.matchers?.map((m) => ({ checkId: m.check_id, labels: m.labels })) });

@@ -37,34 +37,49 @@ export function prometheusFromEnv(env: NodeJS.ProcessEnv = process.env): Prometh
 }
 
 /** The only URL we ever request: <base>/api/v1/query?query=…[&time=…]. Throws for anything else. */
-export function promQueryUrl(base: string, query: string, time?: string): URL {
-  if (typeof query !== "string" || !query.trim()) throw new MetricsError("query is required");
-  if (query.length > MAX_QUERY_LEN) throw new MetricsError(`query longer than ${MAX_QUERY_LEN} chars`);
+/** Validate the configured base URL (no API path, query, fragment or credentials). */
+function promBase(base: string): URL {
   let u: URL;
   try { u = new URL(base); } catch { throw new MetricsError(`invalid Prometheus URL`); }
   if (u.search || u.hash || u.username || u.password) throw new MetricsError("Prometheus URL must not carry query, fragment or credentials");
   if (/\/api(\/|$)/i.test(u.pathname)) throw new MetricsError(`Prometheus URL must be the base URL, not an API path (${u.pathname})`);
-  u.pathname = u.pathname.replace(/\/+$/, "") + PROM_QUERY_PATH;
-  u.searchParams.set("query", query);
-  if (time !== undefined) {
-    if (!/^\d{9,11}(\.\d+)?$/.test(time) && Number.isNaN(Date.parse(time))) throw new MetricsError("time must be a unix timestamp or RFC3339");
-    u.searchParams.set("time", time);
-  }
   return u;
+}
+
+/** The read-only Prometheus API paths walkthrough may call. Nothing else is ever requested. */
+export const PROM_ALERTS_PATH = "/api/v1/alerts";
+export type PromPath = typeof PROM_QUERY_PATH | typeof PROM_ALERTS_PATH;
+
+/** <base><path>[?params]; throws for an invalid base. */
+export function promUrl(base: string, path: PromPath, params: Record<string, string> = {}): URL {
+  const u = promBase(base);
+  u.pathname = u.pathname.replace(/\/+$/, "") + path;
+  for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+  return u;
+}
+
+/** The only URL we ever request for queries: <base>/api/v1/query?query=…[&time=…]. Throws for anything else. */
+export function promQueryUrl(base: string, query: string, time?: string): URL {
+  if (typeof query !== "string" || !query.trim()) throw new MetricsError("query is required");
+  if (query.length > MAX_QUERY_LEN) throw new MetricsError(`query longer than ${MAX_QUERY_LEN} chars`);
+  if (time !== undefined && !/^\d{9,11}(\.\d+)?$/.test(time) && Number.isNaN(Date.parse(time))) throw new MetricsError("time must be a unix timestamp or RFC3339");
+  return promUrl(base, PROM_QUERY_PATH, time === undefined ? { query } : { query, time });
 }
 
 export interface PromQueryResult {
   url: string; status: number; body: string; hops: { url: string; ip: string; status: number }[]; sentSecrets: string[];
-  /** Parsed Prometheus envelope (status success|error, data.resultType, data.result). */
-  json: { status?: string; errorType?: string; error?: string; data?: { resultType?: string; result?: unknown } };
+  /** Parsed Prometheus envelope (status success|error, data…). */
+  json: { status?: string; errorType?: string; error?: string; data?: { resultType?: string; result?: unknown; alerts?: unknown } };
 }
 
-/** Run one instant query. Rejects non-GET/other paths (by construction), policy violations, oversize and non-JSON bodies. */
-export async function promInstantQuery(
-  cfg: PrometheusConfig, policy: ReplayConfig, query: string,
-  opts: { time?: string; resolver?: Resolver; env?: NodeJS.ProcessEnv } = {},
+/**
+ * GET one read-only Prometheus API URL under the replay policy: allowlist + IP rules, pinned IP, every redirect hop
+ * re-checked and required to stay on the same API path, bearer token bound to the endpoint's origin, size/time limits.
+ */
+export async function promGet(
+  cfg: PrometheusConfig, policy: ReplayConfig, url: URL, path: PromPath,
+  opts: { resolver?: Resolver; env?: NodeJS.ProcessEnv } = {},
 ): Promise<PromQueryResult> {
-  const url = promQueryUrl(cfg.url, query, opts.time);
   const env = opts.env ?? process.env;
   const token = env[cfg.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
   const AUTH = "__WALKTHROUGH_PROM_AUTH";
@@ -75,13 +90,21 @@ export async function promInstantQuery(
   };
   const r = await replayRequest(p, { method: "GET", url: url.toString() }, {
     resolver: opts.resolver, env: { [AUTH]: token ? `Bearer ${token}` : undefined },
-    // Every hop (including redirects) must still be the instant-query API: no admin / write / remote_write paths.
-    hopCheck: (h) => { if (!h.pathname.endsWith(PROM_QUERY_PATH)) throw new ReplayRejectedError(`only ${PROM_QUERY_PATH} is allowed, not ${h.pathname}`); },
+    // Every hop (including redirects) must still be the same read-only API: no admin / write / remote_write paths.
+    hopCheck: (h) => { if (!h.pathname.endsWith(path)) throw new ReplayRejectedError(`only ${path} is allowed, not ${h.pathname}`); },
   });
   if (r.truncated) throw new MetricsError(`Prometheus response larger than ${p.maxBodyBytes} bytes`);
   let json: PromQueryResult["json"];
   try { json = JSON.parse(r.body); } catch { throw new MetricsError(`Prometheus answered HTTP ${r.status} with a non-JSON body`); }
   return { url: url.toString(), status: r.status, body: r.body, hops: r.hops, sentSecrets: [...r.sentSecrets, ...(token ? [token] : [])], json };
+}
+
+/** Run one instant query (GET /api/v1/query). */
+export function promInstantQuery(
+  cfg: PrometheusConfig, policy: ReplayConfig, query: string,
+  opts: { time?: string; resolver?: Resolver; env?: NodeJS.ProcessEnv } = {},
+): Promise<PromQueryResult> {
+  return promGet(cfg, policy, promQueryUrl(cfg.url, query, opts.time), PROM_QUERY_PATH, opts);
 }
 
 export type MetricOp = ">" | ">=" | "<" | "<=" | "==" | "!=";
