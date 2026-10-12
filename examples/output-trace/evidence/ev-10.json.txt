@@ -1,0 +1,9 @@
+# reported by agent: mongodb-mcp-server.find({"database":"walkthrough_demo","collection":"orders","filter":{"_id":"ord-3"}})
+
+[
+  {
+    "_id": "ord-3",
+    "customer": "kai",
+    "legacyTotal": 12
+  }
+]

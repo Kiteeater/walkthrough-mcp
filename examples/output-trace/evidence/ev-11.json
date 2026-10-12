@@ -1,0 +1,68 @@
+{
+  "format": "walkthrough.alerts/v1",
+  "watchId": "w_4ef3af898401d4e4",
+  "endpoint": "http://127.0.0.1:3102/api/v1/alerts",
+  "outcome": "stopped_early",
+  "finalizedBy": "collect",
+  "window": {
+    "start": "2026-10-12T21:41:14.051Z",
+    "end": "2026-10-12T21:41:15.129Z",
+    "deadline": "2026-10-12T21:42:14.051Z",
+    "requestedS": 60,
+    "intervalS": 1
+  },
+  "polls": [
+    {
+      "at": "2026-10-12T21:41:14.052Z",
+      "httpStatus": 200,
+      "error": null,
+      "firing": [
+        "DiskAlmostFull"
+      ],
+      "pending": 1
+    },
+    {
+      "at": "2026-10-12T21:41:15.129Z",
+      "httpStatus": 200,
+      "error": null,
+      "firing": [
+        "HighOrders5xx",
+        "DiskAlmostFull"
+      ],
+      "pending": 1
+    }
+  ],
+  "firing": [
+    {
+      "labels": {
+        "alertname": "DiskAlmostFull",
+        "instance": "mongo-1",
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "disk 91% full"
+      },
+      "state": "firing",
+      "activeAt": "2026-10-12T21:37:14.058Z",
+      "value": "0.91",
+      "firstSeenAt": "2026-10-12T21:41:14.052Z"
+    },
+    {
+      "labels": {
+        "alertname": "HighOrders5xx",
+        "route": "/api/orders/:id/total",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "5xx ratio on /api/orders/:id/total above 10% for 2m",
+        "runbook_url": "https://runbook.example/orders-5xx?token=[REDACTED]&v=2"
+      },
+      "state": "firing",
+      "activeAt": "2026-10-12T21:41:14.499Z",
+      "value": "0.5",
+      "firstSeenAt": "2026-10-12T21:41:15.129Z"
+    }
+  ],
+  "pendingSeen": 1,
+  "note": "2 firing alert(s) in window"
+}

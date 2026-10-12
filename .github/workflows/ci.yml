@@ -67,6 +67,9 @@ jobs:
           node examples/assert-trace-chain.mjs "${html%index.html}walkthrough.json"
           grep -q '发现 1 个问题' demo.log
           mkdir -p demo-output && cp "$html" demo-output/
+      # --docker: throwaway container on a random loopback port; must be gone afterwards.
+      - run: npm run demo -- --docker
+      - run: test -z "$(docker ps -aq --filter name=walkthrough-demo-mongo)"
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: demo-audit-page, path: demo-output/, if-no-files-found: warn }
