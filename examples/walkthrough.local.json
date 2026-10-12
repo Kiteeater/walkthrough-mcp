@@ -6,7 +6,10 @@
     "up": "docker compose up -d",
     "down": "docker compose down -v",
     "local": {
-      "up": "exec node server.js"
+      "up": "exec node server.js",
+      "passEnv": [
+        "DEMO_API_KEY"
+      ]
     }
   },
   "waitFor": {

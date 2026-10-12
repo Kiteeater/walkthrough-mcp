@@ -42,7 +42,7 @@ ${sources ? `<ul class="sources">${sources}</ul>` : ""}
 ${review}
 ${evidence || `<p class="none">No evidence attached (inferred).</p>`}
 <div class="actions"><button data-d="agree">Agree</button><button data-d="flag">Flag</button>
-<input class="note" placeholder="note (optional)"><span class="state"></span></div>
+<input class="note" placeholder="note (optional)" value="${esc(c.review?.note ?? "")}"><span class="state"></span></div>
 </section>`;
   }).join("\n");
 

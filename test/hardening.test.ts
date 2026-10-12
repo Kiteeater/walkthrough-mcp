@@ -66,7 +66,7 @@ describe("local backend", () => {
       title: "local",
       sandbox: {
         backend: "local", cwd: root, up: "unused", down: "unused",
-        local: { up: `exec node -e 'console.log("key=" + process.env.WT_LOCAL_API_KEY); console.error("stderr line"); setInterval(()=>{},1000)'` },
+        local: { up: `exec node -e 'console.log("key=" + process.env.WT_LOCAL_API_KEY); console.error("stderr line"); setInterval(()=>{},1000)'`, passEnv: ["WT_LOCAL_API_KEY"] },
       },
       exec: ["echo exec $WT_LOCAL_API_KEY"],
       captures: [{ as: "shot", type: "screenshot", url: "http://localhost/" }, { as: "logs", type: "logs", service: "app" }],

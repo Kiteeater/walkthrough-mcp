@@ -1,1 +1,1 @@
-{"walkthroughId":"wt-20261012185032-401b1b","decisions":[{"claimId":"claim-1","decision":"agree","note":"screenshot shows the banner; log shows GET /api/greeting"},{"claimId":"claim-2","decision":"flag","note":"inferred only; needs a runtime check"}]}
+{"walkthroughId":"wt-20261012185330-b1a3dc","decisions":[{"claimId":"claim-1","decision":"agree","note":"screenshot shows the banner; log shows GET /api/greeting"},{"claimId":"claim-2","decision":"flag","note":"inferred only; needs a runtime check"}]}
