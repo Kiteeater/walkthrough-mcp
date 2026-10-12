@@ -46,7 +46,8 @@ Requires Node 20+ and Docker with the Compose plugin.
 ```bash
 npm ci
 npm run demo            # in-process MongoDB (mongodb-memory-server), no Docker
-npm run demo -- --docker  # use a MongoDB already running on 127.0.0.1:27017 (or $MONGO_URL)
+npm run demo -- --docker  # start a throwaway mongo container (random loopback port, removed on exit)
+MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthrough_demo database is wiped
 ```
 
 **Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
@@ -151,6 +152,16 @@ or commit a project-level `.mcp.json`:
 
 Secrets go in the environment of the process that launches the server, never in committed files. Host allowlists
 (`replay.allowHosts`) live in `<project>/walkthrough.config.json`.
+
+### Demo database safety
+
+The demo seeds (and first wipes) the `orders` collection in the database **`walkthrough_demo`** only.
+- default: in-process MongoDB; `--docker`: a container it starts itself (`docker run -d --rm -p 127.0.0.1::27017`,
+  port read via `docker port`), removed at exit and on Ctrl-C/SIGTERM. If Docker is missing or the container does
+  not start/become ready, it exits non-zero saying what is missing — it never falls back to `localhost:27017`.
+- `MONGO_URL=…` (explicit only): an external Mongo. If the database (URL path or `WALKTHROUGH_DEMO_DB`) is not
+  `walkthrough_demo`, the demo refuses and exits non-zero before connecting, unless
+  `WALKTHROUGH_DEMO_ALLOW_MONGO_WIPE=1` is set.
 
 ### Agent prompt template
 

@@ -8,7 +8,7 @@
     "cwd": "service",
     "up": "exec node server.js",
     "down": "true",
-    "local": { "up": "exec node server.js", "passEnv": ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
+    "local": { "up": "exec node server.js", "passEnv": ["MONGO_URL", "MONGO_DB", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
   },
   "agent": {
     "goal": "每个订单的金额接口都返回 2xx；如果没有，跨数据源追到根因",

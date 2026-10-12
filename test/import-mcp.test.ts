@@ -104,7 +104,7 @@ describe("cross-source root-cause chain: HTTP 500 → Langfuse trace → Mongo d
     const { startMockLangfuse } = await import("../examples/trace-demo/mock-langfuse.mjs" as string);
     const mms = await MongoMemoryServer.create();
     const mongo = new MongoClient(mms.getUri());
-    await mongo.db("shop").collection("orders").insertMany([{ _id: "ord-1", items: [{ price: 1, qty: 1 }] }, { _id: "ord-3", legacyTotal: 12 }] as never);
+    await mongo.db("walkthrough_demo").collection("orders").insertMany([{ _id: "ord-1", items: [{ price: 1, qty: 1 }] }, { _id: "ord-3", legacyTotal: 12 }] as never);
     const lfPort = 41000 + Math.floor(Math.random() * 5000), port = lfPort + 6000;
     const lf = await startMockLangfuse(lfPort, "pk", "sk-test-xyz");
     const auth = "Basic " + Buffer.from("pk:sk-test-xyz").toString("base64");

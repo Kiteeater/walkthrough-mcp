@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// `npm run demo`: from zero — in-process MongoDB (mongodb-memory-server; `--docker` uses a running container on
-// 27017 or $MONGO_URL), mock Langfuse, mock Prometheus and the buggy orders service. The trace agent runs the whole
+// `npm run demo`: from zero — in-process MongoDB (mongodb-memory-server; `--docker` starts a throwaway container on a
+// random loopback port; an explicit $MONGO_URL is guarded: only db walkthrough_demo is wiped), mock Langfuse, mock Prometheus and the buggy orders service. The trace agent runs the whole
 // flow (plan_checks → start_watch → trigger → evidence → evaluate_check → collect_watch → report) and this prints
 // where the audit page is. Everything shuts down at the end (or on Ctrl-C).
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
-console.log(`walkthrough demo: starting ${args.includes("--docker") ? "MongoDB (docker / MONGO_URL)" : "in-process MongoDB"}, mock Langfuse, mock Prometheus, orders service…`);
+console.log(`walkthrough demo: starting ${args.includes("--docker") || process.env.MONGO_URL ? (process.env.MONGO_URL ? "external MongoDB (MONGO_URL)" : "a throwaway MongoDB container") : "in-process MongoDB"}, mock Langfuse, mock Prometheus, orders service…`);
 const child = spawn(process.execPath, ["examples/trace-demo/run.mjs", ".", ...args], { stdio: ["ignore", "pipe", "inherit"] });
 let out = "";
 child.stdout.on("data", (d) => { out += d; });
