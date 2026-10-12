@@ -9,7 +9,10 @@ export interface McpClients {
   /** Stand-in for mongodb.find({database, collection, filter}). */
   find(database: string, collection: string, filter: Record<string, unknown>): Promise<unknown[]>;
 }
-export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number }
+export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean }
+
+/** 5xx ratio of the orders total route over 5m (one series). */
+export const FIVE_XX_RATIO = 'sum(rate(http_requests_total{route="/api/orders/:id/total",status=~"5.."}[5m])) / sum(rate(http_requests_total{route="/api/orders/:id/total"}[5m]))';
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -40,6 +43,16 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
     const traceId = /"traceId"\s*:\s*"([\w-]+)"/.exec(out.body)?.[1];
     const chain: RootCauseLink[] = [{ claim: `${main.target.replace(/https?:\/\/[^/]+/, "")} answered ${out.status} (${r.reasons.join("; ")})`, kind: "observed", evidence_ids: [httpEv.id] }];
     let more: Check[] = [];
+    if (o.metrics) {
+      // Corroborate the single failing request with production-style metrics, queried by walkthrough itself.
+      const mId = `${main.id}-5xx`;
+      await core.planChecks(id, { goal: o.goal, append: true, triggeringEvidenceId: httpEv.id, checks: [
+        { id: mId, intent: "metrics corroborate: 5xx ratio of /api/orders/:id/total over 5m > 0", method: "script", target: `prometheus ${FIVE_XX_RATIO}`, expect: { type: "metric", value: { op: ">", value: 0, query: FIVE_XX_RATIO } }, severity_if_fail: "medium" },
+      ] });
+      const mEv = await core.queryMetrics(id, { query: FIVE_XX_RATIO, checkId: mId });
+      const mRes = await core.evaluateCheck(id, { checkId: mId, evidenceIds: [mEv.id] });
+      chain.push({ claim: `Prometheus: 5xx ratio of /api/orders/:id/total over 5m — ${mRes.reasons.join("; ")} (${mRes.status}): not a one-off`, kind: "observed", evidence_ids: [mEv.id] });
+    }
     if (traceId) {
       const trace = await mcp.getTrace(traceId) as { metadata?: { db?: string; collection?: string; orderId?: string }; observations?: { name: string; level: string; statusMessage?: string }[] };
       const n = main.id;

@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { MongoClient } from "mongodb";
 import { startMockLangfuse } from "./mock-langfuse.mjs";
+import { startMockPrometheus } from "./mock-prometheus.mjs";
 
 const root = process.argv[2] ?? ".";
 let mms;
@@ -18,8 +19,11 @@ await c.db("shop").collection("orders").insertMany([
 await c.close();
 const pk = "pk-lf-demo", sk = process.env.LANGFUSE_SECRET_KEY ?? `sk-lf-demo-${Math.random().toString(36).slice(2)}`;
 const lf = await startMockLangfuse(3100, pk, sk);
-const env = { ...process.env, MONGO_URL: url, LANGFUSE_URL: "http://127.0.0.1:3100", LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk };
+const promToken = process.env.WALKTHROUGH_PROMETHEUS_TOKEN ?? `prom-${Math.random().toString(36).slice(2)}`;
+const prom = await startMockPrometheus(3102, promToken);
+const env = { ...process.env, MONGO_URL: url, LANGFUSE_URL: "http://127.0.0.1:3100", LANGFUSE_PUBLIC_KEY: pk, LANGFUSE_SECRET_KEY: sk,
+  WALKTHROUGH_PROMETHEUS_URL: "http://127.0.0.1:3102", WALKTHROUGH_PROMETHEUS_TOKEN: promToken };
 const child = spawn(process.execPath, ["dist/demo-agent/trace-run.js", "examples/trace-demo/walkthrough.trace.json", "--root", root], { env, stdio: ["ignore", "inherit", "inherit"] });
 const code = await new Promise((r) => child.on("exit", (c) => r(c ?? 1)));
-lf.close(); if (mms) await mms.stop();
+lf.close(); prom.close(); if (mms) await mms.stop();
 process.exit(code);

@@ -15,6 +15,7 @@ import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, safeRegex } from "./har.js";
 import { checkHop, guardedGet, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { METRIC_EVIDENCE, MetricsError, promInstantQuery, type PrometheusConfig } from "./metrics.js";
 import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
 import type {
   Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
@@ -44,6 +45,8 @@ export interface CoreDeps {
   resolver?: Resolver;
   /** Env used for replay test-account credentials (defaults to process.env). */
   env?: NodeJS.ProcessEnv;
+  /** Read-only Prometheus endpoint (instant queries). Uses `replay` as its host allowlist + IP policy. */
+  prometheus?: PrometheusConfig;
 }
 
 export interface ImportMcpInput {
@@ -309,6 +312,47 @@ export class WalkthroughCore {
       w.commandLogHead = { seq: log.seq, hash: log.hash };
       this.save(w);
       return out;
+    });
+  }
+
+  /**
+   * query_metrics: walkthrough runs ONE Prometheus instant query itself (GET /api/v1/query only) and stores the
+   * response as core-executed evidence (redacted, sha256) + a hash-chained commands.jsonl entry. The endpoint is
+   * subject to replay.allowHosts and the IP policy; the bearer token is redacted from everything written.
+   */
+  queryMetrics(id: string, input: { query: string; checkId?: string; time?: string }): Promise<Evidence> {
+    return this.withLock(id, async () => {
+      const prom = this.deps.prometheus;
+      if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
+      const cfg = this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("query_metrics needs replay.allowHosts (same policy as replay)");
+      const w = this.load(id);
+      if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
+      const env = this.deps.env ?? process.env;
+      const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
+      let r;
+      try {
+        r = await promInstantQuery(prom, cfg, input.query, { time: input.time, resolver: this.deps.resolver, env });
+      } catch (e) {
+        throw new (e instanceof Error ? (e.constructor as ErrorConstructor) : Error)(this.redactor.with([token, token && `Bearer ${token}`]).text(String((e as Error).message)));
+      }
+      const red = this.redactor.with([...r.sentSecrets, token]);
+      const evId = `ev-${w.evidence.length + 1}`;
+      const rel = `evidence/${evId}.json`;
+      const doc = { format: METRIC_EVIDENCE, endpoint: red.text(new URL(r.url).origin + new URL(r.url).pathname), query: input.query, time: input.time ?? null, httpStatus: r.status, response: red.value(r.json) };
+      writeFileSync(join(this.dir(id), rel), red.text(JSON.stringify(doc, null, 2)));
+      const sha = sha256File(join(this.dir(id), rel));
+      const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+        ts: this.ts(), walkthroughId: id, type: "metrics_query", checkId: input.checkId, endpoint: doc.endpoint, query: red.text(input.query),
+        time: input.time ?? null, httpStatus: r.status, promStatus: r.json.status ?? null, hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })),
+        outputSha256: sha, evidenceId: evId, executedBy: "core",
+      });
+      w.commandLogHead = { seq: log.seq, hash: log.hash };
+      const ev: Evidence = { id: evId, type: "response", kind: "metric", path: rel, sha256: sha, createdAt: this.ts(), executedBy: "core",
+        ...(input.checkId ? { checkId: input.checkId } : {}), source: red.text(`prometheus:${doc.endpoint} ${input.query}`).slice(0, 500) };
+      w.evidence.push(ev);
+      this.save(w);
+      return ev;
     });
   }
 

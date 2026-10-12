@@ -257,6 +257,35 @@ Demo (`node examples/ui-demo/run.mjs`, part of `examples/run-e2e.sh`): the order
 "Failed to load orders"; the agent's screenshot shows the banner, its HAR shows the 500, walkthrough replays
 `GET /api/orders` → 500, and the check is a normal `fail`. The finding shows the screenshot and the replay side by side.
 
+## Prometheus metrics (read-only)
+
+`query_metrics` (MCP) / `walkthrough metrics <id> --query <promql> [--check <id>] [--time <t>]` (CLI) make walkthrough
+run **one instant query** itself and store the response as **core-executed** evidence (`kind: metric`, sha256,
+redacted) plus a hash-chained `metrics_query` entry in `commands.jsonl`. No Grafana, no dashboards.
+
+- Endpoint from env: `WALKTHROUGH_PROMETHEUS_URL` (base URL, e.g. `https://prom.internal:9090` or
+  `https://host/prometheus`), optional bearer token from `WALKTHROUGH_PROMETHEUS_TOKEN` (or the env var named by
+  `WALKTHROUGH_PROMETHEUS_TOKEN_ENV`). The token value is added to the redactor for the run before anything is written
+  (evidence, log, source, HTML), whatever its env name.
+- **Only `GET /api/v1/query`.** The URL is built by walkthrough (`<base>/api/v1/query?query=…[&time=…]`); a base URL
+  that already points at an `/api/` path (admin, write, remote_write, query_range, alerts…) or carries a query string is
+  rejected, and every redirect hop must still be `/api/v1/query`.
+- **Same SSRF policy as replay**: the endpoint host must be in `replay.allowHosts` of `walkthrough.config.json`; IP
+  rules, DNS pinning and per-hop redirect checks apply; the token is bound to the endpoint's origin (dropped on any
+  redirect to another origin).
+- Limits: query ≤ 2000 chars, response ≤ 1 MB (larger → rejected, not truncated), 10 s overall timeout (configurable
+  via `CoreDeps.prometheus`).
+- **Expectation** `{"type": "metric", "value": {"op": ">", "value": 0, "query?": "<promql>"}}` (ops `> >= < <= == !=`),
+  judged by `evaluate_check`. Exactly one series with one finite value is required: an empty result, `NaN`/`±Inf`,
+  multiple series or a non-`success` Prometheus status is **inconclusive** (never treated as 0). Aggregate to one series
+  (`sum(...)`). Metric evidence is executed by walkthrough, so it gives a normal pass/fail (not `pass_needs_review`).
+- A finding that cites metric evidence shows it on the first screen ("📈 指标佐证 · metric confirms: `<query>` = value").
+
+Demo: the trace demo (`examples/trace-demo`, part of `run-e2e.sh`) starts a mock Prometheus
+(`mock-prometheus.mjs`, bearer token required) whose `http_requests_total` shows a 5xx spike; the agent appends a check
+"5xx ratio of `/api/orders/:id/total` over 5m > 0", walkthrough queries it (0.5 → pass) and the finding's chain reads
+HTTP 500 → Prometheus 5xx ratio → Langfuse trace → Mongo record → `pricing.js:3`.
+
 ## Evidence format
 
 Every evidence item is stored under `.walkthrough/<id>/evidence/` and described as:
@@ -299,7 +328,7 @@ CI lives in `.github/workflows/ci.yml`: it runs unit tests plus the Docker Compo
 
 ## Roadmap
 
-- PR 2: Prometheus implementation of the read-only `MetricsAdapter` (`src/core/metrics.ts`).
+- Prometheus: range queries / alerting rules are not supported (instant queries only).
 
 ## License
 

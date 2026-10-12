@@ -1,7 +1,7 @@
 /** `response` = HTTP response / command output / MCP result submitted for a check. */
 export type EvidenceType = "screenshot" | "logs" | "response" | "har";
 /** Design-doc evidence kinds for capture_evidence. */
-export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log";
+export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {
@@ -69,8 +69,9 @@ export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
  * - absent: `value` = pattern that must NOT match
  * - ui: `value` = {har: {urlMatch, status, bodyMatch?, method?}} (judged from HAR network entries) or {text: {contains}} (DOM text).
  *   Screenshots are never judged.
+ * - metric: `value` = {op: > >= < <= == !=, value, query?} over Prometheus instant-query evidence (exactly one finite series).
  */
-export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui";
+export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui" | "metric";
 export interface Expect { type: ExpectType; value: unknown }
 
 export interface Check {
