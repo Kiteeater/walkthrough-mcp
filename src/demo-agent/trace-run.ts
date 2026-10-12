@@ -22,11 +22,13 @@ async function main(): Promise<void> {
     },
     find: (db, coll, filter) => mongo.db(db).collection(coll).find(filter as never).limit(10).toArray(),
   };
-  const core = createCore(values.root ?? process.cwd());
+  // Prometheus (read-only) is optional: when configured, its host is the only replay/metrics allowlist entry.
+  const prom = process.env.WALKTHROUGH_PROMETHEUS_URL ? new URL(process.env.WALKTHROUGH_PROMETHEUS_URL) : undefined;
+  const core = createCore(values.root ?? process.cwd(), undefined, prom ? { allowHosts: [prom.host], allowCidrs: prom.hostname === "127.0.0.1" ? ["127.0.0.1/32"] : [] } : undefined);
   const cfg = loadFlowConfig(flowFile);
   const a = ((readJsonFile(flowFile) as { agent?: { goal: string; baseUrl: string; service?: string; orders: string[] } }).agent)!;
   try {
-    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, a) });
+    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom }) });
     console.log(JSON.stringify(r));
   } finally { await mongo.close(); }
 }

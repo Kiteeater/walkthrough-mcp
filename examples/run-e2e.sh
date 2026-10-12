@@ -38,6 +38,9 @@ grep -q '"decision": "reject"' "$dir/walkthrough.json"
 set +x
 : "${LANGFUSE_SECRET_KEY:=sk-lf-e2e-$RANDOM$RANDOM}"
 export LANGFUSE_SECRET_KEY
+# Prometheus token for the mock (read-only metrics corroboration); must never reach any artifact.
+: "${WALKTHROUGH_PROMETHEUS_TOKEN:=prom-e2e-$RANDOM$RANDOM}"
+export WALKTHROUGH_PROMETHEUS_TOKEN
 set -x
 tresult="$(node examples/trace-demo/run.mjs . | tail -1)"
 tid="$(node -e 'console.log(JSON.parse(process.argv[1]).id)' "$tresult")"
@@ -49,6 +52,7 @@ grep -q 'data-needs-review=' "$tdir/index.html"
 grep -q '追查中追加' "$tdir/index.html"
 set +x
 if grep -rqF "$LANGFUSE_SECRET_KEY" "$tdir"; then echo "langfuse secret leaked into output" >&2; exit 1; fi
+if grep -rqF "$WALKTHROUGH_PROMETHEUS_TOKEN" "$tdir"; then echo "prometheus token leaked into output" >&2; exit 1; fi
 set -x
 
 # PR #10: UI evidence — agent screenshot + HAR, core judges from HAR and replays GET /api/orders (500) itself.
