@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.walkthrough/
+*.log
+.env
+e2e-output/

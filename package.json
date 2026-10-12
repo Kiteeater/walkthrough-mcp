@@ -1,0 +1,26 @@
+{
+  "name": "walkthrough-mcp",
+  "version": "0.1.0",
+  "description": "Run a change and answer what it actually does, with evidence. MCP server + CLI.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "walkthrough": "dist/cli/index.js", "walkthrough-mcp": "dist/mcp/index.js" },
+  "main": "dist/core/index.js",
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "e2e": "bash examples/run-e2e.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "playwright": "^1.48.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

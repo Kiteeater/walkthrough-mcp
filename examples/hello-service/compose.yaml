@@ -1,0 +1,11 @@
+services:
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["node", "server.js"]
+    volumes:
+      - ./server.js:/app/server.js:ro
+    ports:
+      - "3000:3000"
+    environment:
+      DEMO_API_KEY: ${DEMO_API_KEY:-}

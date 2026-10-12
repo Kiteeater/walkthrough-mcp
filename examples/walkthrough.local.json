@@ -1,0 +1,74 @@
+{
+  "title": "Sample change: greeting endpoint + home banner (local backend)",
+  "sandbox": {
+    "backend": "local",
+    "cwd": "hello-service",
+    "up": "docker compose up -d",
+    "down": "docker compose down -v",
+    "local": {
+      "up": "exec node server.js"
+    }
+  },
+  "waitFor": {
+    "url": "http://localhost:3000/health",
+    "timeoutMs": 90000
+  },
+  "exec": [
+    "curl -fsS http://localhost:3000/api/greeting"
+  ],
+  "captures": [
+    {
+      "as": "home",
+      "type": "screenshot",
+      "url": "http://localhost:3000/"
+    },
+    {
+      "as": "weblogs",
+      "type": "logs",
+      "service": "web"
+    }
+  ],
+  "sources": [
+    {
+      "as": "greetingFn",
+      "file": "examples/hello-service/server.js",
+      "line": 7,
+      "note": "new greeting()"
+    },
+    {
+      "as": "route",
+      "file": "examples/hello-service/server.js",
+      "line": 15,
+      "note": "new /api/greeting route"
+    },
+    {
+      "as": "banner",
+      "file": "examples/hello-service/server.js",
+      "line": 22,
+      "note": "new home banner"
+    }
+  ],
+  "claims": [
+    {
+      "question": "What does the change do to the home page and API when the service actually runs?",
+      "conclusion": "The home page renders the new greeting banner, and the service log shows the /api/greeting route being served.",
+      "kind": "observed",
+      "evidence": [
+        "home",
+        "weblogs"
+      ],
+      "sources": [
+        "banner",
+        "route"
+      ]
+    },
+    {
+      "question": "Does the change affect other callers of greeting()?",
+      "conclusion": "Probably not: greeting() is a new pure function only used by the two new code paths. Not exercised at runtime here.",
+      "kind": "inferred",
+      "sources": [
+        "greetingFn"
+      ]
+    }
+  ]
+}

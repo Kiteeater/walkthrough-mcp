@@ -1,0 +1,14 @@
+--- a/examples/hello-service/server.js
++++ b/examples/hello-service/server.js
+@@
++const greeting = () => ({ message: "Hello from the new greeting endpoint", version: 2 });
++
+@@
++  if (req.url === "/api/greeting") {
++    res.writeHead(200, { "content-type": "application/json" });
++    return res.end(JSON.stringify(greeting()));
++  }
+@@
+-<h1>hello-service</h1>
++<h1>hello-service</h1>
++<div id="banner" style="background:#ddf4ff;padding:1rem">${greeting().message}</div>
