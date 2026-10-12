@@ -32,17 +32,39 @@ const METADATA = new Set(["169.254.169.254", "fd00:ec2::254", "100.100.100.200"]
 const DENY = new BlockList(); // + IPv4-mapped forms via norm()
 DENY.addSubnet("10.0.0.0", 8); DENY.addSubnet("172.16.0.0", 12); DENY.addSubnet("192.168.0.0", 16);
 DENY.addSubnet("127.0.0.0", 8); DENY.addSubnet("169.254.0.0", 16); DENY.addSubnet("100.64.0.0", 10); DENY.addSubnet("0.0.0.0", 8);
+DENY.addSubnet("224.0.0.0", 4); DENY.addSubnet("240.0.0.0", 4); DENY.addSubnet("198.18.0.0", 15);
+// Teredo, NAT64 local-use and multicast are denied outright.
+DENY.addSubnet("2001::", 32, "ipv6"); DENY.addSubnet("64:ff9b:1::", 48, "ipv6"); DENY.addSubnet("ff00::", 8, "ipv6");
 DENY.addSubnet("::1", 128, "ipv6"); DENY.addSubnet("fc00::", 7, "ipv6"); DENY.addSubnet("fe80::", 10, "ipv6"); DENY.addSubnet("::", 128, "ipv6");
 
-/** IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:XXXX:XXXX) → plain IPv4, so mapped addresses get the IPv4 rules. */
+/** Expand an IPv6 address (incl. a dotted IPv4 tail) to 8 hextets, or undefined. */
+function hextets(ip: string): number[] | undefined {
+  if (isIP(ip) !== 6) return undefined;
+  let s = ip;
+  const dq = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dq) { const o = dq[1].split(".").map(Number); s = s.slice(0, -dq[1].length) + `${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`; }
+  const [l, r] = s.split("::");
+  const L = l ? l.split(":") : [], R = r !== undefined ? (r ? r.split(":") : []) : [];
+  const parts = r !== undefined ? [...L, ...Array(8 - L.length - R.length).fill("0"), ...R] : L;
+  return parts.length === 8 ? parts.map((x) => parseInt(x, 16)) : undefined;
+}
+const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
+/**
+ * Normalise an address so IPv6 forms that embed an IPv4 address are judged by the IPv4 rules:
+ * IPv4-mapped ::ffff:0:0/96, IPv4-compatible ::/96 (e.g. ::127.0.0.1), NAT64 64:ff9b::/96, 6to4 2002::/16 (bits 16-47).
+ * Other IPv6 addresses come back in canonical form.
+ */
 export function norm(ipRaw: string): string {
   const ip = ipRaw.toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
-  const d = /^(?:0{0,4}:){0,4}:?(?:0{0,4}:)?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
-  if (d) return d[1];
-  const h = /^(?:0{0,4}:){0,4}:?(?:0{0,4}:)?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip);
-  if (h) { const a = parseInt(h[1], 16), b = parseInt(h[2], 16); return `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`; }
-  if (isIP(ip) === 6) { try { return new URL(`http://[${ip}]/`).hostname.replace(/^\[|\]$/g, ""); } catch { /* keep */ } }
-  return ip;
+  const h = hextets(ip);
+  if (!h) return ip;
+  const zero = (n: number) => h.slice(0, n).every((x) => x === 0);
+  if (zero(5) && h[5] === 0xffff) return v4(h[6], h[7]);
+  if (zero(6) && !(h[6] === 0 && h[7] <= 1)) return v4(h[6], h[7]);
+  if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((x) => x === 0)) return v4(h[6], h[7]);
+  if (h[0] === 0x2002) return v4(h[1], h[2]);
+  try { return new URL(`http://[${ip}]/`).hostname.replace(/^\[|\]$/g, ""); } catch { return ip; }
 }
 
 /** Why connecting to `ip` is forbidden, or undefined. */
@@ -58,12 +80,13 @@ export function ipProblem(ipRaw: string, allowCidrs: string[] = []): string | un
     const f = isIP(net) === 6 ? "ipv6" : "ipv4";
     const n = Number(bits ?? (f === "ipv6" ? 128 : 32));
     if (!isIP(net) || METADATA.has(norm(net))) continue;
+    if (f === "ipv6" && isIP(norm(net)) === 4) continue; // embedded-IPv4 CIDRs are ignored: list the IPv4 form
     // Loopback exceptions must be exact hosts (127.0.0.1/32, ::1/128); a wider loopback range is ignored.
     const loop = f === "ipv4" ? net.startsWith("127.") : norm(net) === "::1";
     if (loop && n !== (f === "ipv4" ? 32 : 128)) continue;
     allow.addSubnet(net, n, f);
   }
-  return allow.check(ip, fam) ? undefined : `private/loopback/link-local address ${ip} is denied (not in allowCidrs)`;
+  return allow.check(ip, fam) ? undefined : `private/loopback/link-local/reserved address ${ip} is denied (not in allowCidrs)`;
 }
 
 export interface ReplayHop { url: string; ip: string; status: number }
@@ -75,6 +98,29 @@ function hostAllowed(u: URL, cfg: ReplayConfig): boolean {
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const port = u.port || (u.protocol === "https:" ? "443" : "80");
   return cfg.allowHosts.some((h) => { const [hh, hp] = h.toLowerCase().split(/:(?=\d+$)/); return hh === host && (!hp || hp === port); });
+}
+
+/**
+ * Policy check for one hop: scheme, no userinfo, host allowlist, then resolve ONCE and judge that address.
+ * Returns the address to pin the connection to. Throws ReplayRejectedError.
+ */
+export async function checkHop(cfg: ReplayConfig, url: URL, resolver: Resolver = defaultResolver): Promise<string> {
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new ReplayRejectedError(`unsupported scheme ${url.protocol}`);
+  if (url.username || url.password) throw new ReplayRejectedError("URLs with userinfo are not allowed");
+  if (!hostAllowed(url, cfg)) throw new ReplayRejectedError(`host ${url.host} is not in the replay allowlist`);
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const raw = (isIP(host) ? host : await resolver(host)).toLowerCase().replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, "$1");
+  const bad = ipProblem(raw, cfg.allowCidrs);
+  if (bad) throw new ReplayRejectedError(`${url.host}: ${bad}`);
+  return raw;
+}
+
+/** One policy-checked, IP-pinned GET with no redirect following (used for capture_page main-frame navigations). */
+export async function guardedGet(cfg: ReplayConfig, url: string, opts: { resolver?: Resolver; headers?: Record<string, string> } = {}): Promise<{ status: number; headers: Record<string, string>; body: string; ip: string }> {
+  const u = new URL(url);
+  const ip = await checkHop(cfg, u, opts.resolver);
+  const r = await send(u, "GET", { "user-agent": "walkthrough-page/1", accept: "text/html,*/*", ...(opts.headers ?? {}) }, ip, cfg);
+  return { ...r, ip };
 }
 
 /** Replay one request. Throws ReplayRejectedError on any policy violation; nothing is sent in that case. */
@@ -89,13 +135,7 @@ export async function replayRequest(
   const hops: ReplayHop[] = [];
   let url = new URL(input.url);
   for (let i = 0; ; i++) {
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new ReplayRejectedError(`unsupported scheme ${url.protocol}`);
-    if (url.username || url.password) throw new ReplayRejectedError("URLs with userinfo are not replayed");
-    if (!hostAllowed(url, cfg)) throw new ReplayRejectedError(`host ${url.host} is not in the replay allowlist`);
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    const ip = norm(isIP(host) ? host : await resolver(host)); // resolved ONCE for this hop, then pinned
-    const bad = ipProblem(ip, cfg.allowCidrs);
-    if (bad) throw new ReplayRejectedError(`${url.host}: ${bad}`);
+    const ip = await checkHop(cfg, url, resolver);
     const headers: Record<string, string> = { "user-agent": "walkthrough-replay/1", accept: "*/*" };
     if (cfg.auth) { const v = (opts.env ?? process.env)[cfg.auth.valueEnv]; if (v) headers[cfg.auth.header.toLowerCase()] = v; }
     const r = await send(url, method, headers, ip, cfg);
@@ -122,7 +162,7 @@ function send(url: URL, method: string, headers: Record<string, string>, ip: str
       agent: false, timeout: cfg.timeoutMs ?? 10_000,
     }, (res) => {
       const remote = norm(res.socket.remoteAddress ?? "");
-      if (remote && remote !== ip) { res.destroy(); return reject(new ReplayRejectedError(`connected to ${remote}, expected ${ip}`)); }
+      if (remote && remote !== norm(ip)) { res.destroy(); return reject(new ReplayRejectedError(`connected to ${remote}, expected ${ip}`)); }
       const chunks: Buffer[] = []; let n = 0; const cap = cfg.maxBodyBytes ?? 256 * 1024;
       res.on("data", (c: Buffer) => { if (n < cap) chunks.push(c.subarray(0, cap - n)); n += c.length; });
       res.on("end", () => {
@@ -133,7 +173,7 @@ function send(url: URL, method: string, headers: Record<string, string>, ip: str
       res.on("error", reject);
     });
     // Re-check the actual peer before any byte is written.
-    req.on("socket", (s) => s.once("connect", () => { const r = norm(s.remoteAddress ?? ""); if (r !== ip) req.destroy(new ReplayRejectedError(`connected to ${r}, expected ${ip}`)); }));
+    req.on("socket", (s) => s.once("connect", () => { const r = norm(s.remoteAddress ?? ""); if (r !== norm(ip)) req.destroy(new ReplayRejectedError(`connected to ${r}, expected ${ip}`)); }));
     req.on("timeout", () => req.destroy(new Error("replay timed out")));
     req.on("error", reject);
     req.end();
