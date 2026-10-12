@@ -24,7 +24,7 @@ server.tool("start_walkthrough", "Start a walkthrough with a Docker Compose sand
   sandbox: z.enum(["compose", "local"]).optional().describe("local = host child processes, NOT isolated"),
 }, (a) => wrap(() => core.startWalkthrough({ title: a.title, sandbox: { backend: a.sandbox, cwd: a.cwd, up: a.up, down: a.down, logs: a.logs } }))());
 
-server.tool("run_in_sandbox", "Bring the sandbox up/down or exec a command in its cwd.", {
+server.tool("run_in_sandbox", "Bring the sandbox up/down, or exec a command (disabled unless sandbox.allowExec: true; known CLIs go through run_cli's allowlist; no shell).", {
   id, action: z.enum(["up", "down", "exec"]), command: z.string().optional(),
 }, (a) => wrap(() => core.runInSandbox(a.id, a.action, a.command))());
 

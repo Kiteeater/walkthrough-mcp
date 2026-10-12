@@ -7,7 +7,7 @@ export interface ExecResult { exitCode: number; output: string }
 export interface Sandbox {
   up(): Promise<ExecResult>;
   down(): Promise<ExecResult>;
-  exec(command: string): Promise<ExecResult>;
+  exec(command: string | string[]): Promise<ExecResult>;
   logs(service: string): Promise<string>;
 }
 
@@ -41,7 +41,7 @@ export class ComposeSandbox implements Sandbox {
   constructor(private readonly cfg: SandboxConfig) {}
   up() { return sh(this.cfg.up, this.cfg.cwd); }
   down() { return sh(this.cfg.down, this.cfg.cwd); }
-  exec(command: string) { return sh(command, this.cfg.cwd); }
+  exec(command: string | string[]) { return sh(command, this.cfg.cwd); }
   async logs(service: string) {
     if (!/^[\w.-]+$/.test(service)) throw new Error(`invalid service name: ${service}`);
     const tpl = parseCommand(this.cfg.logs ?? "docker compose logs --no-color {service}");
@@ -101,7 +101,7 @@ export class LocalSandbox implements Sandbox {
     const extra = this.cfg.local?.down ? await sh(this.cfg.local.down, this.cfg.cwd, 300_000, this.env) : { exitCode: 0, output: "" };
     return { exitCode: extra.exitCode, output: `stopped local process${forced ? " (SIGKILL after timeout)" : ""}\n${extra.output}` };
   }
-  exec(command: string) { return sh(command, this.cfg.cwd, 300_000, this.env); }
+  exec(command: string | string[]) { return sh(command, this.cfg.cwd, 300_000, this.env); }
   async logs(): Promise<string> { return this.buffer; }
 }
 

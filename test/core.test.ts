@@ -19,9 +19,9 @@ describe("core", () => {
 
   it("records sandbox runs and source links", async () => {
     const { core } = mockCore();
-    const w = core.startWalkthrough({ title: "t", sandbox: SB });
+    const w = core.startWalkthrough({ title: "t", sandbox: { ...SB, allowExec: true } });
     expect((await core.runInSandbox(w.id, "up")).command).toBe(SB.up);
-    expect((await core.runInSandbox(w.id, "exec", "echo hi")).output).toContain("echo hi");
+    expect((await core.runInSandbox(w.id, "exec", "echo hi")).output).toContain("echo,hi"); // spawned as argv, not a shell line
     await expect(core.runInSandbox(w.id, "exec")).rejects.toThrow();
     expect((await core.linkSource(w.id, { file: "a.ts", line: 3 })).id).toBe("src-1");
     await expect(core.linkSource(w.id, { file: "a.ts", line: 0 })).rejects.toThrow();

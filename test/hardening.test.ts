@@ -65,10 +65,10 @@ describe("local backend", () => {
     const cfg: FlowConfig = {
       title: "local",
       sandbox: {
-        backend: "local", cwd: root, up: "unused", down: "unused",
+        backend: "local", cwd: root, up: "unused", down: "unused", allowExec: true,
         local: { up: `exec node -e 'console.log("key=" + process.env.WT_LOCAL_API_KEY); console.error("stderr line"); setInterval(()=>{},1000)'`, passEnv: ["WT_LOCAL_API_KEY"] },
       },
-      exec: ["echo exec $WT_LOCAL_API_KEY"],
+      exec: ["echo exec ok"], // $VAR arguments are rejected by the exec policy (no expansion)
       captures: [{ as: "shot", type: "screenshot", url: "http://localhost/" }, { as: "logs", type: "logs", service: "app" }],
       claims: [
         { question: "logs?", conclusion: "printed key", kind: "observed", evidence: ["logs", "shot"] },
