@@ -41,6 +41,35 @@ npx playwright install chromium   # needed for screenshots
 
 Requires Node 20+ and Docker with the Compose plugin.
 
+## Try it: `npm run demo`
+
+```bash
+npm ci
+npm run demo            # in-process MongoDB (mongodb-memory-server), no Docker
+npm run demo -- --docker  # use a MongoDB already running on 127.0.0.1:27017 (or $MONGO_URL)
+```
+
+**Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus and the
+buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
+connected, and none is needed. Of the five company sources only the integration seams exist: Prometheus
+(`query_metrics`, alert watches), Langfuse/MongoDB (via their own MCP servers + `import_mcp_result`) and Aliyun
+(`run_cli` read-only allowlist) are supported; **RocketMQ read-only commands are not supported yet**. See
+[docs/read-only-access.md](docs/read-only-access.md) for what access to request for each.
+
+From zero it starts these, then the demo agent runs the whole flow — `plan_checks` → `start_watch` → trigger
+`GET /api/orders/ord-3/total` → evidence → `evaluate_check` → follow the 500 through Langfuse and MongoDB →
+`collect_watch` → report — and prints the verdict and the audit page path. Everything is shut down at the end (also on
+Ctrl-C). After `npm ci` it needs no network: the mongod binary is downloaded once by `npm ci` and cached in
+`~/.cache/mongodb-binaries` (CI caches that directory; job `demo` runs exactly `npm ci && npm run demo`).
+
+The audit page's first screen (readable in ~30 s): one-sentence verdict, root-cause chain with every step labelled
+**walkthrough 执行** (core-executed) or **agent 自报** (agent-reported), corroborating signals, the needs-review count,
+sign-off. The check summary reads `N 通过 · N 失败 · N 需复核 · N 无结论` (each opens its list). Times show in the
+viewer's local zone (UTC ISO in the tooltip); without JS they fall back to `WALKTHROUGH_TZ` / `TZ` / the system zone.
+Everything else is collapsed. Step 1 of the demo chain is walkthrough's own `replay_request` of the failing call.
+
+![audit page first screen](docs/audit-page.png)
+
 ## CLI
 
 ```bash
@@ -93,6 +122,60 @@ and `walkthrough-html.png` (a screenshot of the rendered page).
 Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec), `plan_checks`, `capture_evidence`
 (submit | screenshot | logs), `evaluate_check`, `record_finding`, `link_source` (file + line), `record_claim`
 (observed | inferred), `render_walkthrough`, `sign_off` (accept | reject).
+
+## Integrating into your own agent
+
+### Claude Code
+
+```bash
+claude mcp add walkthrough -e WALKTHROUGH_ROOT=/path/to/your/project -- node /path/to/walkthrough-mcp/dist/mcp/index.js
+```
+
+or commit a project-level `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "walkthrough": {
+      "command": "node",
+      "args": ["/path/to/walkthrough-mcp/dist/mcp/index.js"],
+      "env": {
+        "WALKTHROUGH_ROOT": "/path/to/your/project",
+        "WALKTHROUGH_PROMETHEUS_URL": "http://prometheus.internal.example:9090",
+        "WALKTHROUGH_PROMETHEUS_TOKEN": "set-in-your-shell-not-here"
+      }
+    }
+  }
+}
+```
+
+Secrets go in the environment of the process that launches the server, never in committed files. Host allowlists
+(`replay.allowHosts`) live in `<project>/walkthrough.config.json`.
+
+### Agent prompt template
+
+```text
+You are verifying the change "<one-line description>" in <project> with the walkthrough MCP tools.
+Rules: walkthrough judges, you execute. Never state a verdict yourself; only evaluate_check decides pass/fail.
+Write check intents, findings and every root-cause chain step in the user's language (<e.g. 中文>).
+
+1. start_walkthrough {title, sandbox}; run_in_sandbox up.
+2. plan_checks {goal, checks}: one check per user-visible behaviour the change touches. Each check has method,
+   target, expect (status / regex / absent / count / ui / metric) and severity_if_fail. Add alertMatchers for
+   alerts that would relate to it. Plan BEFORE looking at results.
+3. Optional: start_watch {id, window_s: 60} before triggering anything, so alerts are watched in the background.
+4. Execute each check (HTTP call, page, CLI). Hand the raw output to capture_evidence (submit / logs /
+   screenshot) — or let walkthrough execute it itself (replay_request, capture_page, query_metrics, run_cli),
+   which counts as stronger evidence.
+5. evaluate_check {checkId, evidenceIds} for every check. Do not argue with the result.
+6. For each fail: trace the cause. Append checks with plan_checks {append: true, triggeringEvidenceId}, import
+   other MCP results with import_mcp_result, link_source {file, line} for the code, then record_finding with a
+   root_cause_chain whose steps each cite evidence (observed) or are marked inferred.
+7. collect_watch {watch_id} if you started one; render_walkthrough.
+8. Stop. Reply with the audit page path and "ready for sign-off". Do NOT call sign_off — a human signs.
+```
+
+See `docs/read-only-access.md` for what read-only access to request in a company environment.
 
 ### Pluggable sources (seam for environment connectors)
 

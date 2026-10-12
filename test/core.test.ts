@@ -43,7 +43,7 @@ describe("core", () => {
     const html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('class="badge observed"');
     expect(html).toContain('class="badge inferred"');
-    expect(html).toContain("Export review.json");
+    expect(html).toContain("导出 review.json");
     expect(html).toContain('data-d="agree"');
     expect(html).toContain('data-d="flag"');
     expect(html).toContain("server.js:7");

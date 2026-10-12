@@ -107,7 +107,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     await core.watchAlerts(id, { windowS: 1, intervalS: 1 });
     expect(core.load(id).findings![0].corroborating![0].alsoMatched).toEqual(["orders-list", "orders-admin"]);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
-    expect(html).toContain('<span class="also-matched" data-also="orders-list,orders-admin">also matched orders-list, orders-admin</span>');
+    expect(html).toContain('<span class="also-matched" data-also="orders-list,orders-admin">也匹配了 orders-list, orders-admin</span>');
   });
   it("quiet window → core-executed 'no alerts in window' evidence with start/end; polls bounded by window/interval", async () => {
     mode = "quiet";
@@ -121,7 +121,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     expect(doc.note).toBe("no alerts in window");
     expect(doc.window).toMatchObject({ start: "2026-10-12T20:00:00.000Z", end: "2026-10-12T20:00:30.000Z" });
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
-    expect(html).toContain("no alerts in window");
+    expect(html).toContain(": 窗口内无告警</div>");
   });
   it("pending (not firing) alerts are not counted", async () => {
     mode = "pending";
@@ -170,7 +170,7 @@ describe("watch_alerts (read-only GET /api/v1/alerts, core-executed)", () => {
     const r = await core.watchAlerts(id, { windowS: 5, intervalS: 5 });
     expect(r.watch.errors?.join()).toMatch(/error|503/);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
-    expect(html).not.toContain("no alerts in window · 窗口内无告警");
+    expect(html).not.toContain(": 窗口内无告警</div>");
   });
   it("labels/annotations redacted (secret keys, URL query tokens, bearer, generic keys) + echoed token: absent from all artifacts and HTML", async () => {
     mode = "secrets";
@@ -236,7 +236,7 @@ describe("start_watch / collect_watch: background polling, no long lock", () => 
     expect(doc.note).not.toMatch(/no alerts in window/);
     const html = readFileSync(renderWalkthrough(core, id), "utf8");
     expect(html).toMatch(/class="alert-window interrupted" data-outcome="interrupted"/);
-    expect(html).not.toContain("no alerts in window · 窗口内无告警");
+    expect(html).not.toContain(": 窗口内无告警</div>");
   });
   it("sign_off auto-finalizes open watches; interrupted ones are visible on the sign-off panel", async () => {
     mode = "firing";

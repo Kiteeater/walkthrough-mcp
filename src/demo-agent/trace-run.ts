@@ -24,11 +24,14 @@ async function main(): Promise<void> {
   };
   // Prometheus (read-only) is optional: when configured, its host is the only replay/metrics allowlist entry.
   const prom = process.env.WALKTHROUGH_PROMETHEUS_URL ? new URL(process.env.WALKTHROUGH_PROMETHEUS_URL) : undefined;
-  const core = createCore(values.root ?? process.cwd(), undefined, prom ? { allowHosts: [prom.host], allowCidrs: prom.hostname === "127.0.0.1" ? ["127.0.0.1/32"] : [] } : undefined);
   const cfg = loadFlowConfig(flowFile);
   const a = ((readJsonFile(flowFile) as { agent?: { goal: string; baseUrl: string; service?: string; orders: string[] } }).agent)!;
+  // Allowlist: the service under test (for replay_request) + Prometheus when configured. Local demo → loopback only.
+  const svc = new URL(a.baseUrl);
+  const hosts = [svc.host, ...(prom ? [prom.host] : [])];
+  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: [svc, ...(prom ? [prom] : [])].some((u) => u.hostname === "127.0.0.1") ? ["127.0.0.1/32"] : [] });
   try {
-    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom }) });
+    const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true }) });
     console.log(JSON.stringify(r));
   } finally { await mongo.close(); }
 }

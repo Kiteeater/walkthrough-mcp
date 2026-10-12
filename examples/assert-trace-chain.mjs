@@ -22,6 +22,23 @@ if (iMetric < 0 || !(iHttp < iMetric && iMetric < iTrace)) fail(`metric step mis
 if (mres?.status !== "pass") fail(`metric check should pass on core evidence (not needs_review), got ${mres?.status}`);
 const html = readFileSync(join(dirname(process.argv[2]), "index.html"), "utf8");
 const first = html.slice(html.indexOf('id="verdict"'), html.indexOf("</section>", html.indexOf('id="verdict"')));
+// 30-second first screen: one-sentence verdict, labelled root-cause chain, sign-off.
+if (!/<div class="headline" data-findings="1">发现 <b>1<\/b> 个问题：<code>\/api\/orders\/ord-3\/total<\/code> 返回 <b>500<\/b>，根因在 <code class="loc">pricing\.js:3<\/code><\/div>/.test(first)) fail("first screen lacks the one-sentence verdict");
+const rc = [...first.matchAll(/<li class="rc-step" data-prov="(\w+)"><span class="prov \w+">([^<]+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
+if (rc.length !== f.root_cause_chain.length || rc[0] !== "core:walkthrough 执行" || !rc.includes("core:walkthrough 执行") || rc.at(-1) !== "core:walkthrough 执行") fail(`first-screen root-cause chain wrong: ${rc.join(" | ")}`);
+if (!/<div class="signoff"[\s\S]*name="signoff" value="accept"[\s\S]*name="signoff" value="reject"[\s\S]*id="export"/.test(first)) fail("sign-off area not on the first screen");
+// Check counts: one source, sum = total, each bucket matches the stored statuses, each links to its list.
+const total = Number(/class="check-counts" data-total="(\d+)"/.exec(first)?.[1]);
+const cnt = Object.fromEntries([...first.matchAll(/href="#checks-([\w-]+)" data-status="[\w-]+" data-count="(\d+)"/g)].map((m) => [m[1], Number(m[2])]));
+const st = (w.checks ?? []).map((c) => (w.checkResults ?? []).find((r) => r.checkId === c.id)?.status);
+const want = { pass: st.filter((x) => x === "pass").length, fail: st.filter((x) => x === "fail").length, "needs-review": st.filter((x) => x === "pass_needs_review").length };
+want.none = st.length - want.pass - want.fail - want["needs-review"];
+if (total !== st.length || Object.values(cnt).reduce((a, b) => a + b, 0) !== total || JSON.stringify(cnt) !== JSON.stringify(want)) fail(`check counts inconsistent: total ${total}, ${JSON.stringify(cnt)} vs ${JSON.stringify(want)}`);
+for (const k of Object.keys(want)) if (!new RegExp(`<details class="check-bucket" id="checks-${k}"`).test(first)) fail(`no list behind the ${k} count`);
+if (/条结论/.test(html.slice(0, html.indexOf('id="verdict"')))) fail("contradictory header counts still present");
+// Times: <time> with the UTC ISO in the tooltip.
+if (!/<time datetime="[^"]+Z" title="[^"]+Z \(UTC\)">/.test(first)) fail("alert times not rendered as <time> with UTC tooltip");
+if (!/<details class="alerts-more">/.test(first)) fail("alert watch details should be collapsed");
 if (!/class="metric-confirm"[^>]*>📈[^<]*<code>[^<]*5\.\.[^<]*<\/code> = <b>0\.5<\/b>/.test(first)) fail("first screen does not show the metric confirming the issue");
 // Alerts are corroborating signals, never causal steps.
 if (idx((e) => e.kind === "alert") >= 0) fail("alert spliced into the root-cause chain");

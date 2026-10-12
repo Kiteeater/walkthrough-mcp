@@ -67,6 +67,12 @@ const rootCauseOf = (w: Walkthrough, i = 0) => {
 const statuses = (rs: CheckResult[]) => rs.filter((r) => /^chk-\d+$/.test(r.checkId)).map((r) => r.status);
 
 describe("demo agent executes, core judges, finding points at the real bug (planner knows nothing about it)", () => {
+  // Timing (profiled): each case spawns a real node service. ~300 ms is the local backend's fixed early-exit wait
+  // in `up`, ~450 ms is runDemoAgent's settleMs (150 ms × 3 routes, so stderr reaches the log delta), the rest is
+  // process spawn + health poll. ~0.8 s idle, but every part is wall-clock and the spawn/flush slows a lot when the
+  // full suite runs files in parallel (Chromium, mongodb-memory-server), so the default 5 s was too tight.
+  // Nothing hangs; the cases get an explicit 20 s budget instead.
+  const T = 20_000;
   it("bug in /a → one finding traced to svc/lib.js:2", async () => {
     const { w, results } = await runReal("a");
     expect(statuses(results)).toEqual(["pass_needs_review", "fail", "pass_needs_review"]) // http-only checks: agent-reported evidence (PR #7);
@@ -78,14 +84,14 @@ describe("demo agent executes, core judges, finding points at the real bug (plan
     expect(rootCauseOf(w).summary).toMatch(/TypeError/);
     // every piece of evidence the agent relied on is marked as reported by the agent or captured by us
     expect(w.evidence.filter((e) => e.checkId).every((e) => e.executedBy === (e.kind === "http" ? "agent" : "core"))).toBe(true);
-  });
+  }, T);
 
   it("bug moved to /b → finding moves and root cause updates to svc/lib.js:6", async () => {
     const { w, results } = await runReal("b");
     expect(statuses(results)).toEqual(["pass_needs_review", "pass_needs_review", "fail"]);
     expect(w.findings).toHaveLength(1);
     expect(rootCauseOf(w)).toMatchObject({ checkId: "chk-3", loc: "svc/lib.js:6" });
-  });
+  }, T);
 
   it("bug fixed → every check passes and there are no findings", async () => {
     const { core, w, results } = await runReal(null);
@@ -94,11 +100,12 @@ describe("demo agent executes, core judges, finding points at the real bug (plan
     expect(w.findings ?? []).toHaveLength(0);
     const html = readFileSync(renderWalkthrough(core, w.id), "utf8");
     expect(html).toContain('data-findings="0"');
-    expect(html).toContain("checks: 6/6 passed");
-  });
+    expect(html).toMatch(/data-total="6">检查 6 项：<a class="cc cc-pass"[^>]*data-count="3"/);
+  }, T);
 });
 
 describe("audit view + sign-off", () => {
+  const T = 20_000; // spawns a real service, see the timing note above
   it("first screen shows count, severity and root cause; sign-off accept|reject round-trips", async () => {
     const { core, w } = await runReal("a");
     let html = readFileSync(renderWalkthrough(core, w.id), "utf8");
@@ -121,5 +128,5 @@ describe("audit view + sign-off", () => {
     // signed off → read-only (PR #13): no second signature
     await expect(core.signOff(w.id, { decision: "accept" })).rejects.toThrow(/signed off; it is read-only/);
     expect(readFileSync(renderWalkthrough(core, w.id), "utf8")).toContain('value="reject" checked');
-  });
+  }, T);
 });
