@@ -35,7 +35,7 @@ describe("flow config ${VAR} expansion (per-run port / token, issue #22)", () =>
     const used: string[] = [];
     expect(expandEnv({ waitFor: { url: "http://127.0.0.1:${PORT}/health", header: { name: "x", value: "${DEMO_HEALTH_TOKEN}" } }, list: ["${PORT}"] }, "f.json", { PORT: "4321", DEMO_HEALTH_TOKEN: "t1" }, used))
       .toEqual({ waitFor: { url: "http://127.0.0.1:4321/health", header: { name: "x", value: "t1" } }, list: ["4321"] });
-    expect(used).toEqual(["4321", "t1", "4321"]);
+    expect(used).toEqual(["t1"]); // PORT is substituted but not a secret: never redacted
     expect(() => expandEnv({ u: "http://127.0.0.1:${PORT}/" }, "f.json", {})).toThrow("f.json: ${PORT} is not set");
   });
   it("the e2e configs use no fixed port and require the health token", () => {
@@ -88,5 +88,46 @@ describe("flow config substitution is allowlisted and redacted", () => {
       expect(files).not.toContain(token);
       expect(readFileSync(html, "utf8")).not.toContain(token);
     } finally { if (old === undefined) delete process.env.DEMO_HEALTH_TOKEN; else process.env.DEMO_HEALTH_TOKEN = old; }
+  });
+});
+
+describe("PORT is substituted but never redacted", () => {
+  it("digits equal to the run's PORT survive verbatim in evidence (timestamp / order id / amount); the token is still masked", async () => {
+    const { loadFlowConfig, runFlow, FLOW_ENV_VARS } = await import("../src/core/flow.js");
+    const { WalkthroughCore, Redactor } = await import("../src/core/index.js");
+    expect(FLOW_ENV_VARS).toEqual({ PORT: { redact: false }, DEMO_HEALTH_TOKEN: { redact: true } });
+    const root = mkdtempSync(join(tmpdir(), "wt-flow-port-"));
+    const f = join(root, "flow.json");
+    const port = "43117", token = "tok-" + Math.random().toString(36).slice(2) + "-abc";
+    writeFileSync(f, JSON.stringify({ title: "svc 127.0.0.1:${PORT}", waitFor: { url: "http://127.0.0.1:${PORT}/health", header: { name: "x-walkthrough-demo-token", value: "${DEMO_HEALTH_TOKEN}" } },
+      sandbox: { backend: "local", cwd: ".", up: "", down: "", local: { up: "true" } }, captures: [], claims: [] }));
+    const old = { p: process.env.PORT, t: process.env.DEMO_HEALTH_TOKEN };
+    process.env.PORT = port; process.env.DEMO_HEALTH_TOKEN = token;
+    try {
+      const cfg = loadFlowConfig(f);
+      expect(cfg.substituted).toEqual([token]);
+      expect(cfg.title).toBe(`svc 127.0.0.1:${port}`);
+      const sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
+      const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => {} }, redactor: new Redactor([]) });
+      const body = `HTTP/1.1 200\nx-walkthrough-demo-token: ${token}\n\n{"orderId":"ord-${port}","createdAt":"2026-10-13T07:${port.slice(0, 2)}:00.${port}Z","amount":${port}.50,"url":"http://127.0.0.1:${port}/api"}`;
+      let evPath = "";
+      const { id, html } = await runFlow(core, cfg, { skipWait: true, agent: async (wid) => {
+        await core.planChecks(wid, { goal: "g", checks: [{ id: "a", intent: "a", method: "http", target: "GET /a", expect: { type: "status", value: 200 }, severity_if_fail: "high" }] });
+        evPath = (await core.captureEvidence(wid, { type: "submit", checkId: "a", kind: "http", source: { tool: "t" }, content: body })).path;
+      } });
+      const ev = readFileSync(join(core.dir(id), evPath), "utf8");
+      expect(ev).toContain(`"orderId":"ord-${port}"`);
+      expect(ev).toContain(`.${port}Z`);
+      expect(ev).toContain(`"amount":${port}.50`);
+      expect(ev).toContain(`127.0.0.1:${port}/api`);
+      expect(ev).not.toContain(token);
+      expect(ev).toContain("x-walkthrough-demo-token: [REDACTED]");
+      const report = readFileSync(html, "utf8");
+      expect(report).toContain(`svc 127.0.0.1:${port}`); // title: PORT substituted, not masked
+      expect(report).not.toContain(token);
+    } finally {
+      if (old.p === undefined) delete process.env.PORT; else process.env.PORT = old.p;
+      if (old.t === undefined) delete process.env.DEMO_HEALTH_TOKEN; else process.env.DEMO_HEALTH_TOKEN = old.t;
+    }
   });
 });

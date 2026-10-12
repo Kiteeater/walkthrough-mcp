@@ -15,7 +15,7 @@ export interface FlowConfig {
   sources?: { as: string; file: string; line: number; note?: string }[];
   claims: { question: string; conclusion: string; kind: ClaimKind; evidence?: string[]; sources?: string[] }[];
   keepRunning?: boolean;
-  /** Values substituted for `${NAME}` at load time; runFlow registers them with the core's Redactor. */
+  /** Token-type values substituted for `${NAME}` at load time; runFlow registers them with the core's Redactor. */
   substituted?: string[];
 }
 
@@ -24,15 +24,21 @@ export interface FlowConfig {
  * token checked by waitFor.header). Anything else — even if set in the environment — is a load error, so a config
  * can never pull a credential out of the environment.
  */
-export const FLOW_ENV_ALLOWLIST: readonly string[] = ["PORT", "DEMO_HEALTH_TOKEN"];
+export const FLOW_ENV_VARS: Readonly<Record<string, { redact: boolean }>> = {
+  // A port is not a secret, and masking its digits everywhere would corrupt timestamps / ids / amounts.
+  PORT: { redact: false },
+  // Token-type: registered with the Redactor so it never appears in evidence or reports.
+  DEMO_HEALTH_TOKEN: { redact: true },
+};
+export const FLOW_ENV_ALLOWLIST: readonly string[] = Object.keys(FLOW_ENV_VARS);
 
-/** Expand `${NAME}` (allowlisted names only). Every substituted value is pushed to `used` so callers can redact it. */
+/** Expand `${NAME}` (allowlisted names only). Values of `redact: true` names are pushed to `used` for the Redactor. */
 export function expandEnv(v: unknown, where: string, env: NodeJS.ProcessEnv = process.env, used: string[] = []): unknown {
   if (typeof v === "string") return v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
     if (!FLOW_ENV_ALLOWLIST.includes(k)) throw new Error(`${where}: \${${k}} is not allowed in a flow config (allowed: ${FLOW_ENV_ALLOWLIST.join(", ")})`);
     const x = env[k];
     if (x === undefined || x === "") throw new Error(`${where}: \${${k}} is not set`);
-    used.push(x);
+    if (FLOW_ENV_VARS[k].redact) used.push(x);
     return x;
   });
   if (Array.isArray(v)) return v.map((x) => expandEnv(x, where, env, used));

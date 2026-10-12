@@ -118,9 +118,11 @@ The HTML is fully static: click Agree/Flag (with an optional note) per question,
 `waitFor.header: { "name": "…", "value": "…" }` so only a response that carries your per-run token counts as ready.
 Flow configs expand `${NAME}` from the environment **only for an allowlist**: `PORT` and `DEMO_HEALTH_TOKEN`
 (`FLOW_ENV_ALLOWLIST` in `src/core/flow.ts`). Any other `${NAME}` is a load error even if that variable is set, so a
-config can't pull credentials out of the environment. An allowlisted but unset variable is also an error. Every
-substituted value is added to the Redactor and appears as `[REDACTED]` in evidence, `walkthrough.json` and the
-report. This lets the port and token be chosen per run instead of hard-coded:
+config can't pull credentials out of the environment. An allowlisted but unset variable is also an error. Each
+allowlisted name carries a `redact` flag (`FLOW_ENV_VARS`). Token-type values (`DEMO_HEALTH_TOKEN`, `redact: true`)
+are added to the Redactor and appear as `[REDACTED]` in evidence, `walkthrough.json` and the report. `PORT`
+(`redact: false`) is not a secret and is never redacted, because masking its digits everywhere would corrupt
+timestamps, order ids and amounts that happen to contain them. This lets the port and token be chosen per run instead of hard-coded:
 
 ```json
 "waitFor": { "url": "http://127.0.0.1:${PORT}/health", "header": { "name": "x-walkthrough-demo-token", "value": "${DEMO_HEALTH_TOKEN}" } }
