@@ -1,6 +1,6 @@
 {
   "title": "追查一个 500：HTTP → Langfuse → MongoDB → 源码",
-  "waitFor": { "url": "${SERVICE_URL}/health", "timeoutMs": 60000 },
+  "waitFor": { "url": "${SERVICE_URL}/health", "timeoutMs": 60000, "header": { "name": "x-walkthrough-demo-token", "value": "${HEALTH_TOKEN}" } },
   "captures": [],
   "claims": [],
   "sandbox": {
@@ -8,7 +8,7 @@
     "cwd": "service",
     "up": "exec node server.js",
     "down": "true",
-    "local": { "up": "exec node server.js", "passEnv": ["PORT", "MONGO_URL", "MONGO_DB", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
+    "local": { "up": "exec node server.js", "passEnv": ["PORT", "DEMO_HEALTH_TOKEN", "MONGO_URL", "MONGO_DB", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] }
   },
   "agent": {
     "goal": "每个订单的金额接口都返回 2xx；如果没有，跨数据源追到根因",
