@@ -100,8 +100,7 @@ HTML with one observed and one inferred claim. CI runs it and uploads the HTML a
 
 ## CI
 
-The workflow is currently parked at `ci/github-workflow-ci.yml` (the push token lacks the `workflow` scope).
-It runs unit tests plus the Docker Compose + Playwright e2e and uploads the HTML artifact, once it's moved to `.github/workflows/ci.yml`.
+CI lives in `.github/workflows/ci.yml`: it runs unit tests plus the Docker Compose + Playwright e2e and uploads the HTML artifact (`walkthrough-html`).
 
 ## Roadmap
 
