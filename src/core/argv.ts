@@ -9,7 +9,7 @@ export class UnsafeCommandError extends Error {
 
 export interface ParsedCommand { file: string; args: string[]; env: Record<string, string> }
 
-const META = /[;&|`<>(){}*?!\n\r\\]/;
+const META = /[;&|`<>()*?!\n\r\\]/;
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
 
 /** Split on whitespace honouring '…' and "…" quotes. Unquoted shell metacharacters are an error. */
