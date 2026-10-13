@@ -408,6 +408,13 @@ Connections are limited to the name server and the brokers it reports:
 hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or
 truncated entries.
 
+### 已知缺口 (known gaps)
+
+- The aliyun preset's `sls GetLogs` / `sls GetLogsV2` flag spellings (`--project --logstore --from --to --query --topic
+  --line --offset --reverse`) come from the API metadata and are tested only against the mock CLI. They have not been
+  run against a real `aliyun` binary yet. Tracked in [#34](https://github.com/Kiteeater/walkthrough-mcp/issues/34),
+  which is closed only after a real-CLI run against real SLS.
+
 ### Threat model / limits
 
 - The hash chain is **unkeyed** (plain SHA-256, no secret). It detects accidental or partial tampering, not a
