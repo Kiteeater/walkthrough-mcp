@@ -71,7 +71,7 @@ export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
  *   Screenshots are never judged.
  * - metric: `value` = {op: > >= < <= == !=, value, query?} over Prometheus instant-query evidence (exactly one finite series).
  */
-export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui" | "metric";
+export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui" | "metric" | "sls_empty";
 export interface Expect { type: ExpectType; value: unknown }
 
 export interface Check {
@@ -127,6 +127,8 @@ export interface Finding {
    * `evidenceIds`; each cites the core-executed evidence it rests on.
    */
   ruled_out?: { claim: string; check_id?: string; evidence_ids: string[] }[];
+  /** Hypotheses checked WITHOUT a conclusion (e.g. an SLS query whose progress is not Complete): never excluded. */
+  inconclusive?: { claim: string; reason: string; check_id?: string; evidence_ids: string[] }[];
   /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
   /** observed only if every chain step is observed. */

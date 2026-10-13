@@ -96,6 +96,14 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
     });
     return items.length ? `<div class="ruled-out" data-ruled-out="${items.length}"><b>已排除</b> <span class="meta">（查过，不属于根因链）</span>${items.join("")}</div>` : "";
   };
+  /** Hypotheses checked without a conclusion: their own 未下结论 block with the reason; never listed as 已排除. */
+  const inconclusiveLine = (f: (typeof findings)[number], where: string) => {
+    const items = (f.inconclusive ?? []).map((r) => {
+      const evs = r.evidence_ids.map((e) => w.evidence.find((x) => x.id === e)).filter(Boolean);
+      return `<div class="inconclusive-item"${r.check_id ? ` data-check="${esc(r.check_id)}"` : ""} data-evidence="${esc(evs.map((e) => e!.id).join(","))}">❔ ${esc(r.claim)} <div class="inconclusive-reason">原因：${esc(r.reason)}</div>${evs.map((e) => `<div class="meta">${esc(e!.id)} · ${e!.executedBy === "agent" ? "agent 自报" : "walkthrough 执行"} · ${esc(e!.source)} · sha256 <code class="sha256" data-sha256="${esc(e!.sha256)}">${esc(e!.sha256)}</code></div>`).join("")}</div>`;
+    });
+    return items.length ? `<div class="inconclusive-block" data-where="${where}" data-inconclusive="${items.length}"><b>未下结论</b> <span class="meta">（查过但证据不足以排除，也不属于根因链）</span>${items.join("")}</div>` : "";
+  };
   const watches = w.alertWatches ?? [];
   const unmatchedAlerts = watches.flatMap((aw) => aw.unmatched.map((u) => ({ ...u, ev: aw.evidenceId })));
   const outcomeTxt = (aw: (typeof watches)[number]) => aw.outcome === "interrupted" ? "⚠ 盯守中断（数据不完整，不代表窗口内无告警）" : aw.outcome === "stopped_early" ? "窗口结束前已收取" : "窗口已走完";
@@ -159,8 +167,8 @@ ${checkCounts}</div>
 ${blockedLine}
 ${top ? `<div class="top-finding problem" data-problem="1" data-finding="${esc(top.id)}" data-checks="${problems[0].checkIds.length}">${problemHead(problems[0])}<h4>根因链 <span class="meta">（${esc(top.title)}）</span></h4>
 ${firstChain(top)}
-<div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}${ruledOutLine(top)}</div>` : ""}
-${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f, i) => `<li class="problem" data-problem="${i + 2}" data-finding="${esc(f.id)}" data-checks="${problems[i + 1].checkIds.length}">${problemHead(problems[i + 1])}<span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}${ruledOutLine(f)}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
+<div class="rc">根因：${rootCauseLine(top)}</div>${metricLine(top)}${alertLine(top)}${ruledOutLine(top)}${inconclusiveLine(top, "audit")}</div>` : ""}
+${ordered.length > 1 ? `<details class="other-findings"><summary>其余 ${ordered.length - 1} 个问题</summary><ol class="finding-list">${ordered.slice(1).map((f, i) => `<li class="problem" data-problem="${i + 2}" data-finding="${esc(f.id)}" data-checks="${problems[i + 1].checkIds.length}">${problemHead(problems[i + 1])}<span class="chip ${esc(f.severity)}">${esc(f.severity)}</span> ${sentence(f)} <div class="rc">根因：${rootCauseLine(f)}</div>${metricLine(f)}${alertLine(f)}${ruledOutLine(f)}${inconclusiveLine(f, "audit")}<a href="#${esc(f.id)}">证据链 ▸</a></li>`).join("\n")}</ol></details>` : ""}
 ${unattributed.length ? `<details class="unattributed" data-unattributed="${unattributed.length}"><summary>未归入任何问题的失败检查（${unattributed.length}）</summary><ul>${unattributed.map(checkLi).join("")}</ul></details>` : ""}
 ${alertsBlock ? `<details class="alerts-more"><summary>告警盯守详情</summary>${alertsBlock}</details>` : ""}
 ${w.goal ? `<p class="goal meta">目标：${esc(w.goal)}</p>` : ""}
@@ -189,6 +197,7 @@ ${w.signoff ? `<div class="signed ${esc(w.signoff.decision)}">已签核：<b>${w
 <p><b>现象：</b> ${esc(f.symptom)}</p>
 ${f.repro_steps.length ? `<p><b>复现：</b></p><ol>${f.repro_steps.map((r) => `<li><code>${esc(r)}</code></li>`).join("")}</ol>` : ""}
 <p><b>根因链：</b></p><ol class="chain">${steps}</ol>
+${inconclusiveLine(f, "report")}
 <p><b>证据：</b></p>${f.evidenceIds.some((e) => w.evidence.find((x) => x.id === e)?.type === "screenshot") ? `<div class="evgrid ui-pair">${evidenceHtml(f.evidenceIds)}</div>` : evidenceHtml(f.evidenceIds)}
 </details>`;
   }).join("\n");
@@ -245,6 +254,7 @@ table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{border:1px soli
 .prov{padding:1px 6px;border-radius:8px;font-size:.75rem}.prov.agent{background:#fff3cd;color:#7a4d00;border:1px dashed #d4a72c}.prov.core{background:#dafbe1;color:#116329;border:1px solid #1a7f37}
 li.step.prov-agent{border-left:4px dashed #d4a72c;padding-left:6px}li.step.prov-core{border-left:4px solid #1a7f37;padding-left:6px}.chip.needs-review{background:#fff3cd;color:#7a4d00}.mcpcall{font-size:.75rem}
 .chip.interrupted,.alert-window.interrupted{background:#82071e;color:#fff;padding:2px 6px}.auto-finalized{background:#fff8c5;border:1px solid #d4a72c;padding:.3rem .5rem;margin:.4rem 0}.aw.interrupted{color:#82071e}
+.inconclusive-block{border-left:4px solid #bf8700;background:#fff8c5;padding:.3rem .6rem;margin:.4rem 0}.inconclusive-reason{color:#9a6700}
 .ruled-out{border-left:4px solid #57606a;background:#f6f8fa;padding:.3rem .6rem;margin:.4rem 0}.ruled-out code.sha256{font-size:.75em;word-break:break-all}
 .corroborating{border-left:4px dashed #8250df;background:#fbefff;padding:.3rem .6rem;margin:.4rem 0}.also-matched{color:#8250df;font-style:italic}
 .alert-confirm{margin:.2rem 0;padding:.2rem .5rem;background:#ffebe9;border-left:4px solid #cf222e}.unmatched-alerts{background:#fff8c5;padding:.4rem .6rem;margin:.4rem 0}.alert-window{font-size:.85rem;color:#444}

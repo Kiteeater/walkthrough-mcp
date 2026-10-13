@@ -928,6 +928,7 @@ export class WalkthroughCore {
   recordFinding(id: string, input: {
     title: string; severity: Severity; symptom: string; repro_steps?: string[]; root_cause_chain: RootCauseLink[]; check_id?: string;
     ruled_out?: { claim: string; check_id?: string; evidence_ids: string[] }[];
+    inconclusive?: { claim: string; reason: string; check_id?: string; evidence_ids: string[] }[];
   }): Promise<Finding> {
     return this.withLock(id, () => {
       if (!SEVERITIES.includes(input.severity)) throw new ClaimRejectedError(`invalid severity: ${input.severity}`);
@@ -948,6 +949,11 @@ export class WalkthroughCore {
         this.verifyEvidence(w, "observed", r.evidence_ids);
         if (r.check_id && !(w.checks ?? []).some((c) => c.id === r.check_id)) throw new ClaimRejectedError(`ruled_out[${i}]: unknown check: ${r.check_id}`);
       }
+      for (const [i, r] of (input.inconclusive ?? []).entries()) {
+        if (!r.claim || !r.reason) throw new ClaimRejectedError(`inconclusive[${i}]: claim and reason are required`);
+        this.verifyEvidence(w, "observed", r.evidence_ids ?? []);
+        if (r.check_id && !(w.checks ?? []).some((c) => c.id === r.check_id)) throw new ClaimRejectedError(`inconclusive[${i}]: unknown check: ${r.check_id}`);
+      }
       w.findings ??= [];
       const finding: Finding = {
         id: `finding-${w.findings.length + 1}`, title: input.title, severity: input.severity, symptom: input.symptom,
@@ -956,6 +962,7 @@ export class WalkthroughCore {
         evidenceIds: [...new Set(chain.flatMap((l) => l.evidence_ids ?? []))],
         kind: chain.every((l) => l.kind === "observed") ? "observed" : "inferred",
         ...(input.check_id ? { checkId: input.check_id } : {}),
+        ...(input.inconclusive?.length ? { inconclusive: input.inconclusive.map((r) => ({ claim: r.claim, reason: r.reason, evidence_ids: r.evidence_ids ?? [], ...(r.check_id ? { check_id: r.check_id } : {}) })) } : {}),
         ...(input.ruled_out?.length ? { ruled_out: input.ruled_out.map((r) => ({ claim: r.claim, evidence_ids: r.evidence_ids, ...(r.check_id ? { check_id: r.check_id } : {}) })) } : {}),
       };
       w.findings.push(finding);

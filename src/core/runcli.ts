@@ -62,11 +62,15 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
   {
     name: "aliyun", binary: "aliyun",
     allow: [
-      ["sls", "GetLogs"], ["sls", "GetHistograms"], ["sls", "ListLogStores"], ["sls", "ListProject"],
+      ["sls", "GetLogs"], ["sls", "GetLogsV2"], ["sls", "GetHistograms"], ["sls", "ListLogStores"], ["sls", "ListProject"],
       ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],
     ],
     args: {
       "sls GetLogs": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
+      // GetLogsV2 (SLS OpenAPI 2020-12-30, operationType read): project (host), logstore (path), body from/to/line/
+      // offset/reverse/topic/query. Deliberately no wider than GetLogs: powerSql, session, forward, highlight and
+      // isAccurate are left out. `|` (SQL analysis) is rejected for every argument by the shell-syntax check.
+      "sls GetLogsV2": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
       "sls GetHistograms": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
       "sls ListLogStores": ["--project", "--logstoreName", "--offset", "--size"],
       "sls ListProject": ["--projectName", "--offset", "--size"],
@@ -85,8 +89,11 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
     //  - queryMsgById (whole subcommand, #26): connects to the broker IP:port decoded from the msgId; see deniedHints.
     //  - -b on consumerStatus and brokerStatus (#25): connects straight to the given broker address.
     //  - -g/-d on queryMsgByUniqueKey: consumeMessageDirectly pushes the message to a consumer.
-    //  - clusterList -i (loops forever); flags without a value (-m, -l, -a, consumerStatus -s jstack, topicList -c),
-    //    which the `<flag> <value>` grammar cannot express; -e/-p (queryMsgByKey endTimestamp/keyType,
+    //  - clusterList -i (loops forever); bare switches that take no value (clusterList -m moreStats, topicRoute -l
+    //    list, queryMsgByUniqueKey -a showAll, consumerStatus -s jstack, topicList -c clusterModel), which the
+    //    `<flag> <value>` grammar cannot express. (queryMsgByKey -m <maxNum> and -l <lastKey> are different options:
+    //    they take values and are allowed.)
+    //  - -e/-p (queryMsgByKey endTimestamp/keyType,
     //    queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS).
     //  - write/admin subcommands (updateTopic, deleteTopic, sendMessage, resetOffsetByTime, updateSubGroup,
     //    wipeWritePerm, …): simply absent and therefore rejected.
@@ -101,7 +108,7 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
       consumerProgress: ["-n", "-g", "-t", "-s", "-c"],
       consumerStatus: ["-n", "-g", "-i"], // no -b: it connects straight to the given broker, bypassing the fixed name server
       brokerStatus: ["-n", "-c"], // no -b: BrokerStatusSubCommand L73-77 connects straight to the given address (#25)
-      queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"],
+      queryMsgByKey: ["-n", "-t", "-k", "-b", "-m", "-c", "-l"], // -b <beginTimestamp>, -m <maxNum>, -l <lastKey>: all value-taking
       queryMsgByUniqueKey: ["-n", "-i", "-t", "-c", "-s"],
     },
     namesrvs: [], // set in config: the fixed name server address(es) the agent may query

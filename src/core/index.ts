@@ -39,6 +39,7 @@ export function readJsonFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 export * from "./imports.js";
+export * from "./sls.js";
 export * from "./har.js";
 export * from "./replay.js";
 export * from "./alerts.js";
