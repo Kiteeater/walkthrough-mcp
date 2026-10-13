@@ -947,7 +947,16 @@ export class WalkthroughCore {
         if (!r.claim) throw new ClaimRejectedError(`ruled_out[${i}]: claim is required`);
         if (!r.evidence_ids?.length) throw new ClaimRejectedError(`ruled_out[${i}]: needs evidence`);
         this.verifyEvidence(w, "observed", r.evidence_ids);
-        if (r.check_id && !(w.checks ?? []).some((c) => c.id === r.check_id)) throw new ClaimRejectedError(`ruled_out[${i}]: unknown check: ${r.check_id}`);
+        // An exclusion is only as good as a passing check (#31): the cited check's latest verdict must be pass and the
+        // cited evidence must be what that verdict was judged on. Anything else belongs in `inconclusive`.
+        const hint = "put it in inconclusive (未下结论) with a reason instead";
+        if (!r.check_id) throw new ClaimRejectedError(`ruled_out[${i}]: check_id is required (an exclusion must cite a passing check); ${hint}`);
+        if (!(w.checks ?? []).some((c) => c.id === r.check_id)) throw new ClaimRejectedError(`ruled_out[${i}]: unknown check: ${r.check_id}`);
+        const verdict = (w.checkResults ?? []).find((x) => x.checkId === r.check_id);
+        if (!verdict) throw new ClaimRejectedError(`ruled_out[${i}]: check ${r.check_id} has not been evaluated; ${hint}`);
+        if (verdict.status !== "pass") throw new ClaimRejectedError(`ruled_out[${i}]: check ${r.check_id} latest verdict is ${verdict.status}, not pass; ${hint}`);
+        const unused = r.evidence_ids.filter((e) => !verdict.evidenceIds.includes(e));
+        if (unused.length) throw new ClaimRejectedError(`ruled_out[${i}]: evidence ${unused.join(", ")} was not used by check ${r.check_id}'s latest verdict; ${hint}`);
       }
       for (const [i, r] of (input.inconclusive ?? []).entries()) {
         if (!r.claim || !r.reason) throw new ClaimRejectedError(`inconclusive[${i}]: claim and reason are required`);

@@ -1,4 +1,4 @@
-GET http://127.0.0.1:41329/api/orders/ord-3/total
+GET http://127.0.0.1:36589/api/orders/ord-3/total
 HTTP 500 Internal Server Error
 
-{"error":"internal error","traceId":"5c0b78a0-81e2-45aa-a455-a6f7f00f5d80"}
+{"error":"internal error","traceId":"dc3bc2ea-86ed-42cb-9da8-80a3882c3338"}

@@ -112,3 +112,68 @@ describe("#31: an SLS result that is not provably complete is inconclusive, neve
     expect(s.html).not.toContain('class="inconclusive-block"');
   });
 });
+
+describe("#31 B1: core recordFinding only accepts ruled_out backed by a passing check", () => {
+  async function setup(progress: string | null | undefined) {
+    const bin = writeMockAliyun(mkdtempSync(join(tmpdir(), "wt-sls-")), progress === undefined ? {} : { progress });
+    const { core, root } = mockCore({ connectors: [{ ...aliyun, binary: bin, profile: "demo-readonly" }] });
+    const id = (await core.startWalkthrough({ title: "b1", sandbox: { cwd: root, up: "true", down: "true" } })).id;
+    await core.planChecks(id, { goal: "g", checks: [
+      { id: "c1", intent: "GET 2xx", method: "http", target: "GET http://svc/api", expect: { type: "status", value: 200 }, severity_if_fail: "high" },
+      { id: "sls", intent: "no infra errors", method: "cli", target: "aliyun sls GetLogsV2", expect: { type: "sls_empty", value: {} }, severity_if_fail: "medium" }] });
+    const http = await core.captureEvidence(id, { type: "submit", checkId: "c1", kind: "http", source: { tool: "t" }, content: "HTTP/1.1 500" });
+    await core.evaluateCheck(id, { checkId: "c1", evidenceIds: [http.id] });
+    const run = () => core.runCli(id, { connector: "aliyun", checkId: "sls", argv: [...base("GetLogsV2"), "--query", "layer: infra and level: ERROR"] });
+    const chain = [{ claim: "500", kind: "observed" as const, evidence_ids: [http.id] }];
+    const finding = (ruled_out: { claim: string; check_id?: string; evidence_ids: string[] }[]) =>
+      core.recordFinding(id, { title: "t", severity: "high", symptom: "s", check_id: "c1", root_cause_chain: chain, ruled_out });
+    return { core, id, http, run, finding };
+  }
+
+  it("rejects ruled_out citing Incomplete-progress SLS evidence (check verdict inconclusive)", async () => {
+    const s = await setup("Incomplete");
+    const ev = (await s.run()).evidence.id;
+    expect((await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [ev] })).status).toBe("inconclusive");
+    await expect(s.finding([{ claim: "排除基础设施问题", check_id: "sls", evidence_ids: [ev] }])).rejects.toThrow(/latest verdict is inconclusive, not pass.*inconclusive \(未下结论\)/);
+  });
+  it("rejects ruled_out without check_id, even with Complete + [] evidence", async () => {
+    const s = await setup(undefined);
+    const ev = (await s.run()).evidence.id;
+    await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [ev] });
+    await expect(s.finding([{ claim: "排除基础设施问题", evidence_ids: [ev] }])).rejects.toThrow(/check_id is required.*未下结论/);
+  });
+  it("rejects ruled_out whose check was never evaluated", async () => {
+    const s = await setup(undefined);
+    const ev = (await s.run()).evidence.id;
+    await expect(s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [ev] }])).rejects.toThrow(/has not been evaluated/);
+  });
+  it("uses the LATEST verdict: a pass later overturned to fail is rejected", async () => {
+    const s = await setup(undefined);
+    const ev = (await s.run()).evidence.id;
+    expect((await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [ev] })).status).toBe("pass");
+    const rows = await s.core.captureEvidence(s.id, { type: "submit", checkId: "sls", kind: "log", source: { tool: "t" },
+      content: `$ aliyun\nexit 0\n\n${JSON.stringify({ meta: { progress: "Complete" }, data: [{ level: "ERROR" }] })}\n` });
+    expect((await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [rows.id] })).status).toBe("fail");
+    await expect(s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [ev] }])).rejects.toThrow(/latest verdict is fail/);
+  });
+  it("rejects evidence that the passing verdict did not use", async () => {
+    const s = await setup(undefined);
+    const ev = (await s.run()).evidence.id;
+    await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [ev] });
+    await expect(s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [s.http.id] }])).rejects.toThrow(/was not used by check sls/);
+    await expect(s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [ev, s.http.id] }])).rejects.toThrow(/was not used/);
+  });
+  it("rejects pass_needs_review (agent-reported evidence only)", async () => {
+    const s = await setup(undefined);
+    const sub = await s.core.captureEvidence(s.id, { type: "submit", checkId: "sls", kind: "log", source: { tool: "t" },
+      content: `$ aliyun\nexit 0\n\n${JSON.stringify({ meta: { progress: "Complete" }, data: [] })}\n` });
+    expect((await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [sub.id] })).status).toBe("pass_needs_review");
+    await expect(s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [sub.id] }])).rejects.toThrow(/latest verdict is pass_needs_review/);
+  });
+  it("accepts a passing check with its own evidence", async () => {
+    const s = await setup(undefined);
+    const ev = (await s.run()).evidence.id;
+    await s.core.evaluateCheck(s.id, { checkId: "sls", evidenceIds: [ev] });
+    expect((await s.finding([{ claim: "排除", check_id: "sls", evidence_ids: [ev] }])).ruled_out).toHaveLength(1);
+  });
+});

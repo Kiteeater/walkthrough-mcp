@@ -1,4 +1,4 @@
-GET http://127.0.0.1:41329/api/orders/ord-1/total
+GET http://127.0.0.1:36589/api/orders/ord-1/total
 HTTP 200 OK
 
 {"id":"ord-1","total":10}

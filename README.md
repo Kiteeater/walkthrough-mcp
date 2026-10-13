@@ -119,7 +119,9 @@ An empty SLS result only counts as an exclusion when the query is provably compl
 expect type: it passes only on exit 0, `meta.progress === "Complete"` and `data: []`. If progress is `Incomplete`,
 missing, or an unrecognised value (or the response is the v1 bare array, which has no progress), the check is
 `inconclusive` and the item goes into its own 「未下结论」 block, on the first screen and in the finding details,
-with the reason, e.g. 「SLS 查询未完成，progress=Incomplete」. It never appears under 已排除.
+with the reason, e.g. 「SLS 查询未完成，progress=Incomplete」. It never appears under 已排除. Core enforces this for every caller, not just the demo agent: `record_finding` rejects a `ruled_out` item unless
+it names a `check_id` whose latest verdict is `pass` (not `pass_needs_review`) and cites only evidence that verdict was
+judged on. The error tells the caller to put the item in `inconclusive` instead.
 
 `sls GetLogsV2` has its own argument allowlist, identical to (never wider than) `sls GetLogs`: `--project --logstore
 --from --to --query --topic --line --offset --reverse` (parameter names from the GetLogsV2 API metadata, version
