@@ -4,10 +4,9 @@ import { join } from "node:path";
 
 /**
  * Mock mqadmin reproducing the 5.5.1 output format (rocketmq-all-5.5.1, efa1be5):
- *  - queryMsgById: QueryMsgByIdSubCommand.printMsg L59-163 (`%-20s %s%n` lines, `Message Body Path:` L142-145, no
- *    body printed without -f, then `%n%nWARN: No Consumer`), body written raw by createBodyFile L166-180 to
- *    `/tmp/rocketmq/msgbodys/<msg.getMsgId()>`.
- *  - queryMsgByUniqueKey: showMessage L82-116 (no OffsetID line, `Message Body Path:` L102), createBodyFile L119-138.
+ *  - queryMsgByUniqueKey: showMessage L82-116 (`%-20s %s%n` lines, `Message Body Path:` L102, no body printed, then
+ *    `%n%nWARN: No Consumer`), body written raw by createBodyFile L119-138 to `/tmp/rocketmq/msgbodys/<msgId>`.
+ *    (queryMsgById is not mocked: the preset rejects it, #26.)
  *  - consumerProgress (no -s): ConsumerProgressSubCommand L146-154 / L192-201 / L205-208.
  * Behaviour comes from cfg.json next to the binary: dir (stands in for /tmp/rocketmq/msgbodys), body, fileId
  * (defaults to the -i value), noWrite, delayMs, waitFiles, listAll (print a path line for every file in dir, like a hostile output), queues ([qid, brokerOffset, consumerOffset][]), tps.
@@ -24,12 +23,11 @@ fs.appendFileSync(path.join(__dirname,"calls.jsonl"),JSON.stringify({argv:a,env:
 const opt=(f)=>{const i=a.indexOf(f);return i>=0?a[i+1]:undefined};
 const out=(k,v)=>process.stdout.write(k.padEnd(20)+" "+v+"\\n");
 const sub=a[0];
-if(sub==="queryMsgById"||sub==="queryMsgByUniqueKey"){
+if(sub==="queryMsgByUniqueKey"){
   const id=opt("-i"), fileId=cfg.fileId||id, file=path.join(cfg.dir,fileId);
   if(!cfg.noWrite){fs.mkdirSync(cfg.dir,{recursive:true});fs.writeFileSync(file,cfg.body||"")}
   let paths=[file];
   const finish=()=>{
-    if(sub==="queryMsgById") out("OffsetID:",id);
     out("Topic:",opt("-t")); out("Tags:","[TagA]"); out("Keys:","[ord-1]"); out("Queue ID:",3); out("Queue Offset:",42);
     out("CommitLog Offset:",4660); out("Reconsume Times:",0); out("Born Timestamp:","2026-10-13 07:00:00,123");
     out("Store Timestamp:","2026-10-13 07:00:00,130"); out("Born Host:","10.0.0.8:53412"); out("Store Host:","10.0.0.5:10911");
