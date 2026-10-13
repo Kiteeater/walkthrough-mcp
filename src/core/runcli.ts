@@ -80,12 +80,16 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
     name: "mqadmin", binary: "mqadmin",
     // Verified against Apache RocketMQ rocketmq-all-5.5.1 (efa1be5): tools/.../command/MQAdminStartup.java registers each
     // name; each SubCommand's commandName()/buildCommandlineOptions() defines its options, and `-n` is the global
-    // namesrvAddr option from srvutil ServerUtil. Only value-taking, read-only options are listed. Omitted on purpose:
-    // queryMsgById -s (resend) / -u, and -g/-d on queryMsgById/queryMsgByUniqueKey (consumeMessageDirectly pushes the
-    // message to a consumer); clusterList -i (loops forever); flags without a value (-m, -l, -a, -s jstack, topicList -c),
-    // which the `<flag> <value>` grammar cannot express; -e/-f/-p (queryMsgByKey endTimestamp/keyType, queryMsgById
-    // bodyFormat, queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS). Write/admin subcommands (updateTopic, deleteTopic, sendMessage,
-    // resetOffsetByTime, updateSubGroup, wipeWritePerm, …) are simply absent and therefore rejected.
+    // namesrvAddr option from srvutil ServerUtil. Only value-taking, read-only options whose connections go through the
+    // fixed name server are listed. Not allowed, on purpose:
+    //  - queryMsgById (whole subcommand, #26): connects to the broker IP:port decoded from the msgId; see deniedHints.
+    //  - -b on consumerStatus and brokerStatus (#25): connects straight to the given broker address.
+    //  - -g/-d on queryMsgByUniqueKey: consumeMessageDirectly pushes the message to a consumer.
+    //  - clusterList -i (loops forever); flags without a value (-m, -l, -a, consumerStatus -s jstack, topicList -c),
+    //    which the `<flag> <value>` grammar cannot express; -e/-p (queryMsgByKey endTimestamp/keyType,
+    //    queryMsgByUniqueKey endTime), which collide with the global credential/eval denylist (CRED_FLAGS).
+    //  - write/admin subcommands (updateTopic, deleteTopic, sendMessage, resetOffsetByTime, updateSubGroup,
+    //    wipeWritePerm, …): simply absent and therefore rejected.
     allow: [["clusterList"], ["topicList"], ["topicStatus"], ["topicRoute"], ["topicClusterList"], ["consumerProgress"], ["consumerStatus"],
       ["queryMsgByKey"], ["queryMsgByUniqueKey"], ["brokerStatus"]],
     args: {
