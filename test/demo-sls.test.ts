@@ -16,14 +16,16 @@ const f = w.findings.find((x: { severity: string }) => x.severity === "high");
 const ev = (id: string) => w.evidence.find((e: { id: string }) => e.id === id);
 const slsItem = () => f.ruled_out.find((r: { claim: string }) => /排除基础设施问题/.test(r.claim));
 
-describe("demo: cloud logs (aliyun sls GetLogs) checked through the real aliyun preset and ruled out", () => {
+describe("demo: cloud logs (aliyun sls GetLogsV2) checked through the real aliyun preset and ruled out", () => {
   it("ruled-out item + core evidence whose sha256 recomputes from the file", () => {
     const r = slsItem();
     expect(r.claim).toMatch(/^查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题/);
     const e = ev(r.evidence_ids[0]);
     expect(e).toMatchObject({ kind: "cli_output", executedBy: "core" });
-    expect(e.source).toMatch(/^run_cli:aliyun sls GetLogs --project demo-prod-logs --logstore infra --from \d+ --to \d+ --query layer: infra and level: ERROR --profile demo-readonly$/);
-    expect(readFileSync(join(dir, e.path), "utf8")).toMatch(/^exit 0\n\n\[\]$/m);
+    expect(e.source).toMatch(/^run_cli:aliyun sls GetLogsV2 --project demo-prod-logs --logstore infra --from \d+ --to \d+ --query layer: infra and level: ERROR --profile demo-readonly$/);
+    const body = JSON.parse(readFileSync(join(dir, e.path), "utf8").split(/^exit 0\n\n/m)[1]);
+    expect(body.meta.progress).toBe("Complete");
+    expect(body.data).toEqual([]);
     expect(createHash("sha256").update(readFileSync(join(dir, e.path))).digest("hex")).toBe(e.sha256);
     expect(w.checkResults.find((x: { checkId: string }) => x.checkId === r.check_id).status).toBe("pass");
     expect(html).toContain(`data-evidence="${e.id}"`);
@@ -44,7 +46,7 @@ describe("demo: cloud logs (aliyun sls GetLogs) checked through the real aliyun 
     expect(f.evidenceIds).not.toContain(slsItem().evidence_ids[0]);
     const src = (re: RegExp) => w.evidence.some((e: { source?: string }) => re.test(e.source ?? ""));
     const mcp = (c: string) => w.evidence.some((e: { mcpCall?: { connector: string } }) => e.mcpCall?.connector === c);
-    expect({ mongodb: mcp("mongodb"), langfuse: mcp("langfuse"), rocketmq: src(/^run_cli:mqadmin /), cloudlogs: src(/^run_cli:aliyun sls GetLogs /) })
+    expect({ mongodb: mcp("mongodb"), langfuse: mcp("langfuse"), rocketmq: src(/^run_cli:mqadmin /), cloudlogs: src(/^run_cli:aliyun sls GetLogsV2 /) })
       .toEqual({ mongodb: true, langfuse: true, rocketmq: true, cloudlogs: true });
   });
 });

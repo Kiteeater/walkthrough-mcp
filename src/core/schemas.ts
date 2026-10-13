@@ -7,7 +7,7 @@ export const checkSchema = z.object({
   method: z.enum(["cli", "mcp", "ui", "http", "script"]).describe("how YOU will execute it; the MCP never executes it"),
   target: z.string().describe("URL / command / MCP tool / page to act on"),
   expect: z.object({
-    type: z.enum(["status", "count", "regex", "threshold", "absent", "ui", "metric"]),
+    type: z.enum(["status", "count", "regex", "threshold", "absent", "ui", "metric", "sls_empty"]),
     value: z.unknown().describe("status: number|[min,max]; count: number|{pattern?,eq|min|max}; regex/absent: pattern; threshold: {pattern with one capture group, min|max}; ui: {har:{urlMatch,status,bodyMatch?,method?}} or {text:{contains}} (screenshots are never judged); metric: {op: >|>=|<|<=|==|!=, value, query?} over query_metrics evidence (one finite series, else inconclusive)"),
   }),
   severity_if_fail: z.enum(["critical", "high", "medium", "low"]),

@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Expect, Verdict } from "./types.js";
 import { judgeUi, uiExpectProblem, type UiExpect } from "./har.js";
 import { judgeMetric, metricExpectProblem, type MetricExpect } from "./metrics.js";
+import { judgeSlsEmpty } from "./sls.js";
 
 /** Default alert patterns an agent can watch for in logs. */
 export const DEFAULT_ALERTS = ["Error:", "Unhandled", "FATAL"];
@@ -36,6 +37,8 @@ export function expectProblem(e: Expect | undefined): string | undefined {
       return uiExpectProblem(v);
     case "metric":
       return metricExpectProblem(v);
+    case "sls_empty": // GetLogsV2 result must be meta.progress=Complete and data=[]; value unused ({}).
+      return v === undefined || obj(v) ? undefined : "sls_empty value must be an object (or omitted)";
     default:
       return `unknown expect type ${JSON.stringify((e as { type?: unknown }).type)}`;
   }
@@ -62,6 +65,7 @@ export function evaluateExpect(e: Expect, texts: string[]): Judgement {
   const v = e.value as Spec & number & string & [number, number];
   if (e.type === "ui") return judgeUi(e.value as UiExpect, texts);
   if (e.type === "metric") return judgeMetric(e.value as MetricExpect, texts);
+  if (e.type === "sls_empty") return judgeSlsEmpty(texts);
   switch (e.type) {
     case "status": {
       const got = texts.map(readStatus).find((x) => x !== undefined);

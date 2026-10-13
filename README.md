@@ -76,12 +76,12 @@ MONGO_URL=mongodb://host:port npm run demo   # external Mongo: only the walkthro
 
 **Everything in the demo is local**: an in-process MongoDB, a **mock** Langfuse, a **mock** Prometheus, a **mock**
 `mqadmin` binary (output in the rocketmq-all-5.5.1 format, `examples/trace-demo/mock-mqadmin.mjs`), a **mock** `aliyun`
-CLI (`sls GetLogs` with the real JSON response shape, `examples/trace-demo/mock-aliyun.mjs`) and the buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
+CLI (`sls GetLogsV2` with the real JSON response shape, `examples/trace-demo/mock-aliyun.mjs`) and the buggy orders service (`examples/trace-demo`). No real Aliyun, MongoDB, RocketMQ, Langfuse or Prometheus is
 connected, and none is needed. For the five company sources only the integration seams exist, and all five are
 supported:
 - Prometheus: `query_metrics` and alert watches.
 - Langfuse and MongoDB: through their own MCP servers plus `import_mcp_result`.
-- Aliyun: the `run_cli` read-only allowlist. The demo uses `sls GetLogs` to rule out infrastructure errors, described below.
+- Aliyun: the `run_cli` read-only allowlist. The demo uses `sls GetLogsV2` to rule out infrastructure errors, described below.
 - RocketMQ: `run_cli` read-only `mqadmin` queries with a fixed name server; see
   [mqadmin (RocketMQ) read-only preset](#mqadmin-rocketmq-read-only-preset). The demo uses it to rule out a message
   backlog, described below.
@@ -108,12 +108,25 @@ preset: the allowlist applies, the name server is a random loopback port fixed i
 the Redactor, and the command is hash-chained in `commands.jsonl`. `Consume Diff Total: 0` shows there is no backlog,
 so the page shows 「查过消息堆积，消费正常，排除 MQ 问题」 together with that evidence's full sha256.
 
-The same block covers cloud logs. Walkthrough runs `aliyun sls GetLogs --project demo-prod-logs --logstore infra --from
+The same block covers cloud logs. Walkthrough runs `aliyun sls GetLogsV2 --project demo-prod-logs --logstore infra --from
 <5 min before the action> --to <now> --query "layer: infra and level: ERROR"` through the real aliyun preset (the
-`sls GetLogs` argument allowlist applies, and `--profile demo-readonly` is appended from config). The result is `[]`,
-so the page shows 「查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题」 with that evidence's sha256. The demo
+`sls GetLogsV2` argument allowlist applies, and `--profile demo-readonly` is appended from config). The response is
+`meta.progress: "Complete"` with `data: []`, so the page shows 「查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题」 with that evidence's sha256. The demo
 therefore has evidence from all four read-only sources: MongoDB, Langfuse, RocketMQ and cloud logs. The root-cause
 chain (HTTP 500 → metric → Langfuse → MongoDB → `pricing.js:3`) is unchanged.
+
+An empty SLS result only counts as an exclusion when the query is provably complete. The check uses the `sls_empty`
+expect type: it passes only on exit 0, `meta.progress === "Complete"` and `data: []`. If progress is `Incomplete`,
+missing, or an unrecognised value (or the response is the v1 bare array, which has no progress), the check is
+`inconclusive` and the item goes into its own 「未下结论」 block, on the first screen and in the finding details,
+with the reason, e.g. 「SLS 查询未完成，progress=Incomplete」. It never appears under 已排除. Core enforces this for every caller, not just the demo agent: `record_finding` rejects a `ruled_out` item unless
+it names a `check_id` whose latest verdict is `pass` (not `pass_needs_review`) and cites only evidence that verdict was
+judged on. The error tells the caller to put the item in `inconclusive` instead.
+
+`sls GetLogsV2` has its own argument allowlist, identical to (never wider than) `sls GetLogs`: `--project --logstore
+--from --to --query --topic --line --offset --reverse` (parameter names from the GetLogsV2 API metadata, version
+2020-12-30). `powerSql`, `session`, `forward`, `highlight` and `isAccurate` are not allowed. A `|` in `--query` (SLS SQL
+analysis) is rejected for both commands, and credential and endpoint flags are rejected as for every connector.
 
 ![audit page first screen](docs/audit-page.png)
 
@@ -396,6 +409,13 @@ Connections are limited to the name server and the brokers it reports:
 `verify_command_log` recomputes the hash chain of `commands.jsonl` (each entry hashes its content plus the previous
 hash) and compares the tail with the `{seq, hash}` head recorded in `walkthrough.json`, detecting edited, reordered or
 truncated entries.
+
+### 已知缺口 (known gaps)
+
+- The aliyun preset's `sls GetLogs` / `sls GetLogsV2` flag spellings (`--project --logstore --from --to --query --topic
+  --line --offset --reverse`) come from the API metadata and are tested only against the mock CLI. They have not been
+  run against a real `aliyun` binary yet. Tracked in [#34](https://github.com/Kiteeater/walkthrough-mcp/issues/34),
+  which is closed only after a real-CLI run against real SLS.
 
 ### Threat model / limits
 

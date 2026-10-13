@@ -51,16 +51,23 @@ describe("demo: RocketMQ backlog is checked through the real mqadmin preset and 
 describe("recordFinding ruled_out", () => {
   it("is stored outside the chain and must cite existing evidence", async () => {
     const { mockCore } = await import("./helpers.js");
-    const { core, root } = mockCore({});
+    const { PRESET_CONNECTORS } = await import("../src/core/index.js");
+    // @ts-expect-error plain ESM helper without types
+    const { writeMockAliyun } = await import("../examples/trace-demo/mock-aliyun.mjs");
+    const { mkdtempSync } = await import("node:fs"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const aliyun = PRESET_CONNECTORS.find((c) => c.name === "aliyun")!;
+    const { core, root } = mockCore({ connectors: [{ ...aliyun, binary: writeMockAliyun(mkdtempSync(join(tmpdir(), "wt-ro-")), {}), profile: "p" }] });
     const id = (await core.startWalkthrough({ title: "ro", sandbox: { cwd: root, up: "true", down: "true" } })).id;
-    await core.planChecks(id, { goal: "g", checks: [{ id: "c1", intent: "i", method: "http", target: "GET http://x/", expect: { type: "status", value: 200 }, severity_if_fail: "high" }] });
+    await core.planChecks(id, { goal: "g", checks: [{ id: "c1", intent: "i", method: "http", target: "GET http://x/", expect: { type: "status", value: 200 }, severity_if_fail: "high" },
+      { id: "c2", intent: "i2", method: "cli", target: "aliyun sls GetLogsV2", expect: { type: "sls_empty", value: {} }, severity_if_fail: "high" }] });
     const a = await core.captureEvidence(id, { type: "submit", checkId: "c1", kind: "http", source: { tool: "t" }, content: "HTTP/1.1 500" });
-    const b = await core.captureEvidence(id, { type: "submit", checkId: "c1", kind: "http", source: { tool: "t" }, content: "backlog 0" });
+    const b = (await core.runCli(id, { connector: "aliyun", checkId: "c2", argv: ["sls", "GetLogsV2", "--project", "p", "--logstore", "l", "--from", "1", "--to", "2"] })).evidence;
+    expect((await core.evaluateCheck(id, { checkId: "c2", evidenceIds: [b.id] })).status).toBe("pass");
     const chain = [{ claim: "500", kind: "observed" as const, evidence_ids: [a.id] }];
-    await expect(core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "x", evidence_ids: ["ev-99"] }] })).rejects.toThrow();
-    await expect(core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "x", evidence_ids: [] }] })).rejects.toThrow(/needs evidence/);
-    const f = await core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "排除 X", evidence_ids: [b.id] }] });
-    expect(f.ruled_out).toEqual([{ claim: "排除 X", evidence_ids: [b.id] }]);
+    await expect(core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "x", check_id: "c2", evidence_ids: ["ev-99"] }] })).rejects.toThrow();
+    await expect(core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "x", check_id: "c2", evidence_ids: [] }] })).rejects.toThrow(/needs evidence/);
+    const f = await core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "排除 X", check_id: "c2", evidence_ids: [b.id] }] });
+    expect(f.ruled_out).toEqual([{ claim: "排除 X", evidence_ids: [b.id], check_id: "c2" }]);
     expect(f.evidenceIds).toEqual([a.id]);
   });
 });

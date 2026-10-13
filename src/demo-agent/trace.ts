@@ -11,7 +11,7 @@ export interface McpClients {
 }
 export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean; /** Let walkthrough replay the failing request itself (core replay_request). */ replay?: boolean;
   /** Rule out a message backlog with mqadmin consumerProgress via run_cli (connector "mqadmin" must be configured). */ mq?: { group: string; topic: string };
-  /** Rule out infrastructure errors with `aliyun sls GetLogs` over the incident window via run_cli (connector "aliyun"). */ sls?: { project: string; logstore: string } }
+  /** Rule out infrastructure errors with `aliyun sls GetLogsV2` over the incident window via run_cli (connector "aliyun"). */ sls?: { project: string; logstore: string } }
 
 /** 5xx ratio of the orders total route over 5m (one series). */
 const ZH: Record<string, string> = { pass: "通过", fail: "失败", pass_needs_review: "需复核", inconclusive: "无结论" };
@@ -112,17 +112,11 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       const qRes = await core.evaluateCheck(id, { checkId: qId, evidenceIds: [q.evidence.id] });
       if (qRes.status === "pass") ruledOut.push({ claim: `查过消息堆积，消费正常，排除 MQ 问题（mqadmin consumerProgress：${o.mq.group} / ${o.mq.topic} Consume Diff Total = 0）`, check_id: qId, evidence_ids: [q.evidence.id] });
     }
+    const inconclusive: { claim: string; reason: string; check_id: string; evidence_ids: string[] }[] = [];
     if (o.sls) {
-      // Incident window: from 5 minutes before the action until now (unix seconds, [from, to) as GetLogs defines it).
-      const from = Math.floor(Date.parse(actedAt) / 1000) - 300, to = Math.floor(Date.now() / 1000) + 1;
-      const query = "layer: infra and level: ERROR";
-      const sId = `${main.id}-sls`;
-      await core.planChecks(id, { goal: o.goal, append: true, triggeringEvidenceId: httpEv.id, checks: [
-        { id: sId, intent: `SLS ${o.sls.project}/${o.sls.logstore} 在事故时间段内没有基础设施层报错（${query} 无结果）`, method: "cli", target: `aliyun sls GetLogs --project ${o.sls.project} --logstore ${o.sls.logstore} --from ${from} --to ${to} --query "${query}"`, expect: { type: "regex", value: "^exit 0\\n\\n\\[\\]$" }, severity_if_fail: "medium" },
-      ] });
-      const sl = await core.runCli(id, { connector: "aliyun", checkId: sId, argv: ["sls", "GetLogs", "--project", o.sls.project, "--logstore", o.sls.logstore, "--from", String(from), "--to", String(to), "--query", query] });
-      const sRes = await core.evaluateCheck(id, { checkId: sId, evidenceIds: [sl.evidence.id] });
-      if (sRes.status === "pass") ruledOut.push({ claim: `查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题（aliyun sls GetLogs：${o.sls.project}/${o.sls.logstore}，${query}，0 条）`, check_id: sId, evidence_ids: [sl.evidence.id] });
+      const r = await checkSlsInfra(core, id, { goal: o.goal, checkId: `${main.id}-sls`, triggeringEvidenceId: httpEv.id, actedAt, ...o.sls });
+      if (r.ruledOut) ruledOut.push(r.ruledOut);
+      if (r.inconclusive) inconclusive.push(r.inconclusive);
     }
     await core.recordFinding(id, {
       title: `${main.target.replace(/https?:\/\/[^/]+/, "")} 返回 500：订单文档缺少商品明细`, severity: "high", check_id: main.id,
@@ -130,12 +124,36 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
       repro_steps: [out.repro, ...(traceId ? [`langfuse.get_trace({traceId: "${traceId}"})`] : []), ...more.slice(1).map((c) => c.target)],
       root_cause_chain: chain,
       ...(ruledOut.length ? { ruled_out: ruledOut } : {}),
+      ...(inconclusive.length ? { inconclusive } : {}),
     });
   }
   if (watch) {
     await until(() => core.readWatch(watch.id).polls.some((p) => p.at > actedAt && p.firing.length > 0), 5000);
     await core.collectWatch(watch.id);
   }
+}
+
+/**
+ * Rule out infrastructure errors with `aliyun sls GetLogsV2` over the incident window (run_cli, real aliyun preset).
+ * Judged by `sls_empty`: only meta.progress=Complete with data=[] is an exclusion. Progress Incomplete / missing /
+ * unrecognised → inconclusive: returned as an inconclusive item with the reason, never as ruled out.
+ */
+export async function checkSlsInfra(core: WalkthroughCore, id: string, o: { goal: string; checkId: string; triggeringEvidenceId: string; actedAt: string; project: string; logstore: string }): Promise<{
+  ruledOut?: { claim: string; check_id: string; evidence_ids: string[] };
+  inconclusive?: { claim: string; reason: string; check_id: string; evidence_ids: string[] };
+}> {
+  // Incident window: from 5 minutes before the action until now (unix seconds, [from, to) as GetLogsV2 defines it).
+  const from = Math.floor(Date.parse(o.actedAt) / 1000) - 300, to = Math.floor(Date.now() / 1000) + 1;
+  const query = "layer: infra and level: ERROR";
+  await core.planChecks(id, { goal: o.goal, append: true, triggeringEvidenceId: o.triggeringEvidenceId, checks: [
+    { id: o.checkId, intent: `SLS ${o.project}/${o.logstore} 在事故时间段内没有基础设施层报错（${query} 无结果，且查询完整）`, method: "cli", target: `aliyun sls GetLogsV2 --project ${o.project} --logstore ${o.logstore} --from ${from} --to ${to} --query "${query}"`, expect: { type: "sls_empty", value: {} }, severity_if_fail: "medium" },
+  ] });
+  const sl = await core.runCli(id, { connector: "aliyun", checkId: o.checkId, argv: ["sls", "GetLogsV2", "--project", o.project, "--logstore", o.logstore, "--from", String(from), "--to", String(to), "--query", query] });
+  const r = await core.evaluateCheck(id, { checkId: o.checkId, evidenceIds: [sl.evidence.id] });
+  const where = `aliyun sls GetLogsV2：${o.project}/${o.logstore}，${query}`;
+  if (r.status === "pass") return { ruledOut: { claim: `查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题（${where}，progress=Complete，0 条）`, check_id: o.checkId, evidence_ids: [sl.evidence.id] } };
+  if (r.status === "inconclusive") return { inconclusive: { claim: `SLS 基础设施层报错：未能排除（${where}）`, reason: r.reasons.join("；"), check_id: o.checkId, evidence_ids: [sl.evidence.id] } };
+  return {};
 }
 
 async function until(cond: () => boolean, ms: number): Promise<void> {

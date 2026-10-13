@@ -1,4 +1,16 @@
-$ aliyun ["sls","GetLogs","--project","demo-prod-logs","--logstore","infra","--from","1791848984","--to","1791849286","--query","layer: infra and level: ERROR","--profile","demo-readonly"]
+$ aliyun ["sls","GetLogsV2","--project","demo-prod-logs","--logstore","infra","--from","1791858035","--to","1791858337","--query","layer: infra and level: ERROR","--profile","demo-readonly"]
 exit 0
 
-[]
+{
+	"meta": {
+		"count": 0,
+		"processedRows": 4,
+		"elapsedMillisecond": 7,
+		"hasSQL": false,
+		"whereQuery": "layer: infra and level: ERROR",
+		"aggQuery": "",
+		"keys": [],
+		"progress": "Complete"
+	},
+	"data": []
+}
