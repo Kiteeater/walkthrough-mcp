@@ -64,7 +64,7 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
     // --body (raw JSON request body of the built-in API form) would bypass every per-flag check: never allowed.
     denyArgs: ["--body"],
     allow: [
-      ["sls", "get-logs"], ["sls", "get-logs-v2"], ["sls", "get-histogramz"], ["sls", "list-log-stores"], ["sls", "list-project"],
+      ["sls", "get-logs"], ["sls", "get-logs-v2"], ["sls", "get-histograms"], ["sls", "list-log-stores"], ["sls", "list-project"],
       ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],
     ],
     // Command names and flags match the real CLI's help (aliyun CLI 3.5.1 + official aliyun-cli-sls plugin 0.9.6;
@@ -76,7 +76,7 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
       // get-logs-v2 (SLS OpenAPI GetLogsV2 2020-12-30, operationType read): from/to are int unix seconds, [from, to).
       // Deliberately no wider than get-logs: --power-sql, --session, --forward, --highlight and --is-accurate are left out. `|` (SQL analysis) is rejected for every argument by the shell-syntax check.
       "sls get-logs-v2": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
-      "sls get-histogramz": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
+      "sls get-histograms": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
       "sls list-log-stores": ["--project", "--logstore-name", "--offset", "--size"],
       "sls list-project": ["--project-name", "--offset", "--size"],
       "cms DescribeAlertLogList": ["--StartTime", "--EndTime", "--Namespace", "--MetricName", "--GroupId", "--RuleName", "--Level", "--PageNumber", "--PageSize"],
