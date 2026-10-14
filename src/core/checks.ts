@@ -37,7 +37,7 @@ export function expectProblem(e: Expect | undefined): string | undefined {
       return uiExpectProblem(v);
     case "metric":
       return metricExpectProblem(v);
-    case "sls_empty": // GetLogsV2 result must be meta.progress=Complete and data=[]; value unused ({}).
+    case "sls_empty": // get-logs-v2 result must be meta.progress=Complete and data=[]; value unused ({}).
       return v === undefined || obj(v) ? undefined : "sls_empty value must be an object (or omitted)";
     default:
       return `unknown expect type ${JSON.stringify((e as { type?: unknown }).type)}`;

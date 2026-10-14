@@ -80,12 +80,12 @@ if (!ro || !mqEv || mqEv.kind !== "cli_output" || mqEv.executedBy !== "core" || 
 if (!/Consume Diff Total: 0\b/.test(readFileSync(join(dirname(process.argv[2]), mqEv.path), "utf8"))) fail("mqadmin evidence does not show zero backlog");
 if (f.root_cause_chain.some((l) => l.evidence_ids.includes(mqEv.id)) || f.evidenceIds.includes(mqEv.id)) fail("mqadmin evidence spliced into the root-cause chain");
 if (!first.includes(`<div class="ruled-out" data-ruled-out="2"><b>已排除</b>`) || !first.includes(`data-evidence="${mqEv.id}"`) || !first.includes(`data-sha256="${mqEv.sha256}"`)) fail("first screen lacks the ruled-out MQ item with its sha256");
-// Cloud logs: infra errors checked by walkthrough (aliyun sls GetLogsV2 via run_cli, aliyun preset; progress=Complete) and RULED OUT.
+// Cloud logs: infra errors checked by walkthrough (aliyun sls get-logs-v2 via run_cli, aliyun preset; progress=Complete) and RULED OUT.
 const rs = (f.ruled_out ?? []).find((r) => /排除基础设施问题/.test(r.claim));
 const slsEv = rs && ev(rs.evidence_ids[0]);
-if (!rs || !slsEv || slsEv.kind !== "cli_output" || slsEv.executedBy !== "core" || !/^run_cli:aliyun sls GetLogsV2 /.test(slsEv.source) || !/^[0-9a-f]{64}$/.test(slsEv.sha256)) fail("no ruled-out infra item backed by core aliyun sls GetLogsV2 evidence");
+if (!rs || !slsEv || slsEv.kind !== "cli_output" || slsEv.executedBy !== "core" || !/^run_cli:aliyun sls get-logs-v2 /.test(slsEv.source) || !/^[0-9a-f]{64}$/.test(slsEv.sha256)) fail("no ruled-out infra item backed by core aliyun sls get-logs-v2 evidence");
 const slsOut = JSON.parse(readFileSync(join(dirname(process.argv[2]), slsEv.path), "utf8").split(/^exit 0\n\n/m)[1] ?? "null");
-if (slsOut?.meta?.progress !== "Complete" || !Array.isArray(slsOut.data) || slsOut.data.length) fail("sls evidence is not a complete, empty GetLogsV2 result");
+if (slsOut?.meta?.progress !== "Complete" || !Array.isArray(slsOut.data) || slsOut.data.length) fail("sls evidence is not a complete, empty get-logs-v2 result");
 if ((f.inconclusive ?? []).length || /class="inconclusive-block"/.test(html)) fail("demo should have no 未下结论 items (SLS progress is Complete)");
 if (f.root_cause_chain.some((l) => l.evidence_ids.includes(slsEv.id)) || f.evidenceIds.includes(slsEv.id)) fail("sls evidence spliced into the root-cause chain");
 if (!first.includes(`data-evidence="${slsEv.id}"`) || !first.includes(`data-sha256="${slsEv.sha256}"`)) fail("first screen lacks the ruled-out infra item with its sha256");

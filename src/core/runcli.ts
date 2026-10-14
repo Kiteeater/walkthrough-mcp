@@ -23,7 +23,7 @@ export interface ConnectorConfig {
   /** Allowed subcommand prefixes (argv after the binary). Ignored for kind=mongo. */
   allow?: string[][];
   /**
-   * Per-subcommand flag ALLOWLIST, keyed by the subcommand prefix joined with a space (e.g. "sls GetLogs").
+   * Per-subcommand flag ALLOWLIST, keyed by the subcommand prefix joined with a space (e.g. "sls get-logs-v2").
    * After the subcommand, argv must be `<flag> <value>` or `<flag>=<value>` pairs whose flag is listed here
    * (exact, case-sensitive). Anything else, including global flags such as --endpoint/--insecure, is rejected.
    * A subcommand with no entry accepts no extra arguments.
@@ -61,19 +61,24 @@ export interface ConnectorConfig {
 export const PRESET_CONNECTORS: ConnectorConfig[] = [
   {
     name: "aliyun", binary: "aliyun",
+    // --body (raw JSON request body of the built-in API form) would bypass every per-flag check: never allowed.
+    denyArgs: ["--body"],
     allow: [
-      ["sls", "GetLogs"], ["sls", "GetLogsV2"], ["sls", "GetHistograms"], ["sls", "ListLogStores"], ["sls", "ListProject"],
+      ["sls", "get-logs"], ["sls", "get-logs-v2"], ["sls", "get-histograms"], ["sls", "list-log-stores"], ["sls", "list-project"],
       ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],
     ],
+    // Command names and flags match the real CLI's help (aliyun CLI 3.5.1 + official aliyun-cli-sls plugin 0.9.6;
+    // checked in CI by scripts/check-aliyun-preset.mjs, issue #34). SLS uses the plugin's kebab-case commands: the
+    // built-in PascalCase form (`sls GetLogsV2`) only takes --project/--logstore plus a raw JSON --body, and rejects
+    // --from/--to/--query. cms commands are the built-in RPC form, whose query parameters are flat --PascalCase flags.
     args: {
-      "sls GetLogs": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
-      // GetLogsV2 (SLS OpenAPI 2020-12-30, operationType read): project (host), logstore (path), body from/to/line/
-      // offset/reverse/topic/query. Deliberately no wider than GetLogs: powerSql, session, forward, highlight and
-      // isAccurate are left out. `|` (SQL analysis) is rejected for every argument by the shell-syntax check.
-      "sls GetLogsV2": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
-      "sls GetHistograms": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
-      "sls ListLogStores": ["--project", "--logstoreName", "--offset", "--size"],
-      "sls ListProject": ["--projectName", "--offset", "--size"],
+      "sls get-logs": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
+      // get-logs-v2 (SLS OpenAPI GetLogsV2 2020-12-30, operationType read): from/to are int unix seconds, [from, to).
+      // Deliberately no wider than get-logs: --power-sql, --session, --forward, --highlight and --is-accurate are left out. `|` (SQL analysis) is rejected for every argument by the shell-syntax check.
+      "sls get-logs-v2": ["--project", "--logstore", "--from", "--to", "--query", "--topic", "--line", "--offset", "--reverse"],
+      "sls get-histograms": ["--project", "--logstore", "--from", "--to", "--query", "--topic"],
+      "sls list-log-stores": ["--project", "--logstore-name", "--offset", "--size"],
+      "sls list-project": ["--project-name", "--offset", "--size"],
       "cms DescribeAlertLogList": ["--StartTime", "--EndTime", "--Namespace", "--MetricName", "--GroupId", "--RuleName", "--Level", "--PageNumber", "--PageSize"],
       "cms DescribeMetricList": ["--Namespace", "--MetricName", "--Dimensions", "--StartTime", "--EndTime", "--Period", "--Length", "--NextToken"],
       "cms DescribeMetricLast": ["--Namespace", "--MetricName", "--Dimensions", "--Period", "--Length", "--NextToken"],

@@ -1,6 +1,6 @@
 /**
- * Judging `aliyun sls GetLogsV2` output for "no matching logs" (used to rule a hypothesis out).
- * GetLogsV2 (SLS OpenAPI 2020-12-30) returns `{ meta: { progress, … }, data: [ … ] }`; meta.progress is
+ * Judging `aliyun sls get-logs-v2` output for "no matching logs" (used to rule a hypothesis out).
+ * get-logs-v2 (SLS OpenAPI 2020-12-30) returns `{ meta: { progress, … }, data: [ … ] }`; meta.progress is
  * "Complete" (the result is complete) or "Incomplete" (must be re-requested to get the full result).
  * Only `exit 0` + progress === "Complete" + `data: []` counts as "none found" (pass); matches → fail. Anything else
  * (non-zero exit, unparsable output, progress Incomplete / missing / unrecognised, data not an array) → inconclusive:
@@ -26,7 +26,7 @@ function judgeOne(text: string): { status: Verdict; reasons: string[] } {
   if (!m) return { status: "inconclusive", reasons: ["证据不是 run_cli 输出"] };
   if (m[1] !== "0") return { status: "inconclusive", reasons: [`SLS 查询失败，aliyun 退出码 ${m[1]}`] };
   let j: { meta?: { progress?: unknown }; data?: unknown };
-  try { j = JSON.parse(m[2]); } catch { return { status: "inconclusive", reasons: ["SLS 输出不是 JSON（需要 GetLogsV2 的 {meta, data} 响应）"] }; }
+  try { j = JSON.parse(m[2]); } catch { return { status: "inconclusive", reasons: ["SLS 输出不是 JSON（需要 get-logs-v2 的 {meta, data} 响应）"] }; }
   if (!j || typeof j !== "object" || Array.isArray(j)) return { status: "inconclusive", reasons: ["SLS 响应不是 {meta, data} 对象（没有 progress，无法确认查询已完成）"] };
   const p = j.meta?.progress;
   if (p === undefined) return { status: "inconclusive", reasons: ["SLS 响应缺少 meta.progress，无法确认查询已完成"] };

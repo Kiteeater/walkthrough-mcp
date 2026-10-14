@@ -1,6 +1,6 @@
-// Mock `aliyun` CLI for `npm run demo` and the tests: answers `aliyun sls GetLogs` / `GetLogsV2` like the real CLI,
+// Mock `aliyun` CLI for `npm run demo` and the tests: answers `aliyun sls get-logs` / `get-logs-v2` like the real CLI,
 // which prints the response body as JSON. Logs are objects whose values are all strings, with the reserved fields
-// __time__ (unix seconds), __source__ and __topic__. GetLogs returns the bare array; GetLogsV2 returns
+// __time__ (unix seconds), __source__ and __topic__. get-logs returns the bare array; get-logs-v2 returns
 // { meta: { progress: "Complete" | "Incomplete", count, … }, data: [ … ] } (SLS OpenAPI 2020-12-30).
 // Only the read subcommand the demo uses is implemented; anything else exits 1 like an unknown API would.
 // The query supports the plain search form the demo sends: `key: value and key: value` (exact matches).
@@ -17,8 +17,8 @@ const a=process.argv.slice(2);
 if(a[0]==="--version"||a[0]==="version"){console.log("3.0.277-mock");process.exit(0)}
 const cfg=JSON.parse(fs.readFileSync(path.join(__dirname,"aliyun-cfg.json"),"utf8"));
 const opt=(f)=>{const i=a.indexOf(f);if(i>=0)return a[i+1];const e=a.find((x)=>x.startsWith(f+"="));return e?e.slice(f.length+1):undefined};
-const v2=a[1]==="GetLogsV2";
-if(a[0]!=="sls"||(a[1]!=="GetLogs"&&!v2)){console.error("ERROR: mock supports only 'sls GetLogs' and 'sls GetLogsV2'");process.exit(1)}
+const v2=a[1]==="get-logs-v2";
+if(a[0]!=="sls"||(a[1]!=="get-logs"&&!v2)){console.error("ERROR: mock supports only 'sls get-logs' and 'sls get-logs-v2'");process.exit(1)}
 for(const f of ["--project","--logstore","--from","--to"]) if(!opt(f)){console.error("ERROR: "+f+" is required");process.exit(1)}
 const from=Number(opt("--from")),to=Number(opt("--to"));
 if(!(from<to)){console.error("ERROR: InvalidTimeRange: Request time range is invalid.");process.exit(1)}
@@ -33,7 +33,7 @@ const q=(opt("--query")||"*").trim();
 const terms=q==="*"?[]:q.split(/\\s+and\\s+/i).map((x)=>{const m=/^(\\w+)\\s*:\\s*(\\S+)$/.exec(x.trim());if(!m){console.error("ERROR: InvalidQueryString: Query string is invalid.");process.exit(1)}return m});
 const out=logs.filter((l)=>Number(l.__time__)>=from&&Number(l.__time__)<to&&terms.every((m)=>l[m[1]]===m[2]));
 if(!v2){console.log(JSON.stringify(out,null,"\\t"));process.exit(0)}
-// GetLogsV2: {meta, data}. cfg.progress: string (default "Complete"), or null to omit meta.progress entirely.
+// get-logs-v2: {meta, data}. cfg.progress: string (default "Complete"), or null to omit meta.progress entirely.
 const meta={count:out.length,processedRows:logs.length,elapsedMillisecond:7,hasSQL:false,whereQuery:q,aggQuery:"",keys:out.length?Object.keys(out[0]).filter((k)=>!k.startsWith("__")):[]};
 if(cfg.progress!==null) meta.progress=cfg.progress===undefined?"Complete":cfg.progress;
 console.log(JSON.stringify({meta,data:out},null,"\\t"));

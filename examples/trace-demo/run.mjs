@@ -58,7 +58,7 @@ const promUrl = `http://127.0.0.1:${prom.address().port}`;
 const mqDir = mkdtempSync(join(tmpdir(), "wt-demo-mq-"));
 const mqBin = writeMockMqadmin(mqDir, { dir: join(mqDir, "msgbodys") });
 const namesrv = `127.0.0.1:${await freePort()}`;
-// Mock aliyun CLI (sls GetLogs, real JSON response shape) in the same throwaway dir.
+// Mock aliyun CLI (sls get-logs, real JSON response shape) in the same throwaway dir.
 const slsBin = writeMockAliyun(mqDir);
 cleanups.push(() => rmSync(mqDir, { recursive: true, force: true }));
 // The committed flow config has a ${SERVICE_URL} placeholder; the run uses a generated copy next to it (gitignored).
