@@ -61,6 +61,8 @@ export interface ConnectorConfig {
 export const PRESET_CONNECTORS: ConnectorConfig[] = [
   {
     name: "aliyun", binary: "aliyun",
+    // --body (raw JSON request body of the built-in API form) would bypass every per-flag check: never allowed.
+    denyArgs: ["--body"],
     allow: [
       ["sls", "get-logs"], ["sls", "get-logs-v2"], ["sls", "get-histograms"], ["sls", "list-log-stores"], ["sls", "list-project"],
       ["cms", "DescribeAlertLogList"], ["cms", "DescribeMetricList"], ["cms", "DescribeMetricLast"], ["cms", "DescribeAlertHistoryList"],

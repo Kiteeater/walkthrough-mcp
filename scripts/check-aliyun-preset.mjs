@@ -45,14 +45,17 @@ for (const prefix of preset.allow) {
   const r = spawnSync(bin, [...prefix, "--help", "--profile", "walkthrough-nonexistent"], { encoding: "utf8", env });
   const out = `${r.stdout}${r.stderr}`;
   if (r.status !== 0 || /unknown command|not a valid api/i.test(out)) {
-    console.log(`FAIL ${key}: command not found in the real CLI (exit ${r.status}): ${out.trim().split("\n")[0]}`);
+    console.log(`FAIL command "aliyun ${key}": not found in the real CLI (exit ${r.status}): ${out.trim().split("\n")[0]}`);
     bad++; continue;
   }
   let flags;
-  try { flags = helpFlags(out); } catch (e) { console.log(`FAIL ${key}: cannot parse help: ${e.message}`); bad++; continue; }
-  const missing = (preset.args?.[key] ?? []).filter((a) => !flags.has(a));
-  if (missing.length) { console.log(`FAIL ${key}: allowlisted flag(s) not in help: ${missing.join(" ")} (help lists: ${[...flags].join(" ")})`); bad++; }
-  else console.log(`ok   ${key}: ${(preset.args?.[key] ?? []).join(" ") || "(no args)"}`);
+  try { flags = helpFlags(out); } catch (e) { console.log(`FAIL command "aliyun ${key}": cannot parse help: ${e.message}`); bad++; continue; }
+  const args = preset.args?.[key] ?? [];
+  for (const a of args.filter((x) => x === "--body")) { console.log(`FAIL command "aliyun ${key}": flag ${a} must never be allowlisted (raw JSON body)`); bad++; }
+  const missing = args.filter((a) => !flags.has(a));
+  for (const a of missing) console.log(`FAIL command "aliyun ${key}": flag ${a} is allowlisted but not in the real CLI's help`);
+  if (missing.length) { console.log(`     (help for "aliyun ${key}" lists: ${[...flags].join(" ")})`); bad += missing.length; }
+  else console.log(`ok   aliyun ${key}: ${args.join(" ") || "(no args)"}`);
 }
-if (bad) { console.log(`\n${bad} mismatch(es) between the aliyun preset and the real CLI`); process.exit(1); }
+if (bad) { console.log(`\n${bad} problem(s) between the aliyun preset and the real CLI (each listed above with its command and flag)`); process.exit(1); }
 console.log(`\nall ${preset.allow.length} aliyun preset commands match the real CLI`);

@@ -191,3 +191,27 @@ describe("#34: aliyun preset uses the real CLI's command names", () => {
     expect(() => cliArgv(aliyun, [...base("get-logs-v2"), "--power-sql", "true"])).toThrow(/not in allowlist/);
   });
 });
+
+describe("#35: --body (raw JSON request body) is never allowed on any aliyun command", () => {
+  it.each([["GetLogs"], ["GetLogsV2"]])("old built-in sls %s is rejected, with or without --body", (sub) => {
+    expect(() => cliArgv(aliyun, ["sls", sub, "--project", "p", "--logstore", "l"])).toThrow(CliRejectedError);
+    expect(() => cliArgv(aliyun, ["sls", sub, "--project", "p", "--logstore", "l", "--body", '{"from":1,"to":2}'])).toThrow(CliRejectedError);
+    expect(() => cliArgv(aliyun, ["sls", sub, "--project", "p", "--logstore", "l", '--body={"from":1,"to":2}'])).toThrow(CliRejectedError);
+  });
+  it.each(aliyun.allow!.map((p) => [p.join(" ")]))("aliyun %s rejects --body x and --body=x", (key) => {
+    const prefix = key.split(" ");
+    expect(() => cliArgv(aliyun, [...prefix, "--body", "x"])).toThrow(/flag not allowed: --body/);
+    expect(() => cliArgv(aliyun, [...prefix, "--body=x"])).toThrow(/flag not allowed: --body/);
+  });
+  it("get-logs-v2 with otherwise valid args plus --body is rejected (both forms)", () => {
+    expect(() => cliArgv(aliyun, [...base("get-logs-v2"), "--body", '{"query":"*|select 1"}'])).toThrow(/flag not allowed: --body|shell syntax/);
+    expect(() => cliArgv(aliyun, [...base("get-logs-v2"), "--body", '{"line":1}'])).toThrow(/flag not allowed: --body/);
+    expect(() => cliArgv(aliyun, [...base("get-logs-v2"), '--body={"line":1}'])).toThrow(/flag not allowed: --body/);
+  });
+  it("--body is denied even if a config adds it to an allowlist, and no preset allowlist contains it", () => {
+    expect(aliyun.denyArgs).toContain("--body");
+    expect(Object.values(aliyun.args!).flat()).not.toContain("--body");
+    const widened = { ...aliyun, args: { ...aliyun.args, "sls get-logs-v2": [...aliyun.args!["sls get-logs-v2"], "--body"] } };
+    expect(() => cliArgv(widened, [...base("get-logs-v2"), "--body", "x"])).toThrow(/flag not allowed: --body/);
+  });
+});
