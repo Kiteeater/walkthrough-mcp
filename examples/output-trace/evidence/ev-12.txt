@@ -1,4 +1,4 @@
-$ aliyun ["sls","GetLogsV2","--project","demo-prod-logs","--logstore","infra","--from","1791858035","--to","1791858337","--query","layer: infra and level: ERROR","--profile","demo-readonly"]
+$ aliyun ["sls","get-logs-v2","--project","demo-prod-logs","--logstore","infra","--from","1791973522","--to","1791973823","--query","layer: infra and level: ERROR","--profile","demo-readonly"]
 exit 0
 
 {

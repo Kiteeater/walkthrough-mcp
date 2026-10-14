@@ -11,7 +11,7 @@ export interface McpClients {
 }
 export interface TraceOptions { goal: string; baseUrl: string; orders: string[]; service?: string; settleMs?: number; /** Corroborate with Prometheus (core query_metrics). */ metrics?: boolean; /** Let walkthrough replay the failing request itself (core replay_request). */ replay?: boolean;
   /** Rule out a message backlog with mqadmin consumerProgress via run_cli (connector "mqadmin" must be configured). */ mq?: { group: string; topic: string };
-  /** Rule out infrastructure errors with `aliyun sls GetLogsV2` over the incident window via run_cli (connector "aliyun"). */ sls?: { project: string; logstore: string } }
+  /** Rule out infrastructure errors with `aliyun sls get-logs-v2` over the incident window via run_cli (connector "aliyun"). */ sls?: { project: string; logstore: string } }
 
 /** 5xx ratio of the orders total route over 5m (one series). */
 const ZH: Record<string, string> = { pass: "通过", fail: "失败", pass_needs_review: "需复核", inconclusive: "无结论" };
@@ -134,7 +134,7 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
 }
 
 /**
- * Rule out infrastructure errors with `aliyun sls GetLogsV2` over the incident window (run_cli, real aliyun preset).
+ * Rule out infrastructure errors with `aliyun sls get-logs-v2` over the incident window (run_cli, real aliyun preset).
  * Judged by `sls_empty`: only meta.progress=Complete with data=[] is an exclusion. Progress Incomplete / missing /
  * unrecognised → inconclusive: returned as an inconclusive item with the reason, never as ruled out.
  */
@@ -142,15 +142,15 @@ export async function checkSlsInfra(core: WalkthroughCore, id: string, o: { goal
   ruledOut?: { claim: string; check_id: string; evidence_ids: string[] };
   inconclusive?: { claim: string; reason: string; check_id: string; evidence_ids: string[] };
 }> {
-  // Incident window: from 5 minutes before the action until now (unix seconds, [from, to) as GetLogsV2 defines it).
+  // Incident window: from 5 minutes before the action until now (unix seconds, [from, to) as get-logs-v2 defines it).
   const from = Math.floor(Date.parse(o.actedAt) / 1000) - 300, to = Math.floor(Date.now() / 1000) + 1;
   const query = "layer: infra and level: ERROR";
   await core.planChecks(id, { goal: o.goal, append: true, triggeringEvidenceId: o.triggeringEvidenceId, checks: [
-    { id: o.checkId, intent: `SLS ${o.project}/${o.logstore} 在事故时间段内没有基础设施层报错（${query} 无结果，且查询完整）`, method: "cli", target: `aliyun sls GetLogsV2 --project ${o.project} --logstore ${o.logstore} --from ${from} --to ${to} --query "${query}"`, expect: { type: "sls_empty", value: {} }, severity_if_fail: "medium" },
+    { id: o.checkId, intent: `SLS ${o.project}/${o.logstore} 在事故时间段内没有基础设施层报错（${query} 无结果，且查询完整）`, method: "cli", target: `aliyun sls get-logs-v2 --project ${o.project} --logstore ${o.logstore} --from ${from} --to ${to} --query "${query}"`, expect: { type: "sls_empty", value: {} }, severity_if_fail: "medium" },
   ] });
-  const sl = await core.runCli(id, { connector: "aliyun", checkId: o.checkId, argv: ["sls", "GetLogsV2", "--project", o.project, "--logstore", o.logstore, "--from", String(from), "--to", String(to), "--query", query] });
+  const sl = await core.runCli(id, { connector: "aliyun", checkId: o.checkId, argv: ["sls", "get-logs-v2", "--project", o.project, "--logstore", o.logstore, "--from", String(from), "--to", String(to), "--query", query] });
   const r = await core.evaluateCheck(id, { checkId: o.checkId, evidenceIds: [sl.evidence.id] });
-  const where = `aliyun sls GetLogsV2：${o.project}/${o.logstore}，${query}`;
+  const where = `aliyun sls get-logs-v2：${o.project}/${o.logstore}，${query}`;
   if (r.status === "pass") return { ruledOut: { claim: `查过 SLS 日志，这段时间没有基础设施层报错，排除基础设施问题（${where}，progress=Complete，0 条）`, check_id: o.checkId, evidence_ids: [sl.evidence.id] } };
   if (r.status === "inconclusive") return { inconclusive: { claim: `SLS 基础设施层报错：未能排除（${where}）`, reason: r.reasons.join("；"), check_id: o.checkId, evidence_ids: [sl.evidence.id] } };
   return {};

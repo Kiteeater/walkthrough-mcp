@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   const svc = new URL(a.baseUrl);
   const hosts = [svc.host, ...(prom ? [prom.host] : [])];
   // RocketMQ (read-only, optional): the demo points the real mqadmin preset at a mock binary and fixes the name server.
-  // Cloud logs (read-only, optional): the real aliyun preset (sls GetLogs allowlist) pointed at a mock binary.
+  // Cloud logs (read-only, optional): the real aliyun preset (sls get-logs allowlist) pointed at a mock binary.
   const mqBin = process.env.WALKTHROUGH_DEMO_MQADMIN, mqNs = process.env.WALKTHROUGH_DEMO_NAMESRV, slsBin = process.env.WALKTHROUGH_DEMO_ALIYUN;
   const useMq = !!(mqBin && mqNs), useSls = !!slsBin;
   const connectors: ConnectorConfig[] | undefined = useMq || useSls
