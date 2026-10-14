@@ -9,6 +9,10 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+// Minimal env so help output does not depend on the caller (the CLI switches to JSON help when it detects an agent
+// environment). No credentials are ever passed.
+const env = { HOME: process.env.HOME, PATH: process.env.PATH, LANG: "C" };
+
 const bin = process.env.ALIYUN_BIN || "aliyun";
 let preset;
 if (process.env.ALIYUN_PRESET_JSON) preset = JSON.parse(readFileSync(process.env.ALIYUN_PRESET_JSON, "utf8"));
@@ -22,17 +26,23 @@ export function helpFlags(out) {
     const set = j.parameterSets?.[j.activeParameterSet] ?? [];
     return new Set(set.filter((p) => p.location !== "body" && p.location !== "header").map((p) => `--${p.name}`));
   }
-  const m = t.match(/\nParameters:\n([\s\S]*?)\n\s*\n?(?:Global Parameters:|Examples:|$)/);
-  if (!m) return new Set();
-  return new Set([...m[1].matchAll(/^ {2}(--[A-Za-z][\w-]*)/gm)].map((x) => x[1]));
+  // Text help: plugin commands use "Parameters:", built-in commands "Required Parameters:" / "Optional Parameters:".
+  // Flags are the 2-space-indented "--Name" lines inside those sections (not "Global Parameters:").
+  const flags = new Set();
+  let inParams = false;
+  for (const line of t.split("\n")) {
+    if (/^\S/.test(line)) inParams = /^(Required |Optional )?Parameters:$/.test(line.trim());
+    else if (inParams) { const m = line.match(/^ {2}(--[A-Za-z][\w-]*)/); if (m) flags.add(m[1]); }
+  }
+  return flags;
 }
 
-const ver = spawnSync(bin, ["version"], { encoding: "utf8" });
+const ver = spawnSync(bin, ["version"], { encoding: "utf8", env });
 console.log(`aliyun CLI: ${ver.stdout.trim() || ver.error}`);
 let bad = 0;
 for (const prefix of preset.allow) {
   const key = prefix.join(" ");
-  const r = spawnSync(bin, [...prefix, "--help", "--profile", "walkthrough-nonexistent"], { encoding: "utf8" });
+  const r = spawnSync(bin, [...prefix, "--help", "--profile", "walkthrough-nonexistent"], { encoding: "utf8", env });
   const out = `${r.stdout}${r.stderr}`;
   if (r.status !== 0 || /unknown command|not a valid api/i.test(out)) {
     console.log(`FAIL ${key}: command not found in the real CLI (exit ${r.status}): ${out.trim().split("\n")[0]}`);
