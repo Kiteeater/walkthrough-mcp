@@ -42,6 +42,7 @@ export * from "./imports.js";
 export * from "./sls.js";
 export * from "./har.js";
 export * from "./replay.js";
+export * from "./loginstate.js";
 export * from "./alerts.js";
 export * from "./lockfile.js";
 export * from "./execpolicy.js";
