@@ -7,3 +7,4 @@ e2e-output/
 examples/.generated.*.json
 vitest-report.json
 examples/trace-demo/walkthrough.trace.generated.json
+examples/agent-run/transcript.raw.jsonl
