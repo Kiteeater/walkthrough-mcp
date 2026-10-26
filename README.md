@@ -21,7 +21,10 @@ walkthrough is built to look, not touch. Keep it that way:
   as replay: pinned IP, manual redirects, every hop re-checked, so a redirect or DNS rebind to it is refused). Numeric
   forms such as `579766055`, `0x228e8727` or `34.142.34599` are normalised and refused. For `run_cli` argv /
   connector targets, hostnames that do not resolve are ignored, so only resolvable forms are blocked there.
-  It is not configurable. Any other
+  It is not configurable.
+- **Flow http actions are same-host only.** A flow `http` action or `waitFor` may only reach its own URL's host:port.
+  A redirect to any other host is refused, so for example a login endpoint that redirects to a separate auth domain
+  will now fail. Flow response bodies are capped at 1MB (`maxBodyBytes`). Any other
   host your operator lists as blocked: keep it off the allowlists (anything not on them is refused).
   Not covered: commands you run yourself inside `run_in_sandbox exec` (off by default).
 - **No production accounts.** Give it staging or sandbox access with read-only credentials. See
