@@ -17,7 +17,11 @@ walkthrough is built to look, not touch. Keep it that way:
   it is added to `allowHosts`, `allowCidrs` or `capture.allowWebSocketHosts`, and even when a hostname resolves to
   it (incl. IPv4-mapped / NAT64 / 6to4 IPv6 forms). This applies to HTTP (replay, capture_page and its
   sub-resources and redirect hops, query_metrics, alert watches), WebSockets, `run_cli` argv values and connector
-  targets (name servers, mongo URIs), and flow http actions / readiness polling. It is not configurable. Any other
+  targets (name servers, mongo URIs), and flow http actions / readiness polling (these use the same guarded path
+  as replay: pinned IP, manual redirects, every hop re-checked, so a redirect or DNS rebind to it is refused). Numeric
+  forms such as `579766055`, `0x228e8727` or `34.142.34599` are normalised and refused. For `run_cli` argv /
+  connector targets, hostnames that do not resolve are ignored, so only resolvable forms are blocked there.
+  It is not configurable. Any other
   host your operator lists as blocked: keep it off the allowlists (anything not on them is refused).
   Not covered: commands you run yourself inside `run_in_sandbox exec` (off by default).
 - **No production accounts.** Give it staging or sandbox access with read-only credentials. See

@@ -32,7 +32,9 @@ export function hostCandidates(token: string): string[] {
   }
   // Any IPv4 literal anywhere in the token, even glued to other text.
   for (const ip of token.match(/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g) ?? []) add(ip);
-  return [...out].filter((h) => isIP(h) || HOSTNAME.test(h));
+  // Normalise like a URL parser / resolver would (579766055, 0x228e8727, 34.142.34599 → 34.142.135.39).
+  const normed = [...out].map((h) => { try { return new URL(`http://${isIP(h) === 6 ? `[${h}]` : h}`).hostname.replace(/^\[|\]$/g, ""); } catch { return h; } });
+  return [...new Set(normed)].filter((h) => isIP(h) || HOSTNAME.test(h));
 }
 
 /** Throw CoreBlockedError if any token names, or resolves to, a core-blocked address. Unresolvable names are ignored. */

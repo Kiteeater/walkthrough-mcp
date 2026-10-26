@@ -2,8 +2,10 @@
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { assertNoCoreBlockedTargets, checkHop, CliRejectedError, CORE_BLOCKED_IPS, guardedGet, guardedRequest, guardedWebSocket, hostCandidates, httpSource, ipProblem,
+const require_ = createRequire(import.meta.url);
+import { addTestCoreBlocked, assertNoCoreBlockedTargets, checkHop, CliRejectedError, CORE_BLOCKED_IPS, guardedGet, guardedRequest, guardedWebSocket, hostCandidates, httpSource, ipProblem,
   promInstantQuery, Redactor, replayRequest, ReplayRejectedError, waitForUrl, WalkthroughCore, type ConnectorConfig, type Sandbox } from "../src/core/index.js";
 import { SB } from "./helpers.js";
 
@@ -112,15 +114,92 @@ describe("core blocklist: run_cli targets and mongo", () => {
   });
 });
 
-describe("core blocklist: flow http actions and readiness polling", () => {
-  it("httpSource refuses it (no request made)", async () => {
-    const r = await httpSource.run({ type: "http", url: `http://${BAD}/` });
-    expect(r.evidenceText).toMatch(/core blocklist/);
-    expect(r.status).toBeUndefined();
+describe("core blocklist: flow http actions and readiness polling use the guarded path", () => {
+  const http = require_("node:http") as typeof import("node:http");
+  async function servers() {
+    // "blocked side": a server on 127.0.0.2 standing in for the blocked address (marked core-blocked for this test),
+    // counting raw TCP connections.
+    let blockedConns = 0;
+    const blocked = http.createServer((_q, r) => r.end("REACHED"));
+    blocked.on("connection", () => { blockedConns++; });
+    await new Promise<void>((r) => blocked.listen(0, "127.0.0.2", r));
+    const bport = (blocked.address() as { port: number }).port;
+    const hits: string[] = [];
+    const ok = http.createServer((q, r) => {
+      hits.push(q.url ?? "");
+      if (q.url === "/to-literal") { r.writeHead(302, { location: `http://${BAD}/` }); return r.end(); }
+      if (q.url === "/to-standin") { r.writeHead(302, { location: `http://127.0.0.2:${bport}/` }); return r.end(); }
+      if (q.url === "/to-standin-name") { r.writeHead(302, { location: `http://blocked.test:${bport}/` }); return r.end(); }
+      if (q.url === "/to-self") { r.writeHead(302, { location: "/health" }); return r.end(); }
+      r.writeHead(200, { "x-tok": "t1" }); r.end("healthy");
+    });
+    await new Promise<void>((r) => ok.listen(0, "127.0.0.1", r));
+    const port = (ok.address() as { port: number }).port;
+    return { port, hits, conns: () => blockedConns, close: () => { ok.close(); blocked.close(); } };
+  }
+  const resolver = async (h: string) => (h === "blocked.test" ? "127.0.0.2" : "127.0.0.1");
+
+  it("httpSource: allowlisted server 302 → blocked address (literal, stand-in IP, name resolving to it) is refused; zero connections on the blocked side", async () => {
+    const undo = addTestCoreBlocked("127.0.0.2");
+    const s = await servers();
+    try {
+      for (const path of ["/to-literal", "/to-standin", "/to-standin-name"]) {
+        const r = await httpSource.run({ type: "http", url: `http://app.test:${s.port}${path}` }, { resolver });
+        expect(r.evidenceText, path).toMatch(/core blocklist|not in the replay allowlist/);
+        expect(r.status, path).toBeUndefined();
+      }
+      expect(s.conns()).toBe(0);
+      // a same-host redirect still works (each hop re-checked, IP pinned)
+      const good = await httpSource.run({ type: "http", url: `http://app.test:${s.port}/to-self` }, { resolver });
+      expect(good).toMatchObject({ status: 200, body: "healthy" });
+      // literal blocked target, no redirect
+      expect((await httpSource.run({ type: "http", url: `http://${BAD}/` })).evidenceText).toMatch(/core blocklist/);
+    } finally { undo(); s.close(); }
   });
-  it("waitForUrl refuses up front instead of polling", async () => {
-    const t = Date.now();
-    await expect(waitForUrl(`http://${BAD}:8080/health`, 20_000)).rejects.toThrow(/core blocklist/);
-    expect(Date.now() - t).toBeLessThan(2_000);
+
+  it("even if the stand-in is allowlisted as the flow's own host, the core blocklist wins", async () => {
+    const undo = addTestCoreBlocked("127.0.0.2");
+    const s = await servers();
+    try {
+      const r = await httpSource.run({ type: "http", url: "http://blocked.test:1/" }, { resolver });
+      expect(r.evidenceText).toMatch(/core blocklist/);
+      expect(s.conns()).toBe(0);
+    } finally { undo(); s.close(); }
+  });
+
+  it("waitForUrl: 302 → blocked address refused at once (not retried); zero connections; same-host redirect + header still work", async () => {
+    const undo = addTestCoreBlocked("127.0.0.2");
+    const s = await servers();
+    try {
+      for (const path of ["/to-literal", "/to-standin", "/to-standin-name"]) {
+        const t = Date.now();
+        await expect(waitForUrl(`http://app.test:${s.port}${path}`, 20_000, 1_000, undefined, { resolver }), path).rejects.toThrow(/core blocklist|not in the replay allowlist/);
+        expect(Date.now() - t).toBeLessThan(3_000);
+      }
+      expect(s.conns()).toBe(0);
+      await waitForUrl(`http://app.test:${s.port}/to-self`, 5_000, 1_000, { name: "x-tok", value: "t1" }, { resolver });
+      await expect(waitForUrl(`http://${BAD}:8080/health`, 20_000)).rejects.toThrow(/core blocklist/);
+    } finally { undo(); s.close(); }
+  });
+
+  it("DNS rebinding: a host that resolves to an allowed IP first and the blocked one afterwards never reaches the second", async () => {
+    const undo = addTestCoreBlocked("127.0.0.2");
+    const s = await servers();
+    let n = 0;
+    const rebinding = async () => (n++ === 0 ? "127.0.0.1" : "127.0.0.2");
+    try {
+      const r = await httpSource.run({ type: "http", url: `http://rebind.test:${s.port}/to-self` }, { resolver: rebinding });
+      expect(r.status === undefined || r.status === 200).toBe(true);
+      expect(s.conns()).toBe(0);
+    } finally { undo(); s.close(); }
+  });
+});
+
+describe("hostCandidates normalisation", () => {
+  it("decimal / hex / short-dotted forms of the blocked address are normalised and refused", async () => {
+    for (const f of ["579766055", "0x228e8727", "34.142.34599", "http://579766055/x", "0x228e8727:9876"]) {
+      expect(hostCandidates(f), f).toContain(BAD);
+      await expect(assertNoCoreBlockedTargets([f], async () => []), f).rejects.toThrow(/core blocklist/);
+    }
   });
 });
