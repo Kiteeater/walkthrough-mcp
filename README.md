@@ -3,6 +3,57 @@
 Don't review the diff — **run the change and answer "what does it actually do?" with evidence.**
 Built on WeZZard's walkthrough idea: audit the execution result, not the code.
 
+## Safe defaults (read this first)
+
+walkthrough is built to look, not touch. Keep it that way:
+
+- **Read-only everywhere.**
+  - `run_cli` only runs allowlisted read-only subcommands and flags. Shell syntax (`|`, `;`, …), credential, profile
+    and endpoint flags are rejected.
+  - `replay_request` and `capture_page` only reach hosts in `replay.allowHosts`. Private, loopback and link-local
+    addresses are refused unless listed in `allowCidrs`.
+  - `run_in_sandbox exec` is off by default.
+- **Blocklist.** Never target `34.142.135.39`. Don't add it, or any host your operator lists as blocked, to
+  `replay.allowHosts` / `allowCidrs`, CLI configs or MCP servers. walkthrough has no separate blocklist: anything
+  not on the allowlist is already refused, so keep blocked hosts off it.
+- **No production accounts.** Give it staging or sandbox access with read-only credentials. See
+  [`docs/read-only-access.md`](docs/read-only-access.md) for what to request.
+- **No credentials in evidence.**
+  - Secrets live only in the environment of the process that starts the server, never in config files, prompts or
+    submitted evidence.
+  - Secret-looking env values are redacted from logs, evidence, JSON and HTML. Screenshots are not redacted.
+- **Agents follow the workflow skill.** [`skills/walkthrough/SKILL.md`](skills/walkthrough/SKILL.md) is the
+  procedure an agent should follow: requirement → plan → real tool calls → findings with evidence, `ruled_out`
+  gating and 未下结论 handling.
+
+## Quick start
+
+1. **Try it offline (no Docker, no real services, random ports):** `npm ci && npm run demo`. Then open the printed
+   `index.html` (see below).
+2. **Build:** `npm run build`. Add `npx playwright install chromium` for screenshots.
+3. **Connect your agent:**
+   ```bash
+   claude mcp add walkthrough -e WALKTHROUGH_ROOT=/path/to/your/project -- node /path/to/walkthrough-mcp/dist/mcp/index.js
+   ```
+   Or use the JSON in [MCP config](#mcp-config).
+4. **Allow only what you test.** In `<project>/walkthrough.config.json`, list the hosts under `replay.allowHosts`
+   and any `run_cli` connectors with read-only profiles.
+5. **Point the agent at [`skills/walkthrough/SKILL.md`](skills/walkthrough/SKILL.md)**, or the
+   [prompt template](#agent-prompt-template). Give it the requirement, then open the audit page it renders and
+   sign off yourself.
+
+## Tools by task
+
+| Task | Tools |
+|---|---|
+| Start and plan | `start_walkthrough`, `run_in_sandbox` (up / down; exec only with `sandbox.allowExec`), `plan_checks` (also `append` for follow-ups) |
+| Execute: walkthrough runs it (stronger evidence) | `replay_request` (HTTP), `capture_page` (screenshot + HAR), `query_metrics` (Prometheus), `run_cli` (read-only CLI presets) |
+| Execute: you ran it | `capture_evidence` (submit / screenshot / logs), `import_mcp_result` (other MCP servers) |
+| Watch alerts | `start_watch`, `collect_watch` |
+| Judge | `evaluate_check` (the only source of pass / fail / inconclusive) |
+| Explain | `link_source` (file + line), `record_claim` (observed / inferred), `record_finding` (root cause, `ruled_out`, `inconclusive`) |
+| Report and audit | `render_walkthrough`, `verify_command_log`, `sign_off` (human only) |
+
 ## 一条命令跑起来
 
 clone 之后，在仓库根目录执行（需要 Node 20+，不需要 Docker、不联网连任何真实服务，端口随机分配）：
@@ -196,9 +247,7 @@ and `walkthrough-html.png` (a screenshot of the rendered page).
 }
 ```
 
-Tools: `start_walkthrough`, `run_in_sandbox` (up | down | exec — exec only with `sandbox.allowExec: true`), `plan_checks`, `capture_evidence`
-(submit | screenshot | logs), `evaluate_check`, `record_finding`, `link_source` (file + line), `record_claim`
-(observed | inferred), `render_walkthrough`, `sign_off` (accept | reject).
+The full tool list, grouped by task, is in [Tools by task](#tools-by-task).
 
 ## Integrating into your own agent
 
