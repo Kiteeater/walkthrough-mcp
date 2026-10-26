@@ -1,3 +1,4 @@
+import { assertUrlNotCoreBlocked } from "./blocklist.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";
@@ -64,6 +65,7 @@ export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConf
 
 /** Poll `url` until it answers 2xx. Every attempt has a ref'd deadline, so this always settles (exit-13 fix). */
 export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000, header?: { name: string; value: string }): Promise<void> {
+  await assertUrlNotCoreBlocked(url); // core blocklist: refused up front, not retried
   const deadline = Date.now() + timeoutMs;
   let last = "";
   while (Date.now() < deadline) {

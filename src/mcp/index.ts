@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
-  captureEvidenceShape, captureInput, QUERY_METRICS_DESC, queryMetricsShape, START_WATCH_DESC, startWatchShape, COLLECT_WATCH_DESC, collectWatchShape, watchInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough, signOffShape,
+  captureEvidenceShape, captureInput, QUERY_METRICS_DESC, queryMetricsShape, START_WATCH_DESC, startWatchShape, COLLECT_WATCH_DESC, collectWatchShape, watchInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough,
 } from "../core/index.js";
 
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
@@ -70,8 +70,7 @@ server.tool("evaluate_check", "walkthrough judges a check pass/pass_needs_review
 server.tool("record_finding", "Record a finding with symptom, repro_steps and root_cause_chain. Observed steps must cite verified evidence.", recordFindingShape,
   (a) => wrap(() => core.recordFinding(a.id, a))());
 
-server.tool("sign_off", "Record the human's report-level decision (accept|reject).", signOffShape,
-  (a) => wrap(() => core.signOff(a.id, a))());
+// sign_off is deliberately NOT an MCP tool: the report-level decision is a human act (CLI `walkthrough sign-off`).
 
 server.tool("render_walkthrough", "Render the walkthrough to static HTML.", { id },
   (a) => wrap(() => ({ html: renderWalkthrough(core, a.id) }))());

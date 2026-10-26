@@ -88,11 +88,21 @@ export function norm(ipRaw: string): string {
   try { return new URL(`http://[${ip}]/`).hostname.replace(/^\[|\]$/g, ""); } catch { return ip; }
 }
 
+/**
+ * Core blocklist: always refused on every outbound path (HTTP, WebSocket, capture_page, replay, metrics, run_cli
+ * targets, mongo URIs, flow http/readiness), whatever allowHosts / allowCidrs / allowWebSocketHosts say. Not
+ * configurable on purpose. Judged after norm(), so IPv4-mapped / NAT64 / 6to4 forms are caught too.
+ */
+export const CORE_BLOCKED_IPS: readonly string[] = Object.freeze(["34.142.135.39"]);
+const CORE_BLOCKED = new Set(CORE_BLOCKED_IPS);
+export function coreBlocked(ipRaw: string): boolean { return CORE_BLOCKED.has(norm(ipRaw)); }
+
 /** Why connecting to `ip` is forbidden, or undefined. */
 export function ipProblem(ipRaw: string, allowCidrs: string[] = []): string | undefined {
   const ip = norm(ipRaw);
   const fam = isIP(ip) === 6 ? "ipv6" : "ipv4";
   if (!isIP(ip)) return `not an IP: ${ip}`;
+  if (CORE_BLOCKED.has(ip)) return `${ip} is on the core blocklist (always refused)`;
   if (METADATA.has(ip)) return `cloud metadata address ${ip} is always denied`;
   if (!DENY.check(ip, fam)) return undefined;
   const allow = new BlockList();

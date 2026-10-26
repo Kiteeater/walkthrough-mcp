@@ -6,8 +6,9 @@ description: Verify a change by running it and recording evidence through the wa
 # Walkthrough workflow
 
 You plan and execute the checks. walkthrough stores the evidence and decides every verdict. Do not state a verdict
-yourself; only `evaluate_check` decides pass / fail / inconclusive. A human reads the audit page and signs off. You
-never call `sign_off`.
+yourself; only `evaluate_check` decides pass / fail / inconclusive. A human reads the audit page and signs off.
+`sign_off` is not an MCP tool: you cannot sign, and an MCP call to it is refused. The human signs with the CLI
+(`walkthrough sign-off`) or `import-review`.
 
 Write check intents, findings, chain steps and reasons in the user's language (e.g. 中文).
 
@@ -17,8 +18,9 @@ Write check intents, findings, chain steps and reasons in the user's language (e
   writes, deletes, restarts or config changes against shared environments.
 - **No production accounts.** Use staging or sandbox credentials scoped to read-only. If only a production account is
   available, stop and ask.
-- **Blocked targets.** Never send requests to, add to `replay.allowHosts` / `allowCidrs`, or otherwise target
-  `34.142.135.39`, or any host the operator lists as blocked. If a requirement points at a blocked host, stop and
+- **Blocked targets.** `34.142.135.39` is on walkthrough's core blocklist and is always refused (also via DNS,
+  even if allowlisted); don't try to work around a refusal. Never target it or any host the operator lists as
+  blocked, and don't add such hosts to `replay.allowHosts` / `allowCidrs` / `capture.allowWebSocketHosts`. If a requirement points at a blocked host, stop and
   report that instead of testing.
 - **No credentials in evidence.** Never paste tokens, keys, passwords or cookies into `capture_evidence`, claims or
   findings. Secrets go in the server's environment only. Redaction is a backstop, not permission. Screenshots are not

@@ -1,3 +1,4 @@
+import { assertUrlNotCoreBlocked } from "./blocklist.js";
 import { withDeadline } from "./settle.js";
 import { evaluateExpect } from "./checks.js";
 import { Registry } from "./registry.js";
@@ -10,6 +11,7 @@ export const httpSource = {
     const method = a.method ?? "GET";
     const repro = `curl -i -X ${method} ${JSON.stringify(a.url)}`;
     try {
+      await assertUrlNotCoreBlocked(a.url);
       const { res, body } = await withDeadline(async (signal) => {
         const r = await fetch(a.url, { method, body: a.body, headers: a.headers, signal });
         return { res: r, body: await r.text() };
