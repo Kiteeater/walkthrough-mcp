@@ -1,3 +1,4 @@
+import { flowPolicy, guardedFetch, ReplayRejectedError, type Resolver } from "./replay.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";
@@ -63,16 +64,22 @@ export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConf
 }
 
 /** Poll `url` until it answers 2xx. Every attempt has a ref'd deadline, so this always settles (exit-13 fix). */
-export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000, header?: { name: string; value: string }): Promise<void> {
+export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutMs = 5_000, header?: { name: string; value: string }, opts: { resolver?: Resolver } = {}): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "";
   while (Date.now() < deadline) {
     const budget = Math.max(1, Math.min(attemptTimeoutMs, deadline - Date.now()));
     try {
-      const r = await withDeadline((signal) => fetch(url, { signal }), budget, `GET ${url}`);
-      if (r.ok && (!header || r.headers.get(header.name) === header.value)) return;
-      if (r.ok) last = ` (got 2xx without the expected ${header!.name} header — another process on that port?)`;
-    } catch { /* not ready */ }
+      // Same guarded path as replay (flow policy, checkHop + pinned IP, manual redirects, every hop re-checked).
+      const r = await withDeadline(async () => guardedFetch(await flowPolicy(url, opts.resolver, budget), url, { resolver: opts.resolver }), budget, `GET ${url}`);
+      const ok = r.status >= 200 && r.status < 300;
+      const hv = header ? Object.entries(r.headers).find(([k]) => k.toLowerCase() === header.name.toLowerCase())?.[1] : undefined;
+      if (ok && (!header || hv === header.value)) return;
+      if (ok) last = ` (got 2xx without the expected ${header!.name} header — another process on that port?)`;
+    } catch (e) {
+      if (e instanceof ReplayRejectedError) throw e; // policy refusal (blocklist, redirect off-host…): never retried
+      /* not ready */
+    }
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`timed out waiting for ${url}${last}`);

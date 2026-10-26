@@ -1,20 +1,23 @@
+import { flowPolicy, guardedFetch, type Resolver } from "./replay.js";
 import { withDeadline } from "./settle.js";
 import { evaluateExpect } from "./checks.js";
-import { Registry } from "./registry.js";
+import { Registry, type SourceContext } from "./registry.js";
 import { MCP_IMPORT_PRESETS, mcpImportSource } from "./imports.js";
 import type { Check, CommandAction, HttpAction, LogObserve } from "./types.js";
 
 export const httpSource = {
   type: "http" as const,
-  async run(a: HttpAction) {
+  async run(a: HttpAction, ctx?: { resolver?: Resolver } & Partial<SourceContext>) {
     const method = a.method ?? "GET";
     const repro = `curl -i -X ${method} ${JSON.stringify(a.url)}`;
     try {
-      const { res, body } = await withDeadline(async (signal) => {
-        const r = await fetch(a.url, { method, body: a.body, headers: a.headers, signal });
-        return { res: r, body: await r.text() };
+      // Same guarded path as replay: flow policy (own host only), checkHop + pinned IP, manual redirects, every hop
+      // re-checked (core blocklist, metadata, DNS rebinding).
+      const r = await withDeadline(async () => {
+        const policy = await flowPolicy(a.url, ctx?.resolver, 15_000);
+        return guardedFetch(policy, a.url, { method, body: a.body, headers: a.headers, resolver: ctx?.resolver });
       }, 15_000, `${method} ${a.url}`);
-      return { status: res.status, body, repro, evidenceText: `${method} ${a.url}\nHTTP ${res.status} ${res.statusText}\n\n${body}` };
+      return { status: r.status, body: r.body, repro, evidenceText: `${method} ${a.url}\nHTTP ${r.status}\n\n${r.body}` };
     } catch (e) {
       return { body: "", repro, evidenceText: `${method} ${a.url}\nrequest failed: ${(e as Error).message}` };
     }

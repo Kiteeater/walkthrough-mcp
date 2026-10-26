@@ -6,6 +6,8 @@ import { spawnDetachedPoller, createCore, loadFlowConfig, readJsonFile, renderWa
 const USAGE = `usage:
   walkthrough run --config <file> [--sandbox compose|local] [--up <cmd>] [--down <cmd>] [--root <dir>]
   walkthrough render <id> [--root <dir>]
+  walkthrough sign-off <id> --decision accept|reject [--comment <text>] [--root <dir>]
+      (HUMAN ONLY: the report-level decision; not exposed over MCP)
   walkthrough import-review <review.json> [--root <dir>]
   walkthrough metrics <id> --query <promql> [--check <checkId>] [--time <unix|rfc3339>] [--root <dir>]
       (read-only Prometheus instant query; env WALKTHROUGH_PROMETHEUS_URL [+ WALKTHROUGH_PROMETHEUS_TOKEN];
@@ -16,7 +18,7 @@ const USAGE = `usage:
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { window: { type: "string" }, interval: { type: "string" }, query: { type: "string" }, check: { type: "string" }, time: { type: "string" }, config: { type: "string" }, sandbox: { type: "string" }, up: { type: "string" }, down: { type: "string" }, root: { type: "string" } },
+  options: { window: { type: "string" }, interval: { type: "string" }, query: { type: "string" }, check: { type: "string" }, time: { type: "string" }, config: { type: "string" }, sandbox: { type: "string" }, up: { type: "string" }, down: { type: "string" }, root: { type: "string" }, decision: { type: "string" }, comment: { type: "string" } },
 });
 const [cmd, arg] = positionals;
 const core = createCore(values.root ?? process.cwd());
@@ -25,6 +27,8 @@ try {
   if (cmd === "run" && values.config) {
     const r = await runFlow(core, loadFlowConfig(values.config, { up: values.up, down: values.down, backend: values.sandbox as "local" | undefined }));
     console.log(JSON.stringify(r));
+  } else if (cmd === "sign-off" && arg && (values.decision === "accept" || values.decision === "reject")) {
+    console.log(JSON.stringify(await core.signOff(arg, { decision: values.decision, comment: values.comment })));
   } else if (cmd === "render" && arg) {
     console.log(renderWalkthrough(core, arg));
   } else if (cmd === "metrics" && arg && values.query) {

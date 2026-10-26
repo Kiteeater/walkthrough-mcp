@@ -8,7 +8,7 @@ import type { Check, CheckAction, ObserveSpec, Walkthrough } from "./types.js";
  * sources (e.g. `connector:<name>` for read-only environment connectors) and verifier types can be
  * registered without touching them.
  */
-export interface SourceContext { walkthrough: Walkthrough; sandbox: Sandbox }
+export interface SourceContext { walkthrough: Walkthrough; sandbox: Sandbox; /** DNS resolver for guarded HTTP (tests inject one). */ resolver?: (host: string) => Promise<string> }
 
 /** Result of running an action source; `evidenceText` is stored as sha256 `response` evidence. */
 export interface ActionOutcome {

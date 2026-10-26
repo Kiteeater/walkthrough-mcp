@@ -13,9 +13,17 @@ walkthrough is built to look, not touch. Keep it that way:
   - `replay_request` and `capture_page` only reach hosts in `replay.allowHosts`. Private, loopback and link-local
     addresses are refused unless listed in `allowCidrs`.
   - `run_in_sandbox exec` is off by default.
-- **Blocklist.** Never target `34.142.135.39`. Don't add it, or any host your operator lists as blocked, to
-  `replay.allowHosts` / `allowCidrs`, CLI configs or MCP servers. walkthrough has no separate blocklist: anything
-  not on the allowlist is already refused, so keep blocked hosts off it.
+- **Blocklist (core-enforced).** `34.142.135.39` is on a hardcoded core blocklist and is always refused, even if
+  it is added to `allowHosts`, `allowCidrs` or `capture.allowWebSocketHosts`, and even when a hostname resolves to
+  it (incl. IPv4-mapped / NAT64 / 6to4 IPv6 forms). This applies to HTTP (replay, capture_page and its
+  sub-resources and redirect hops, query_metrics, alert watches), WebSockets, `run_cli` argv values and connector
+  targets (name servers, mongo URIs), and flow http actions / readiness polling (these use the same guarded path
+  as replay: pinned IP, manual redirects, every hop re-checked, so a redirect or DNS rebind to it is refused). Numeric
+  forms such as `579766055`, `0x228e8727` or `34.142.34599` are normalised and refused. For `run_cli` argv /
+  connector targets, hostnames that do not resolve are ignored, so only resolvable forms are blocked there.
+  It is not configurable. Any other
+  host your operator lists as blocked: keep it off the allowlists (anything not on them is refused).
+  Not covered: commands you run yourself inside `run_in_sandbox exec` (off by default).
 - **No production accounts.** Give it staging or sandbox access with read-only credentials. See
   [`docs/read-only-access.md`](docs/read-only-access.md) for what to request.
 - **No credentials in evidence.**
@@ -52,7 +60,7 @@ walkthrough is built to look, not touch. Keep it that way:
 | Watch alerts | `start_watch`, `collect_watch` |
 | Judge | `evaluate_check` (the only source of pass / fail / inconclusive) |
 | Explain | `link_source` (file + line), `record_claim` (observed / inferred), `record_finding` (root cause, `ruled_out`, `inconclusive`) |
-| Report and audit | `render_walkthrough`, `verify_command_log`, `sign_off` (human only) |
+| Report and audit | `render_walkthrough`, `verify_command_log` (sign-off is human only: CLI `walkthrough sign-off`, not an MCP tool) |
 
 ## 一条命令跑起来
 
@@ -97,8 +105,9 @@ trace. Everything in between is the agent's job, with no human in the loop:
 5. `render_walkthrough` produces an audit view. The first screen shows only conclusions: number of findings, a
    severity breakdown, and a one-line root cause (with the source line) per finding. Each finding expands into its
    root-cause chain and evidence; per-claim Agree/Flag is optional and collapsed.
-6. A human gives one report-level sign-off (`sign_off`: accept 认可 / reject 打回 + comment), in the page via
-   `review.json` + `import-review`, or through the tool.
+6. A human gives one report-level sign-off (accept 认可 / reject 打回 + comment), in the page via
+   `review.json` + `import-review`, or with `walkthrough sign-off <id> --decision accept|reject [--comment …]`.
+   sign_off is **not** on the MCP tool surface, so an agent cannot sign; an MCP call to it is refused.
 
 Planning and execution belong to the agent. The example's deterministic stand-in lives in `src/demo-agent/`
 (outside the core), so the demo needs no LLM: it derives generic checks per declared route (2xx + no error alerts
@@ -308,7 +317,7 @@ Write check intents, findings and every root-cause chain step in the user's lang
    other MCP results with import_mcp_result, link_source {file, line} for the code, then record_finding with a
    root_cause_chain whose steps each cite evidence (observed) or are marked inferred.
 7. collect_watch {watch_id} if you started one; render_walkthrough.
-8. Stop. Reply with the audit page path and "ready for sign-off". Do NOT call sign_off — a human signs.
+8. Stop. Reply with the audit page path and "ready for sign-off". sign_off is not an MCP tool — a human signs via the CLI or import-review.
 ```
 
 See `docs/read-only-access.md` for what read-only access to request in a company environment.
@@ -535,7 +544,8 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     escaped interception could not resolve anything else.
   - **WebSockets** (#18) are **off by default**: every one is intercepted with `routeWebSocket`, closed and
     recorded as `type: websocket`. To enable a host, list it in `replay.capture.allowWebSocketHosts` (separate
-    from `allowHosts`; `host` or `host:port`). A listed host must still pass `allowHosts` and the IP rules (same
+    from `allowHosts`; `host` or `host:port`). **A bare `host` (no port) allows every port on that host**; list
+    `host:port` to allow only one. A listed host must still pass `allowHosts` and the IP rules (same
     pinned resolution); walkthrough then opens its **own IP-pinned connection** and relays it, so Chromium never
     connects itself. Enabled sockets are **receive-only**: a page→server message is dropped (recorded as
     `type: websocket-message`) unless it exactly matches `replay.capture.webSocketOutbound["<host>"]` (e.g. a

@@ -88,11 +88,30 @@ export function norm(ipRaw: string): string {
   try { return new URL(`http://[${ip}]/`).hostname.replace(/^\[|\]$/g, ""); } catch { return ip; }
 }
 
+/**
+ * Core blocklist: always refused on every outbound path (HTTP, WebSocket, capture_page, replay, metrics, run_cli
+ * targets, mongo URIs, flow http/readiness), whatever allowHosts / allowCidrs / allowWebSocketHosts say. Not
+ * configurable on purpose. Judged after norm(), so IPv4-mapped / NAT64 / 6to4 forms are caught too.
+ */
+export const CORE_BLOCKED_IPS: readonly string[] = Object.freeze(["34.142.135.39"]);
+const CORE_BLOCKED = new Set<string>(CORE_BLOCKED_IPS);
+/**
+ * TEST ONLY (refused outside vitest): add a stand-in address (e.g. 127.0.0.2, where a test server can count
+ * connections) that is treated exactly like a core-blocked one. Returns an undo function.
+ */
+export function addTestCoreBlocked(ip: string): () => void {
+  if (!process.env.VITEST) throw new Error("addTestCoreBlocked is only available under vitest");
+  const n = norm(ip); CORE_BLOCKED.add(n);
+  return () => { if (!CORE_BLOCKED_IPS.includes(n)) CORE_BLOCKED.delete(n); };
+}
+export function coreBlocked(ipRaw: string): boolean { return CORE_BLOCKED.has(norm(ipRaw)); }
+
 /** Why connecting to `ip` is forbidden, or undefined. */
 export function ipProblem(ipRaw: string, allowCidrs: string[] = []): string | undefined {
   const ip = norm(ipRaw);
   const fam = isIP(ip) === 6 ? "ipv6" : "ipv4";
   if (!isIP(ip)) return `not an IP: ${ip}`;
+  if (CORE_BLOCKED.has(ip)) return `${ip} is on the core blocklist (always refused)`;
   if (METADATA.has(ip)) return `cloud metadata address ${ip} is always denied`;
   if (!DENY.check(ip, fam)) return undefined;
   const allow = new BlockList();
@@ -323,4 +342,38 @@ export async function guardedWebSocket(cfg: ReplayConfig, url: string, o: { reso
     onClose: (cb) => { closeCbs.push(cb); },
     close: (code = 1000) => { if (closed) return; const b = Buffer.alloc(2); b.writeUInt16BE(code); sock.write(wsEncode(0x8, b)); finish(code); },
   };
+}
+
+/**
+ * Policy for flow-config URLs (http actions, waitFor readiness): the configured URL's own host:port is the only
+ * allowlisted host, and its first resolved address is the only private/loopback exception. Redirects to anything
+ * else fail the allowlist; the core blocklist and metadata rules apply as everywhere.
+ */
+export async function flowPolicy(url: string, resolver: Resolver = defaultResolver, timeoutMs = 10_000): Promise<ReplayConfig> {
+  const u = new URL(url);
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  const ip = norm(isIP(host) ? host : await resolver(host));
+  const cidr = isIP(ip) ? [`${ip}/${isIP(ip) === 6 ? 128 : 32}`] : [];
+  return { allowHosts: [u.host], allowCidrs: cidr, timeoutMs, maxBodyBytes: 1024 * 1024 };
+}
+
+/**
+ * Same guarded path as replay for any method: checkHop + pinned IP per hop, redirects handled manually (never by
+ * the HTTP client) and every hop re-checked. Throws ReplayRejectedError on a policy violation (nothing sent).
+ */
+export async function guardedFetch(cfg: ReplayConfig, url: string, o: { method?: string; headers?: Record<string, string>; body?: string; resolver?: Resolver; maxRedirects?: number } = {}): Promise<{ status: number; headers: Record<string, string>; body: string; hops: ReplayHop[] }> {
+  let u = url, method = (o.method ?? "GET").toUpperCase(), body = o.body === undefined ? undefined : Buffer.from(o.body);
+  const hops: ReplayHop[] = [];
+  const max = o.maxRedirects ?? cfg.maxRedirects ?? 5;
+  for (let i = 0; ; i++) {
+    const r = await guardedRequest(cfg, u, { method, headers: o.headers, body, resolver: o.resolver });
+    hops.push({ url: u, ip: r.ip, status: r.status });
+    if (r.status >= 300 && r.status < 400 && r.headers.location) {
+      if (i >= max) throw new ReplayRejectedError(`too many redirects (> ${max})`);
+      u = new URL(r.headers.location, u).toString();
+      if (r.status === 303 || ((r.status === 301 || r.status === 302) && method === "POST")) { method = "GET"; body = undefined; }
+      continue;
+    }
+    return { status: r.status, headers: r.headers, body: r.body.toString("utf8"), hops };
+  }
 }

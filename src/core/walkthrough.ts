@@ -18,6 +18,7 @@ import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
 import { checkHop, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { assertNoCoreBlockedTargets } from "./blocklist.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
 import {
@@ -735,6 +736,10 @@ export class WalkthroughCore {
         if (input.template) throw new CliRejectedError(`${c.name} takes argv, not a template`);
         argv = cliArgv(c, input.argv ?? []);
       }
+      // Core blocklist: no argv value / connector target (URI, name server, endpoint…) may name or resolve to it.
+      const resolveAll = this.deps.resolver ? async (h: string) => [await this.deps.resolver!(h)] : undefined;
+      try { await assertNoCoreBlockedTargets([...argv, ...(c.uri ? [c.uri] : []), ...(c.namesrvs ?? [])], resolveAll); }
+      catch (e) { throw new CliRejectedError((e as Error).message); }
       const root = resolve(w.sandbox.cwd);
       const cwd = resolve(root, input.cwd ?? ".");
       if (cwd !== root && !cwd.startsWith(root + sep)) throw new CliRejectedError(`cwd outside the walkthrough root: ${input.cwd}`);
