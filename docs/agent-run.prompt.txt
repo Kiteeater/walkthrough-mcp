@@ -1,0 +1,1 @@
+Follow skills/walkthrough/SKILL.md. Requirement: "订单详情接口返回的 total 必须等于各行项目 price×qty 之和；GET /api/orders/3 不得返回 5xx." Use config examples/walkthrough.local.json. Plan checks, run them with the walkthrough MCP tools, record findings with evidence, and render the report. Do NOT sign off and do NOT run `walkthrough sign-off`. Finish by printing the report path.
