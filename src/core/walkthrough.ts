@@ -17,7 +17,8 @@ import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
-import { checkHop, guardedGet, guardedRequest, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { checkHop, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { loadLoginState } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
 import {
   ALERTS_EVIDENCE, ALERT_WATCH_MAX_INTERVAL_S, ALERT_WATCH_MAX_POLLS, ALERT_WATCH_MAX_WINDOW_S, ALERT_WATCH_MIN_INTERVAL_S,
@@ -381,10 +382,12 @@ export class WalkthroughCore {
       // Pre-check gives a clear error before any browser starts; every navigation hop is re-checked by the guard.
       const guard = await this.pinnedGuard(cfg);
       await checkHop(cfg, new URL(input.url), guard.resolver); // same pinned resolution the browser will use
-      const p = await this.deps.capturer.page(input.url, guard);
+      // Login state (issue #19): read from the configured path now; its values are secrets for this capture.
+      const login = cfg.capture?.storageStatePath ? loadLoginState(cfg, cfg.capture.storageStatePath) : undefined;
+      const p = await this.deps.capturer.page(input.url, login ? { ...guard, storageState: login.storageState } : guard);
       // Every query value / userinfo of a BLOCKED URL is treated as a secret for this capture, wherever it shows up
       // (blocked evidence, HAR — incl. the page HTML that embeds it —, DOM text, command log, report).
-      const r = this.redactor.with(blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)));
+      const r = this.redactor.with([...blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)), ...(login?.secrets ?? [])]);
       const src = r.text(`playwright:${input.url}`);
       const out: Evidence[] = [];
       const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
@@ -398,12 +401,17 @@ export class WalkthroughCore {
       add("response", "http", "txt", r.text(p.text));
       // Blocked requests are evidence too: URL redacted (secret params, userinfo, token patterns), reason, type.
       const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) }));
+      const websockets = (p.websockets ?? []).slice(0, 200).map((x) => ({ ...x, url: redactUrl(x.url, r) }));
+      if (websockets.length) add("response", "http", "json", JSON.stringify({ format: "walkthrough-websockets/1", url: redactUrl(input.url, r), websockets }, null, 2));
       if (blocked.length) add("blocked", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
         navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
         subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: redactUrl(s.url, r) })),
         blocked: blocked.length,
+        websockets,
+        // counts only: no path, cookie names or values
+        ...(login ? { loginState: login.summary } : {}),
         evidenceIds: out.map((e) => e.id), executedBy: "core",
       });
       w.commandLogHead = { seq: log.seq, hash: log.hash };
@@ -432,7 +440,9 @@ export class WalkthroughCore {
     return {
       resolver,
       hostResolverRules: rules.join(", "),
-      fetch: (u) => guardedGet(cfg, u, { resolver }),
+      fetch: (u, headers) => guardedGet(cfg, u, { resolver, headers }),
+      // Issue #18: ws(s) URL judged exactly like http(s) (allowlist, IP rules, pinned resolution).
+      websocket: (u, headers) => guardedWebSocket(cfg, u, { resolver, headers }),
       // Read-only like replay: only GET/HEAD are forwarded; anything else is blocked (and recorded) by the capturer.
       request: (r) => { if (!READ_ONLY_METHODS.has(r.method.toUpperCase())) throw new ReplayRejectedError(`${r.method.toUpperCase()} blocked (read-only: capture_page forwards only GET/HEAD)`); return guardedRequest(cfg, r.url, { method: r.method, headers: r.headers, body: r.body, resolver, maxBodyBytes: 5 * 1024 * 1024 }); },
     };

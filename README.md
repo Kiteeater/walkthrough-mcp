@@ -484,8 +484,11 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     capture (a rebinding resolver can't move it later) and is also given to Chromium via
     `--host-resolver-rules` (`MAP <allowed host> <checked IP>`, everything else `~NOTFOUND`), so even a request that
     escaped interception could not resolve anything else.
-  - **WebSockets** are intercepted with `routeWebSocket` and closed (never connected): there's no IP-pinned
-    WebSocket proxy yet. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
+  - **WebSockets** (#18) are intercepted with `routeWebSocket`. A `ws://`/`wss://` URL is judged like `http(s)`
+    (allowlist, IP rules, the same pinned resolution); if it passes, walkthrough opens its **own IP-pinned
+    connection** and relays frames (Chromium never connects itself). Anything else is closed and recorded as
+    `type: websocket` in the blocked evidence. Connected sockets (redacted URL, IP, frame counts) are stored as a
+    `walkthrough-websockets/1` evidence item. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
     **Popups / new windows** are closed at once; their requests still go through the checks above.
   - Every blocked request is stored as core-executed evidence (`kind: blocked`: type, method, reason, URL with
     **every query param value (any name), userinfo and token patterns redacted**). Those values are also treated as
@@ -500,7 +503,17 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     recorded (`type: webrtc`, with the ICE server URLs).
   - Blocked-request evidence has its own evidence type `blocked`; `evaluate_check` never treats it as page content,
     so it can't satisfy or fail a ui text/HAR expectation.
-  - `capture_page` sends no test-account credentials, and the browser's own cookies are not forwarded by the fetcher.
+  - **Login state** (#19): `capture_page` sends no test-account credentials. To capture a page behind a login, set
+    `replay.capture.storageStatePath` to a user-provided Playwright storageState JSON (`{cookies, origins}`) or a bare
+    cookie array (export it from a **test** account, never production). Cookies / origins outside `allowHosts` are
+    dropped; the rest are loaded into the capture's browser context, so Chromium attaches them by its own per-origin
+    rules (the cookie header is dropped on redirect hops). Every cookie and localStorage value is a secret for the
+    capture (masked in HAR, DOM text, command log, report); the HAR keeps cookie names only. The file path is never
+    written anywhere; the command log records counts only (`loginState: {cookies, origins, droppedCookies,
+    droppedOrigins}`). Browsing stays read-only: no click/type/submit, and only `GET`/`HEAD` are forwarded.
+    ```json
+    { "replay": { "allowHosts": ["staging.example.test"], "capture": { "storageStatePath": "/path/to/test-login.json" } } }
+    ```
 - **Over-redaction note:** the `code` query parameter (OAuth authorization codes) is always masked, so a harmless
   `?code=…` (e.g. a product or error code) shows up as `[REDACTED]`; judge on the status/body instead.
 

