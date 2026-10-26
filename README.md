@@ -484,11 +484,20 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     capture (a rebinding resolver can't move it later) and is also given to Chromium via
     `--host-resolver-rules` (`MAP <allowed host> <checked IP>`, everything else `~NOTFOUND`), so even a request that
     escaped interception could not resolve anything else.
-  - **WebSockets** (#18) are intercepted with `routeWebSocket`. A `ws://`/`wss://` URL is judged like `http(s)`
-    (allowlist, IP rules, the same pinned resolution); if it passes, walkthrough opens its **own IP-pinned
-    connection** and relays frames (Chromium never connects itself). Anything else is closed and recorded as
-    `type: websocket` in the blocked evidence. Connected sockets (redacted URL, IP, frame counts) are stored as a
-    `walkthrough-websockets/1` evidence item. **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
+  - **WebSockets** (#18) are **off by default**: every one is intercepted with `routeWebSocket`, closed and
+    recorded as `type: websocket`. To enable a host, list it in `replay.capture.allowWebSocketHosts` (separate
+    from `allowHosts`; `host` or `host:port`). A listed host must still pass `allowHosts` and the IP rules (same
+    pinned resolution); walkthrough then opens its **own IP-pinned connection** and relays it, so Chromium never
+    connects itself. Enabled sockets are **receive-only**: a page→server message is dropped (recorded as
+    `type: websocket-message`) unless it exactly matches `replay.capture.webSocketOutbound["<host>"]` (e.g. a
+    subscribe frame). Every page→server message, forwarded or dropped, is stored redacted in a
+    `walkthrough-websockets/1` evidence item (binary: size + sha256 only) with per-socket counts.
+    ```json
+    { "replay": { "allowHosts": ["staging.example.test"], "capture": {
+        "allowWebSocketHosts": ["staging.example.test"],
+        "webSocketOutbound": { "staging.example.test": ["{\"op\":\"subscribe\",\"topic\":\"orders\"}"] } } } }
+    ```
+    **Service workers** are blocked on the browser context (`serviceWorkers: 'block'`) and, because that alone did not stop registration on secure-context origins in testing, `navigator.serviceWorker.register` is also replaced by an init script that rejects and records the attempt.
     **Popups / new windows** are closed at once; their requests still go through the checks above.
   - Every blocked request is stored as core-executed evidence (`kind: blocked`: type, method, reason, URL with
     **every query param value (any name), userinfo and token patterns redacted**). Those values are also treated as
@@ -505,10 +514,12 @@ The host agent drives the page itself (computer use / Playwright MCP) and hands 
     so it can't satisfy or fail a ui text/HAR expectation.
   - **Login state** (#19): `capture_page` sends no test-account credentials. To capture a page behind a login, set
     `replay.capture.storageStatePath` to a user-provided Playwright storageState JSON (`{cookies, origins}`) or a bare
-    cookie array (export it from a **test** account, never production). Cookies / origins outside `allowHosts` are
-    dropped; the rest are loaded into the capture's browser context, so Chromium attaches them by its own per-origin
-    rules (the cookie header is dropped on redirect hops). Every cookie and localStorage value is a secret for the
-    capture (masked in HAR, DOM text, command log, report); the HAR keeps cookie names only. The file path is never
+    cookie array (export it from a **test** account, never production). A cookie is kept only if its domain is an
+    allowlisted host or a parent of one that is not a public suffix (`.example.com` yes, `com` / `co.uk` no; a
+    built-in list, not the full PSL); origins outside `allowHosts` are dropped; the rest are loaded into the capture's browser context, so Chromium attaches them by its own per-origin
+    rules (the cookie header is dropped on redirect hops). Every cookie and localStorage value, and every `Set-Cookie` value received
+    during the capture, is a secret for the capture (values under 8 characters or trivial ones like `true` / `1` are
+    not used as redaction strings, so they don't mask unrelated text; HAR cookie values are masked regardless). Secrets are masked in HAR, DOM text, command log and report; the HAR keeps cookie names only. The file path is never
     written anywhere; the command log records counts only (`loginState: {cookies, origins, droppedCookies,
     droppedOrigins}`). Browsing stays read-only: no click/type/submit, and only `GET`/`HEAD` are forwarded.
     ```json

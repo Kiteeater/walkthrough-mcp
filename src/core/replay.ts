@@ -27,7 +27,16 @@ export interface ReplayConfig {
    * outside allowHosts are dropped; every cookie / localStorage value is redacted from all evidence; the path is never
    * written to evidence or the command log. Browsing stays read-only (GET/HEAD; no click/type/submit).
    */
-  capture?: { storageStatePath?: string };
+  capture?: {
+    storageStatePath?: string;
+    /**
+     * Issue #18: WebSockets are OFF unless the host (or host:port) is listed here. Separate from allowHosts; a listed
+     * host must ALSO pass allowHosts + the IP rules. Connected sockets are receive-only by default.
+     */
+    allowWebSocketHosts?: string[];
+    /** Per host (same keys as allowWebSocketHosts): exact text messages the page may send (e.g. a subscribe frame). */
+    webSocketOutbound?: Record<string, string[]>;
+  };
   maxRedirects?: number;
   timeoutMs?: number;
   maxBodyBytes?: number;

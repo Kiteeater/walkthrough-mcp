@@ -18,7 +18,7 @@ import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
 import { checkHop, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
-import { loadLoginState } from "./loginstate.js";
+import { loadLoginState, captureSecretValues } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
 import {
   ALERTS_EVIDENCE, ALERT_WATCH_MAX_INTERVAL_S, ALERT_WATCH_MAX_POLLS, ALERT_WATCH_MAX_WINDOW_S, ALERT_WATCH_MIN_INTERVAL_S,
@@ -387,7 +387,7 @@ export class WalkthroughCore {
       const p = await this.deps.capturer.page(input.url, login ? { ...guard, storageState: login.storageState } : guard);
       // Every query value / userinfo of a BLOCKED URL is treated as a secret for this capture, wherever it shows up
       // (blocked evidence, HAR — incl. the page HTML that embeds it —, DOM text, command log, report).
-      const r = this.redactor.with([...blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)), ...(login?.secrets ?? [])]);
+      const r = this.redactor.with([...blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)), ...(login?.secrets ?? []), ...captureSecretValues(p.setCookieValues ?? [])]);
       const src = r.text(`playwright:${input.url}`);
       const out: Evidence[] = [];
       const add = (type: Evidence["type"], kind: EvidenceKind, ext: string, data: Buffer | string) => {
@@ -402,7 +402,10 @@ export class WalkthroughCore {
       // Blocked requests are evidence too: URL redacted (secret params, userinfo, token patterns), reason, type.
       const blocked = (p.blocked ?? []).slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) }));
       const websockets = (p.websockets ?? []).slice(0, 200).map((x) => ({ ...x, url: redactUrl(x.url, r) }));
-      if (websockets.length) add("response", "http", "json", JSON.stringify({ format: "walkthrough-websockets/1", url: redactUrl(input.url, r), websockets }, null, 2));
+      // Every page→server message (forwarded or dropped) is evidence, redacted; binary payloads by size + sha256 only.
+      const messages = (p.wsMessages ?? []).slice(0, 1000).map((m) => ({ url: redactUrl(m.url, r), direction: "page→server", forwarded: m.forwarded, bytes: m.bytes,
+        ...(m.binary ? { binary: true, sha256: createHash("sha256").update(Buffer.from(m.data, "base64")).digest("hex") } : { data: r.text(redactUrlsIn(m.data.slice(0, 64 * 1024), r)) }) }));
+      if (websockets.length || messages.length) add("response", "http", "json", JSON.stringify({ format: "walkthrough-websockets/1", url: redactUrl(input.url, r), websockets, messages }, null, 2));
       if (blocked.length) add("blocked", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
@@ -442,7 +445,14 @@ export class WalkthroughCore {
       hostResolverRules: rules.join(", "),
       fetch: (u, headers) => guardedGet(cfg, u, { resolver, headers }),
       // Issue #18: ws(s) URL judged exactly like http(s) (allowlist, IP rules, pinned resolution).
-      websocket: (u, headers) => guardedWebSocket(cfg, u, { resolver, headers }),
+      // Issue #18: off unless capture.allowWebSocketHosts lists the host; then allowHosts + IP rules still apply.
+      websocket: async (u, headers) => {
+        const url = new URL(u);
+        const key = wsHostKey(cfg.capture?.allowWebSocketHosts ?? [], url);
+        if (!key) throw new ReplayRejectedError(`websocket to ${url.host} blocked (WebSockets are off by default; host not in capture.allowWebSocketHosts)`);
+        const conn = await guardedWebSocket(cfg, u, { resolver, headers });
+        return Object.assign(conn, { outbound: [...(cfg.capture?.webSocketOutbound?.[key] ?? [])] });
+      },
       // Read-only like replay: only GET/HEAD are forwarded; anything else is blocked (and recorded) by the capturer.
       request: (r) => { if (!READ_ONLY_METHODS.has(r.method.toUpperCase())) throw new ReplayRejectedError(`${r.method.toUpperCase()} blocked (read-only: capture_page forwards only GET/HEAD)`); return guardedRequest(cfg, r.url, { method: r.method, headers: r.headers, body: r.body, resolver, maxBodyBytes: 5 * 1024 * 1024 }); },
     };
@@ -1087,4 +1097,10 @@ export class WalkthroughCore {
   }
 
   redact(s: string): string { return this.redactor.text(s); }
+}
+
+/** Matching key in capture.allowWebSocketHosts for a ws(s) URL: exact host:port, or bare host (any port). */
+function wsHostKey(list: string[], url: URL): string | undefined {
+  const host = url.hostname.toLowerCase(), port = url.port || (url.protocol === "wss:" ? "443" : "80");
+  return list.find((h) => h.toLowerCase() === `${host}:${port}`) ?? list.find((h) => h.toLowerCase() === host);
 }

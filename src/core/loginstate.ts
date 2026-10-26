@@ -15,6 +15,18 @@ export interface LoadedLoginState {
 
 const SAME_SITE = new Set(["Strict", "Lax", "None"]);
 
+/** Values shorter than this (or trivially common like `true`) are not used as redaction secrets: they would mask
+ * unrelated text everywhere. Cookie values in the HAR are masked by field regardless of length. */
+export const MIN_SECRET_LENGTH = 8;
+const TRIVIAL = /^(true|false|null|undefined|yes|no|on|off|[0-9]{1,7})$/i;
+export function captureSecretValues(vals: string[]): string[] {
+  return [...new Set(vals.filter((v) => typeof v === "string" && v.length >= MIN_SECRET_LENGTH && !TRIVIAL.test(v)))];
+}
+
+/** Multi-label public suffixes we refuse as cookie parents (no PSL dependency; single-label TLDs are always refused). */
+const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "com.tw", "org.tw", "net.tw", "edu.tw", "gov.tw", "com.hk", "com.au", "net.au", "org.au", "co.jp", "ne.jp", "or.jp", "co.kr", "com.br", "com.sg", "co.nz", "co.in", "github.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "appspot.com", "cloudfront.net", "azurewebsites.net"]);
+export function isPublicSuffix(d: string): boolean { return !d.includes(".") || PUBLIC_SUFFIXES.has(d); }
+
 function allowedHostnames(cfg: ReplayConfig): string[] {
   return cfg.allowHosts.map((h) => h.toLowerCase().replace(/:\d+$/, "").replace(/^\[|\]$/g, ""));
 }
@@ -22,7 +34,8 @@ function allowedHostnames(cfg: ReplayConfig): string[] {
 /** Cookie domain matches an allowlisted hostname (RFC 6265 domain-match, leading dot = that host and subdomains). */
 function cookieDomainAllowed(domain: string, hosts: string[]): boolean {
   const d = domain.toLowerCase().replace(/^\./, "");
-  return hosts.some((h) => h === d || h.endsWith(`.${d}`));
+  // exact host, or a parent domain of an allowlisted host that is not a public suffix (`.example.com` ok, `com` not)
+  return hosts.some((h) => h === d || (h.endsWith(`.${d}`) && !isPublicSuffix(d)));
 }
 
 function originAllowed(origin: string, hosts: string[], cfg: ReplayConfig): boolean {
@@ -63,5 +76,5 @@ export function loadLoginState(cfg: ReplayConfig, path: string, readFile: (p: st
     if (typeof o?.origin !== "string" || !originAllowed(o.origin, hosts, cfg)) { droppedOrigins++; continue; }
     origins.push({ origin: o.origin, localStorage: ls });
   }
-  return { storageState: { cookies, origins }, secrets: [...new Set(secrets)], summary: { cookies: cookies.length, origins: origins.length, droppedCookies, droppedOrigins } };
+  return { storageState: { cookies, origins }, secrets: captureSecretValues(secrets), summary: { cookies: cookies.length, origins: origins.length, droppedCookies, droppedOrigins } };
 }

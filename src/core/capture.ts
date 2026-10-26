@@ -18,7 +18,21 @@ export interface PageCapture {
   /** Requests that were NOT allowed (never reached the network). */
   blocked: BlockedRequest[];
   /** WebSockets that passed the guard (allowlisted host, checked + pinned IP) and were connected. */
-  websockets?: { url: string; ip: string; sent: number; received: number }[];
+  websockets?: { url: string; ip: string; sent: number; dropped: number; received: number }[];
+  /** Every message the page tried to send on a connected WebSocket, forwarded or dropped (core redacts before storing). */
+  wsMessages?: WsPageMessage[];
+  /** Values of Set-Cookie headers the guard received during the capture (secrets for the capture; never stored). */
+  setCookieValues?: string[];
+}
+
+export interface WsPageMessage {
+  url: string;
+  /** true: matched the per-host outbound allowlist exactly and was sent; false: dropped (receive-only). */
+  forwarded: boolean;
+  /** Text payload (binary: base64). */
+  data: string;
+  binary: boolean;
+  bytes: number;
 }
 
 /** Playwright storageState subset (cookies + localStorage per origin). */
@@ -39,7 +53,10 @@ export interface NavigationGuard {
   /** Chromium --host-resolver-rules: allowlisted hosts mapped to their checked IPs, everything else ~NOTFOUND. */
   hostResolverRules?: string;
   /** WebSocket pre-check (issue #18): allowlist + IP rules on the ws(s) URL; returns the pinned IP. Throw to block. */
-  websocket?(url: string, headers?: Record<string, string>): Promise<import("./replay.js").GuardedWebSocket>;
+  websocket?(url: string, headers?: Record<string, string>): Promise<import("./replay.js").GuardedWebSocket & {
+    /** Exact text messages the page may send on this socket (capture.webSocketOutbound); everything else is dropped. */
+    outbound: string[];
+  }>;
   /** Login state loaded into the browser context (issue #19). Cookies are sent by Chromium's own per-origin rules. */
   storageState?: LoginStorageState;
 }
@@ -88,6 +105,12 @@ export class PlaywrightCapturer implements Capturer {
     const subresources: PageCapture["subresources"] = [];
     const blocked: BlockedRequest[] = [];
     const websockets: NonNullable<PageCapture["websockets"]> = [];
+    const wsMessages: WsPageMessage[] = [];
+    const setCookieValues: string[] = [];
+    const noteSetCookie = (h: Record<string, string>) => {
+      for (const [k, v] of Object.entries(h)) if (k.toLowerCase() === "set-cookie")
+        for (const part of String(v).split(/,(?=\s*[^;,=\s]+=)/)) { const m = /^\s*[^=;]+=([^;]*)/.exec(part); if (m?.[1]) setCookieValues.push(m[1].trim()); }
+    };
     const block = (u: string, method: string, type: string, e: unknown) => blocked.push({ url: u, method, type, reason: String((e as Error)?.message ?? e) });
     let mainBlocked: Error | undefined;
     let finalUrl: string | undefined;
@@ -128,9 +151,19 @@ export class PlaywrightCapturer implements Capturer {
           const hu = new URL(u); hu.protocol = hu.protocol === "wss:" ? "https:" : "http:";
           const jar = (await ctx.cookies(hu.toString())).map((c) => `${c.name}=${c.value}`).join("; ");
           const conn = await guard.websocket(u, jar ? { cookie: jar } : undefined);
-          const rec = { url: u, ip: conn.ip, sent: 0, received: 0 };
+          const rec = { url: u, ip: conn.ip, sent: 0, dropped: 0, received: 0 };
           websockets.push(rec);
-          ws.onMessage((m) => { rec.sent++; conn.send(m); });
+          // Receive-only by default: a page→server message goes out only if it EXACTLY matches the host's outbound
+          // allowlist (e.g. a subscribe handshake). Every attempt is kept (core redacts it into evidence).
+          ws.onMessage((m) => {
+            const binary = typeof m !== "string";
+            const data = binary ? Buffer.from(m as Buffer).toString("base64") : (m as string);
+            const forwarded = !binary && conn.outbound.includes(m as string);
+            wsMessages.push({ url: u, forwarded, data, binary, bytes: binary ? (m as Buffer).length : Buffer.byteLength(m as string) });
+            if (forwarded) { rec.sent++; conn.send(m); return; }
+            rec.dropped++;
+            block(u, "SEND", "websocket-message", "page→server WebSocket message dropped (receive-only; not in capture.webSocketOutbound)");
+          });
           conn.onMessage((m) => { rec.received++; ws.send(m); });
           ws.onClose((code) => conn.close(code && code >= 1000 && code < 5000 && code !== 1005 && code !== 1006 ? code : 1000));
           conn.onClose((code) => { void ws.close({ code: code === 1005 || code === 1006 ? 1000 : code }).catch(() => undefined); });
@@ -155,6 +188,7 @@ export class PlaywrightCapturer implements Capturer {
               // Cookie header as Chromium computed it for THIS url (login state, per-origin rules); dropped on hops.
               const cookie = hop === 0 ? (await req.allHeaders()).cookie : undefined;
               const r = await guard.fetch(u, cookie ? { cookie } : undefined);
+              noteSetCookie(r.headers);
               navigations.push({ url: u, status: r.status, ip: r.ip });
               if (r.status >= 300 && r.status < 400 && r.headers.location) {
                 if (hop >= MAX_HOPS) throw new Error("too many redirects");
@@ -192,6 +226,7 @@ export class PlaywrightCapturer implements Capturer {
           let body = req.postDataBuffer() ?? undefined;
           for (let hop = 0; ; hop++) {
             const r = await guard.request({ url: u, method, headers, body });
+            noteSetCookie(r.headers);
             subresources.push({ url: u, method, type, status: r.status, ip: r.ip });
             if (r.status >= 300 && r.status < 400 && r.headers.location) {
               if (hop >= MAX_HOPS) throw new Error("too many redirects");
@@ -214,7 +249,7 @@ export class PlaywrightCapturer implements Capturer {
       const screenshot = await page.screenshot({ fullPage: true });
       const text = await page.innerText("body").catch(() => "");
       await ctx.close(); // flushes the HAR
-      return { screenshot, har: readFileSync(harPath, "utf8"), text, navigations, subresources, blocked, websockets };
+      return { screenshot, har: readFileSync(harPath, "utf8"), text, navigations, subresources, blocked, websockets, wsMessages, setCookieValues };
     } finally {
       await browser.close();
       rmSync(dir, { recursive: true, force: true });
