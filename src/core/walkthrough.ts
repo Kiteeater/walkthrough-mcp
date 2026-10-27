@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync, realpathSync, statSync, rmSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync, writeSync, existsSync, realpathSync, statSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
 import { execDecision } from "./execpolicy.js";
@@ -191,7 +191,20 @@ export class WalkthroughCore {
   }
 
   private save(w: Walkthrough): void {
-    writeFileSync(join(this.dir(w.id), "walkthrough.json"), JSON.stringify(this.redactor.value(w), null, 2));
+    // Never overwrite the manifest in place: a process dying during write must leave the previous
+    // snapshot readable. The random temporary name also avoids concurrent writers clobbering one
+    // another before the walkthrough lock is acquired (for example during recovery).
+    const file = join(this.dir(w.id), "walkthrough.json");
+    const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+    const body = JSON.stringify(this.redactor.value(w), null, 2);
+    try {
+      const fd = openSync(tmp, "w", 0o600);
+      try { writeSync(fd, Buffer.from(body, "utf8")); fsyncSync(fd); } finally { closeSync(fd); }
+      renameSync(tmp, file);
+    } catch (e) {
+      try { rmSync(tmp, { force: true }); } catch { /* preserve the original failure */ }
+      throw e;
+    }
   }
 
   private ts(): string { return this.now().toISOString(); }
@@ -316,11 +329,27 @@ export class WalkthroughCore {
       ev = { id: evId, type: "logs", kind: "log", path: `evidence/${evId}.log`, source: `${w.sandbox.backend === "local" ? "local" : "docker"}:${input.service}`, executedBy: "core" };
       const raw = await this.deps.sandboxFactory(w.sandbox, w.id).logs(input.service);
       const key = `${id}\0${input.service}`;
-      const prev = this.logMarks.get(key) ?? "";
+      // Keep a compact cursor in the manifest as well as the process-local full mark. A
+      // restart must still produce a true delta, without copying the entire (possibly
+      // secret-bearing) log into walkthrough.json.
+      type LogCursor = { length: number; prefixSha256: string };
+      const persisted = w as Walkthrough & { logCursors?: Record<string, LogCursor | string> };
+      const memoryPrev = this.logMarks.get(key);
+      const cursor = persisted.logCursors?.[input.service];
+      const cursorLength = typeof cursor === "string" ? cursor.length : cursor?.length;
+      const cursorHash = typeof cursor === "string" ? createHash("sha256").update(cursor).digest("hex") : cursor?.prefixSha256;
+      const hasPersistedPrefix = input.delta && cursorLength !== undefined && cursorHash !== undefined && raw.length >= cursorLength &&
+        createHash("sha256").update(raw.slice(0, cursorLength)).digest("hex") === cursorHash;
       this.logMarks.set(key, raw);
+      persisted.logCursors ??= {};
+      persisted.logCursors[input.service] = { length: raw.length, prefixSha256: createHash("sha256").update(raw).digest("hex") };
       // Stack traces carry absolute host paths; under the walkthrough root they are written repo-relative.
       const rootPrefix = resolve(this.deps.root) + sep;
-      writeFileSync(abs(ev.path), this.redactor.text(input.delta && raw.startsWith(prev) ? raw.slice(prev.length) : raw).split(rootPrefix).join(""));
+      const delta = input.delta
+        ? memoryPrev !== undefined && raw.startsWith(memoryPrev) ? raw.slice(memoryPrev.length)
+          : hasPersistedPrefix ? raw.slice(cursorLength!) : raw
+        : raw;
+      writeFileSync(abs(ev.path), this.redactor.text(delta).split(rootPrefix).join(""));
     } else {
       if (!KINDS.includes(input.kind)) throw new Error(`invalid evidence kind: ${input.kind}`);
       if (!input.source?.tool) throw new Error("source.tool is required");
@@ -481,7 +510,8 @@ export class WalkthroughCore {
     for (const h of allowedHostnames(cfg)) {
       if (isIP(h.replace(/^\[|\]$/g, ""))) continue;
       try {
-        const ip = await checkHop(cfg, new URL(`http://${h}/`), resolver).catch(() => checkHop(cfg, new URL(`https://${h}/`), resolver));
+        const authority = isIP(h) === 6 ? `[${h}]` : h;
+        const ip = await checkHop(cfg, new URL(`http://${authority}/`), resolver).catch(() => checkHop(cfg, new URL(`https://${authority}/`), resolver));
         rules.push(`MAP ${h} ${isIP(ip) === 6 ? `[${ip}]` : ip}`);
       } catch { /* not allowed / unresolvable: stays ~NOTFOUND for Chromium; our fetcher rejects it per request */ }
     }
@@ -509,22 +539,28 @@ export class WalkthroughCore {
    * response as core-executed evidence (redacted, sha256) + a hash-chained commands.jsonl entry. The endpoint is
    * subject to replay.allowHosts and the IP policy; the bearer token is redacted from everything written.
    */
-  queryMetrics(id: string, input: { query: string; checkId?: string; time?: string }): Promise<Evidence> {
-    return this.withLock(id, async () => {
-      const prom = this.deps.prometheus;
-      if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
-      const cfg = this.deps.replay;
-      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("query_metrics needs replay.allowHosts (same policy as replay)");
+  async queryMetrics(id: string, input: { query: string; checkId?: string; time?: string }): Promise<Evidence> {
+    const prom = this.deps.prometheus;
+    if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
+    const cfg = this.deps.replay;
+    if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("query_metrics needs replay.allowHosts (same policy as replay)");
+    const env = this.deps.env ?? process.env;
+    const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
+    // Validate the current walkthrough under the lock, then release it while the network request runs. The commit
+    // below re-acquires the lock and re-checks sign-off, so a concurrent writer cannot corrupt the ledger.
+    await this.withLock(id, () => {
       const w = this.load(id);
       if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
-      const env = this.deps.env ?? process.env;
-      const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
-      let r;
-      try {
-        r = await promInstantQuery(prom, cfg, input.query, { time: input.time, resolver: this.deps.resolver, env });
-      } catch (e) {
-        throw new (e instanceof Error ? (e.constructor as ErrorConstructor) : Error)(this.redactor.with([token, token && `Bearer ${token}`]).text(String((e as Error).message)));
-      }
+    });
+    let r;
+    try {
+      r = await promInstantQuery(prom, cfg, input.query, { time: input.time, resolver: this.deps.resolver, env });
+    } catch (e) {
+      throw new (e instanceof Error ? (e.constructor as ErrorConstructor) : Error)(this.redactor.with([token, token && `Bearer ${token}`]).text(String((e as Error).message)));
+    }
+    return this.withLock(id, () => {
+      const w = this.load(id);
+      if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
       const red = this.redactor.with([...r.sentSecrets, token]);
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.json`;

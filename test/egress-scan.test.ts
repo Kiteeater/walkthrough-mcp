@@ -51,7 +51,7 @@ const OWNERS: Record<string, { rules: Rule[]; why: string }> = {
 
 /** KNOWN violations that exist today. Not fixed in this PR (move-only); new ones fail the test. */
 const KNOWN: Record<string, { rules: Rule[]; why: string }> = {
-  "src/core/alerts.ts": { rules: ["process"], why: "KNOWN #45: spawnDetachedPoller spawns `walkthrough watch _poll` with the full process.env (should go through sandbox/allowlistEnv)" },
+  "src/core/alerts.ts": { rules: ["process"], why: "KNOWN #45: spawnDetachedPoller owns the detached poller process; its environment is explicitly reduced before spawn" },
   "src/demo-agent/trace-run.ts": { rules: ["net"], why: "KNOWN #46: direct fetch to LANGFUSE_URL, not through the egress guard" },
   "examples/demo.mjs": { rules: ["process"], why: "#47 example launcher: spawns examples/trace-demo/run.mjs" },
   "examples/regen-output-trace.mjs": { rules: ["process"], why: "#47 dev script: regenerates example output" },

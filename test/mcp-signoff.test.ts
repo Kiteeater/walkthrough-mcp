@@ -18,6 +18,10 @@ describe("MCP surface: no sign_off", () => {
       expect(names.some((n) => /sign/i.test(n))).toBe(false);
       const started = await client.callTool({ name: "start_walkthrough", arguments: { title: "t", cwd: root, up: "true", down: "true" } });
       const id = JSON.parse((started.content as { text: string }[])[0].text).id as string;
+      const bad = await client.callTool({ name: "run_in_sandbox", arguments: { id: "missing", action: "up" } });
+      expect(bad.isError).toBe(true);
+      const errorText = (bad.content as { text: string }[])[0].text;
+      expect(JSON.parse(errorText).error).toMatchObject({ code: "WALKTHROUGH_ERROR" });
       let refused = false, res: unknown;
       try { res = await client.callTool({ name: "sign_off", arguments: { id, decision: "accept" } }); refused = (res as { isError?: boolean }).isError === true; }
       catch (e) { refused = /not found|unknown|sign_off/i.test(String((e as Error).message)); }

@@ -22,6 +22,8 @@ let srv: http.Server, port = 0;
 const hits: string[] = [];
 const methods: string[] = [];
 let rtcPort = 0;
+const RTC_HOST = "::1";
+const RTC_URL_HOST = `[${RTC_HOST}]`;
 beforeAll(async () => {
   srv = http.createServer((req, res) => {
     hits.push(req.url ?? "");
@@ -41,8 +43,8 @@ setTimeout(() => window.open("http://evil.example/popup"), 10);
 </script>`);
     if (req.url === "/rtc") return html(`<h1>rtc page</h1><p id="r">rtc:pending</p><iframe srcdoc="<p>child</p>"></iframe><script>
 const out = [];
-for (const C of [window.RTCPeerConnection, window.webkitRTCPeerConnection, document.querySelector("iframe").contentWindow.RTCPeerConnection]) {
-  try { const pc = new C({ iceServers: [{ urls: "stun:127.0.0.2:${rtcPort}" }, { urls: "turn:127.0.0.2:${rtcPort}?transport=tcp", username: "u", credential: "c" }] });
+  for (const C of [window.RTCPeerConnection, window.webkitRTCPeerConnection, document.querySelector("iframe").contentWindow.RTCPeerConnection]) {
+  try { const pc = new C({ iceServers: [{ urls: "stun:${RTC_URL_HOST}:${rtcPort}" }, { urls: "turn:${RTC_URL_HOST}:${rtcPort}?transport=tcp", username: "u", credential: "c" }] });
         pc.createDataChannel("x"); pc.createOffer().then((o) => pc.setLocalDescription(o)); out.push("OPEN"); }
   catch (e) { out.push("blocked"); }
 }
@@ -164,12 +166,12 @@ describe("WebRTC", () => {
     const dgram = await import("node:dgram");
     const net = await import("node:net");
     let udp = 0, tcp = 0;
-    const u = dgram.createSocket("udp4");
+    const u = dgram.createSocket("udp6");
     u.on("message", () => { udp++; });
-    await new Promise<void>((r) => u.bind(0, "127.0.0.2", r));
+    await new Promise<void>((r) => u.bind(0, RTC_HOST, r));
     rtcPort = u.address().port;
     const t = net.createServer((c) => { tcp++; c.destroy(); });
-    await new Promise<void>((r) => t.listen(rtcPort, "127.0.0.2", r));
+    await new Promise<void>((r) => t.listen(rtcPort, RTC_HOST, r));
     try {
       const { core } = mk(async () => "127.0.0.1");
       const id = await planned(core);
@@ -183,7 +185,7 @@ describe("WebRTC", () => {
       const b = evs.find((e) => e.type === "blocked")!;
       const list = JSON.parse(readFileSync(join(core.dir(id), b.path), "utf8")).blocked as { type: string; url: string }[];
       expect(list.filter((x) => x.type === "webrtc").length).toBeGreaterThanOrEqual(3);
-      expect(list.find((x) => x.type === "webrtc")!.url).toMatch(/RTCPeerConnection stun:127\.0\.0\.2/);
+      expect(list.find((x) => x.type === "webrtc")!.url).toMatch(/RTCPeerConnection stun:\[::1\]/);
     } finally { u.close(); t.close(); }
   }, 90_000);
 });

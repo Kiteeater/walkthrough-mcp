@@ -7,7 +7,19 @@ export interface AllowHostEntry { host: string; port?: string }
 
 /** `Shop.Example:8080` → {host: "shop.example", port: "8080"}. Only a trailing `:<digits>` is a port. */
 export function parseAllowHost(entry: string): AllowHostEntry {
-  const [host, port] = entry.toLowerCase().split(/:(?=\d+$)/);
+  const value = entry.toLowerCase();
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    if (end > 0) {
+      const host = value.slice(1, end);
+      const suffix = value.slice(end + 1);
+      return /^:\d+$/.test(suffix) ? { host, port: suffix.slice(1) } : { host };
+    }
+  }
+  // A bare IPv6 literal has multiple colons and cannot safely carry a port;
+  // callers must use the bracketed form when they need `host:port`.
+  if (value.split(":").length > 2) return { host: value };
+  const [host, port] = value.split(/:(?=\d+$)/);
   return port === undefined ? { host } : { host, port };
 }
 

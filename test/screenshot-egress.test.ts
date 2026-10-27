@@ -1,6 +1,6 @@
 // B1: capture_evidence type=screenshot (and flow screenshot captures) must take the same guarded browser path as
 // capture_page. SAFETY: no browser in this file ever navigates to the real production IP. Browser "must be blocked"
-// targets are a local stand-in (127.0.0.2, marked core-blocked via addTestCoreBlocked) with a server counting every
+// targets are a local stand-in (::1, marked core-blocked via addTestCoreBlocked) with a server counting every
 // connection; the real address only appears in a pure guard check that fails before any browser starts.
 import { createRequire } from "node:module";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,7 +21,8 @@ if (process.env.REQUIRE_CHROMIUM && !hasChromium) throw new Error("REQUIRE_CHROM
 
 const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
 const PROD = CORE_BLOCKED_IPS[0];
-const STANDIN = "127.0.0.2";
+const STANDIN = "::1";
+const STANDIN_URL = `[${STANDIN}]`;
 
 let srv: http.Server, port = 0, srvHits = 0;
 const SECRET = "SHOTblockedTok9917";
@@ -33,8 +34,8 @@ const core = (replay: ReplayConfig | undefined, capturer: Capturer = new Playwri
 beforeAll(async () => {
   srv = http.createServer((req, res) => {
     srvHits++;
-    if (req.url === "/with-blocked") { res.writeHead(200, { "content-type": "text/html" }); return res.end(`<h1>page</h1><img src="http://${STANDIN}:${trapPort}/x.png?token=${SECRET}">`); }
-    if (req.url === "/redir") { res.writeHead(302, { location: `http://${STANDIN}:${trapPort}/` }); return res.end(); }
+    if (req.url === "/with-blocked") { res.writeHead(200, { "content-type": "text/html" }); return res.end(`<h1>page</h1><img src="http://${STANDIN_URL}:${trapPort}/x.png?token=${SECRET}">`); }
+    if (req.url === "/redir") { res.writeHead(302, { location: `http://${STANDIN_URL}:${trapPort}/` }); return res.end(); }
     res.writeHead(200, { "content-type": "text/html" }); res.end("<h1>ok</h1>");
   });
   await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
@@ -49,7 +50,7 @@ afterAll(async () => { undo(); await new Promise((r) => srv.close(r)); await new
 
 // Flow hosts must be listed in replay.allowHosts; no allowCidrs, so the loopback exception comes from the flow policy.
 const listed = (): ReplayConfig => ({ allowHosts: [`127.0.0.1:${port}`] });
-const both = (): ReplayConfig => ({ allowHosts: [`127.0.0.1:${port}`, `${STANDIN}:${trapPort}`], allowCidrs: ["127.0.0.1/32", `${STANDIN}/32`] });
+const both = (): ReplayConfig => ({ allowHosts: [`127.0.0.1:${port}`, `${STANDIN_URL}:${trapPort}`], allowCidrs: ["127.0.0.1/32", `${STANDIN}/128`] });
 
 describe("B1: guard unit check (no browser)", () => {
   it("the real production IP is refused by checkHop even when allowlisted", async () => {
@@ -89,7 +90,7 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
     const c = core(both());
     const w = c.startWalkthrough({ title: "t", sandbox: SB });
     const before = trapHits;
-    const err = await c.captureEvidence(w.id, { type: "screenshot", url: `http://${STANDIN}:${trapPort}/` }).catch((e) => e);
+    const err = await c.captureEvidence(w.id, { type: "screenshot", url: `http://${STANDIN_URL}:${trapPort}/` }).catch((e) => e);
     expect(err).toBeInstanceOf(ReplayRejectedError);
     expect(String(err.message)).toMatch(/core blocklist/);
     expect(trapHits).toBe(before);
@@ -138,7 +139,7 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
     const entry = raw.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "capture_screenshot");
     expect(entry).toMatchObject({ evidenceIds: [ev.id], executedBy: "core" });
     expect(entry.blockedCount).toBeGreaterThanOrEqual(1);
-    expect(entry.blocked.some((b: { url: string }) => b.url.includes(`${STANDIN}:${trapPort}/x.png`))).toBe(true);
+    expect(entry.blocked.some((b: { url: string }) => b.url.includes(`${STANDIN_URL}:${trapPort}/x.png`))).toBe(true);
     expect(c.verifyCommandLog(w.id).ok).toBe(true);
   }, 60_000);
 });
@@ -155,8 +156,8 @@ describe("B1: flow policy is internal", () => {
   });
   it("the flow path derives its own policy (own host only) and still refuses core-blocked targets before the browser", async () => {
     let called = 0;
-    const c = core({ allowHosts: [`${STANDIN}:${trapPort}`] }, { page: async () => { called++; throw new Error("must not run"); } });
-    await expect(runFlow(c, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://${STANDIN}:${trapPort}/` }], claims: [] }, { skipWait: true })).rejects.toThrow(/core blocklist/);
+    const c = core({ allowHosts: [`${STANDIN_URL}:${trapPort}`] }, { page: async () => { called++; throw new Error("must not run"); } });
+    await expect(runFlow(c, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://${STANDIN_URL}:${trapPort}/` }], claims: [] }, { skipWait: true })).rejects.toThrow(/core blocklist/);
     expect(called).toBe(0);
   });
   it("the flow capability is not reachable from the instance, its prototype or the package entry", async () => {

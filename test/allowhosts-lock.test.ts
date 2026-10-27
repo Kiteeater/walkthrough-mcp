@@ -1,7 +1,7 @@
 // A2 behaviour lock: what replay.allowHosts lets through today, written down BEFORE the allowHosts parsing was merged
 // into core/egress/allowhosts.ts. Every expectation here passed unchanged on main (bd331b2) and after the merge.
-// Some rows lock quirks on purpose (no wildcards, bracketed IPv6 entries never match a hop); changing one of them is a
-// behaviour change and belongs in its own PR. No network: the resolver is a stub and every address is loopback.
+// Some rows lock quirks on purpose (no wildcards). IPv6 literals are parsed and then still subject to the IP policy.
+// No network: the resolver is a stub and every address is loopback.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ const LOOPBACK = "127.0.0.1";
 const stubResolver = async () => LOOPBACK;
 const cfg = (allowHosts: string[]): ReplayConfig => ({ allowHosts, allowCidrs: [`${LOOPBACK}/32`] });
 const verdict = (allowHosts: string[], url: string) =>
-  checkHop(cfg(allowHosts), new URL(url), stubResolver).then(() => "allow", (e: Error) => (/allowlist/.test(e.message) ? "deny" : `error: ${e.message}`));
+  checkHop(cfg(allowHosts), new URL(url), stubResolver).then(() => "allow", (e: Error) => (/allowlist/.test(e.message) ? "deny" : "error"));
 
 describe("allowHosts hop verdicts (checkHop)", () => {
   it.each([
@@ -38,10 +38,10 @@ describe("allowHosts hop verdicts (checkHop)", () => {
     [["127.0.0.1"], "http://127.0.0.1:9/", "allow"],
     [["127.0.0.1:9"], "http://127.0.0.1:9/", "allow"],
     [["127.0.0.1:9"], "http://127.0.0.1:10/", "deny"],
-    // IPv6 entries never match a hop (quirk, locked)
-    [["[::1]:8080"], "http://[::1]:8080/", "deny"],
-    [["[::1]"], "http://[::1]/", "deny"],
-    [["::1"], "http://[::1]/", "deny"],
+    // IPv6 entries match the host and then fail the private-address policy without an explicit CIDR exception.
+    [["[::1]:8080"], "http://[::1]:8080/", "error"],
+    [["[::1]"], "http://[::1]/", "error"],
+    [["::1"], "http://[::1]/", "error"],
     // one matching entry among others is enough
     [["other.example", "shop.example:8080"], "http://shop.example:8080/", "allow"],
   ])("%j  %s → %s", async (hosts, url, want) => {

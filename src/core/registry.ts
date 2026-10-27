@@ -18,13 +18,24 @@ export interface SourceContext {
   resolver?: (host: string) => Promise<string>;
 }
 
+/** How an action completed. `blocked` means the core policy refused to send it. */
+export type ActionOutcomeKind = "ok" | "blocked" | "error";
+
 /** Result of running an action source; `evidenceText` is stored as sha256 `response` evidence. */
 export interface ActionOutcome {
+  /** Optional for third-party sources; built-in sources always set this field. */
+  kind?: ActionOutcomeKind;
   status?: number;
   exitCode?: number;
   body: string;
   evidenceText: string;
   repro: string;
+  /** Human-readable failure reason for blocked/error outcomes. */
+  reason?: string;
+  /** Human-readable policy refusal reason; present when `kind` is `blocked`. */
+  blockedReason?: string;
+  /** Whether retrying the same action may succeed (transport failures only). */
+  retryable?: boolean;
 }
 
 export interface ActionSource<A extends CheckAction = CheckAction> {

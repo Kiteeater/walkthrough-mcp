@@ -12,7 +12,7 @@ export const checkSchema = z.object({
   }),
   severity_if_fail: z.enum(["critical", "high", "medium", "low"]),
   verify: z.object({ type: z.string() }).passthrough().optional(),
-  alertMatchers: z.array(z.record(z.string())).optional().describe("Prometheus alert label matchers relating alerts to this check, e.g. [{alertname: 'HighOrders5xx'}, {route: '~/api/orders.*'}]"),
+  alertMatchers: z.array(z.record(z.string(), z.string())).optional().describe("Prometheus alert label matchers relating alerts to this check, e.g. [{alertname: 'HighOrders5xx'}, {route: '~/api/orders.*'}]"),
 });
 
 export const planChecksShape = {
@@ -89,7 +89,7 @@ export const startWatchShape = {
   id: z.string(),
   window_s: z.number().int().min(1).max(900).optional().describe("watch window in seconds (default 60, max 900)"),
   interval_s: z.number().int().min(1).max(60).optional().describe("poll interval in seconds (1-60, default 15)"),
-  matchers: z.array(z.object({ check_id: z.string(), labels: z.record(z.string()) })).optional().describe("extra matchers mapping alerts to checks"),
+  matchers: z.array(z.object({ check_id: z.string(), labels: z.record(z.string(), z.string()) })).optional().describe("extra matchers mapping alerts to checks"),
 };
 export const COLLECT_WATCH_DESC = "Stop a watch and turn what it saw into evidence/findings: firing alerts matching a check's alertMatchers are attached to that check's finding (or become one); unmatched ones are listed separately; a quiet window is recorded with start/end; a dead poller is reported as interrupted.";
 export const collectWatchShape = { watch_id: z.string().regex(/^w_[0-9a-f]{16}$/).describe("id returned by start_watch") };

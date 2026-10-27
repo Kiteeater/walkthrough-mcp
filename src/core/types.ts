@@ -48,6 +48,7 @@ export interface Claim {
   review?: Review;
 }
 
+/** Read-only HTTP action. The built-in source accepts only GET/HEAD without a body or credential headers. */
 export interface HttpAction { type: "http"; method?: string; url: string; body?: string; headers?: Record<string, string> }
 export interface CommandAction { type: "command"; command: string }
 /** Reserved for read-only environment connectors (PR 5), e.g. `connector:mongodb`. */
@@ -195,6 +196,8 @@ export interface Walkthrough {
   alertWatches?: AlertWatch[];
   /** Last entry of the append-only run_cli command log (commands.jsonl); detects tail truncation. */
   commandLogHead?: { seq: number; hash: string };
+  /** Compact per-service log cursor used to preserve delta captures across process restarts. */
+  logCursors?: Record<string, { length: number; prefixSha256: string } | string>;
 }
 
 export interface AlertWatch {

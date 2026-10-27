@@ -24,15 +24,38 @@ export function sh(command: string | string[], cwd: string, timeoutMs = 300_000,
 /** spawn(file, args) with captured output and a hard timeout; shell is never enabled. */
 export function run(file: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs?: number; maxBytes?: number }): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { cwd: o.cwd, env: o.env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
+    // Put commands in their own process group where the platform supports it. A timeout
+    // must not leave grandchildren (for example a compose wrapper) running behind.
+    const grouped = process.platform !== "win32";
+    const child = spawn(file, args, { cwd: o.cwd, env: o.env, shell: false, detached: grouped, stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
     const cap = o.maxBytes ?? 5_000_000;
-    const add = (d: Buffer) => { if (output.length < cap) output += d; };
-    const timer = setTimeout(() => child.kill("SIGKILL"), o.timeoutMs ?? 300_000);
+    let outputBytes = 0;
+    const add = (d: Buffer) => {
+      if (outputBytes >= cap) return;
+      const chunk = d.subarray(0, Math.max(0, cap - outputBytes));
+      chunks.push(chunk);
+      outputBytes += chunk.byteLength;
+    };
+    const fitBytes = (value: string) => {
+      // A byte cut can split a UTF-8 sequence. Drop the incomplete trailing code point
+      // until the returned string still re-encodes within the byte cap.
+      let text = value;
+      while (Buffer.byteLength(text) > cap) text = text.slice(0, -1);
+      return text;
+    };
+    const output = () => fitBytes(Buffer.concat(chunks).toString("utf8"));
+    const killTree = () => {
+      try {
+        if (grouped && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch { try { child.kill("SIGKILL"); } catch { /* already exited */ } }
+    };
+    const timer = setTimeout(killTree, o.timeoutMs ?? 300_000);
     child.stdout.on("data", add);
     child.stderr.on("data", add);
-    child.on("close", (code) => { clearTimeout(timer); resolve({ exitCode: code ?? 1, output }); });
-    child.on("error", (err) => { clearTimeout(timer); resolve({ exitCode: 127, output: String(err) }); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ exitCode: code ?? 1, output: output() }); });
+    child.on("error", (err) => { clearTimeout(timer); resolve({ exitCode: 127, output: fitBytes(`${output()}${String(err)}`) }); });
   });
 }
 

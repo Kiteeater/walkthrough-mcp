@@ -21,7 +21,7 @@ export const replaySchema = z.object({
   capture: z.object({
     storageStatePath: str.optional(),
     allowWebSocketHosts: strs.optional(),
-    webSocketOutbound: z.record(z.array(z.string())).optional(),
+    webSocketOutbound: z.record(z.string(), z.array(z.string())).optional(),
   }).strict().optional(),
   maxRedirects: z.number().int().nonnegative().optional(),
   timeoutMs: posInt.optional(),
@@ -64,7 +64,19 @@ export const flowSchema = z.object({
 }).strict();
 
 function issues(e: z.ZodError): string {
-  return e.issues.map((i) => `${i.path.length ? i.path.join(".") : "(root)"}: ${i.code === "unrecognized_keys" ? `unknown field(s) ${i.keys.join(", ")}` : i.message}`).join("; ");
+  return e.issues.map((i) => {
+    const path = i.path.length ? i.path.join(".") : "(root)";
+    if (i.code === "unrecognized_keys") return `${path}: unknown field(s) ${i.keys.join(", ")}`;
+    // Keep the public config error wording stable across Zod 3 and Zod 4.
+    const x = i as z.ZodIssue & { expected?: string; received?: string; minimum?: number; inclusive?: boolean };
+    if (i.code === "invalid_type" && x.expected) {
+      const received = x.received ?? /received ([^ ]+)/.exec(i.message)?.[1] ?? "unknown";
+      return `${path}: ${received === "undefined" ? "Required" : `Expected ${x.expected}, received ${received}`}`;
+    }
+    if (i.code === "too_small" && typeof x.minimum === "number" && x.expected === undefined) return `${path}: Number must be ${x.inclusive === false ? "greater than" : "greater than or equal to"} ${x.minimum}`;
+    if (i.code === "invalid_value") return `${path}: Invalid enum value`;
+    return `${path}: ${i.message}`;
+  }).join("; ");
 }
 
 function parse<T>(schema: z.ZodTypeAny, value: unknown, where: string): T {

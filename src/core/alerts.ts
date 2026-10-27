@@ -68,7 +68,15 @@ export const severityOf = (a: PromAlert): "critical" | "high" | "medium" | "low"
 /** CLI helper: run `<cli> watch _poll <watchId> --root <root>` as a detached child that outlives the one-shot CLI. */
 export function spawnDetachedPoller(cliPath: string, watchId: string, root: string): number | undefined {
   if (!WATCH_ID_RE.test(watchId)) throw new Error(`invalid watch id: ${watchId}`);
-  const child = spawn(process.execPath, [cliPath, "watch", "_poll", watchId, "--root", root], { detached: true, stdio: "ignore", env: process.env });
+  // The poller needs the configured Prometheus endpoint/token and basic runtime
+  // variables. Do not inherit arbitrary parent credentials or deployment flags.
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of [
+    "PATH", "HOME", "LANG", "TMPDIR", "TERM", "NODE_PATH",
+    "WALKTHROUGH_CONFIG", "WALKTHROUGH_PROMETHEUS_URL", "WALKTHROUGH_PROMETHEUS_TOKEN", "WALKTHROUGH_PROMETHEUS_TOKEN_ENV",
+  ]) if (process.env[name] !== undefined) env[name] = process.env[name];
+  env.WALKTHROUGH_ROOT = root;
+  const child = spawn(process.execPath, [cliPath, "watch", "_poll", watchId, "--root", root], { detached: true, stdio: "ignore", env, windowsHide: true });
   child.unref();
   return child.pid;
 }

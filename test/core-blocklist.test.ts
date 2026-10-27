@@ -122,19 +122,23 @@ describe("core blocklist: run_cli targets and mongo", () => {
 
 describe("core blocklist: flow http actions and readiness polling use the guarded path", () => {
   const http = require_("node:http") as typeof import("node:http");
+  // Use IPv6 loopback for the blocked-side fixture. Some macOS/Linux runners do not
+  // have 127.0.0.2 configured as a local address, which makes the old fixture fail
+  // before the policy under test gets a chance to run.
+  const BLOCKED_STANDIN = "::1";
   async function servers() {
-    // "blocked side": a server on 127.0.0.2 standing in for the blocked address (marked core-blocked for this test),
+    // "blocked side": a server on IPv6 loopback standing in for the blocked address (marked core-blocked for this test),
     // counting raw TCP connections.
     let blockedConns = 0;
     const blocked = http.createServer((_q, r) => r.end("REACHED"));
     blocked.on("connection", () => { blockedConns++; });
-    await new Promise<void>((r) => blocked.listen(0, "127.0.0.2", r));
+    await new Promise<void>((r) => blocked.listen(0, BLOCKED_STANDIN, r));
     const bport = (blocked.address() as { port: number }).port;
     const hits: string[] = [];
     const ok = http.createServer((q, r) => {
       hits.push(q.url ?? "");
       if (q.url === "/to-literal") { r.writeHead(302, { location: `http://${BAD}/` }); return r.end(); }
-      if (q.url === "/to-standin") { r.writeHead(302, { location: `http://127.0.0.2:${bport}/` }); return r.end(); }
+      if (q.url === "/to-standin") { r.writeHead(302, { location: `http://[${BLOCKED_STANDIN}]:${bport}/` }); return r.end(); }
       if (q.url === "/to-standin-name") { r.writeHead(302, { location: `http://blocked.test:${bport}/` }); return r.end(); }
       if (q.url === "/to-self") { r.writeHead(302, { location: "/health" }); return r.end(); }
       r.writeHead(200, { "x-tok": "t1" }); r.end("healthy");
@@ -143,11 +147,11 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
     const port = (ok.address() as { port: number }).port;
     return { port, hits, conns: () => blockedConns, close: () => { ok.close(); blocked.close(); } };
   }
-  const resolver = async (h: string) => (h === "blocked.test" ? "127.0.0.2" : "127.0.0.1");
+  const resolver = async (h: string) => (h === "blocked.test" ? BLOCKED_STANDIN : "127.0.0.1");
   const appReplay = (port: number) => ({ allowHosts: [`app.test:${port}`], allowCidrs: ["127.0.0.1/32"] });
 
   it("httpSource: allowlisted server 302 → blocked address (literal, stand-in IP, name resolving to it) is refused; zero connections on the blocked side", async () => {
-    const undo = addTestCoreBlocked("127.0.0.2");
+    const undo = addTestCoreBlocked(BLOCKED_STANDIN);
     const s = await servers();
     try {
       for (const path of ["/to-literal", "/to-standin", "/to-standin-name"]) {
@@ -166,17 +170,17 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
   });
 
   it("even if the stand-in is allowlisted as the flow's own host, the core blocklist wins", async () => {
-    const undo = addTestCoreBlocked("127.0.0.2");
+    const undo = addTestCoreBlocked(BLOCKED_STANDIN);
     const s = await servers();
     try {
-      const r = await httpSource.run({ type: "http", url: "http://blocked.test:1/" }, { replay: { allowHosts: ["blocked.test:1"], allowCidrs: ["127.0.0.2/32"] }, resolver });
+      const r = await httpSource.run({ type: "http", url: "http://blocked.test:1/" }, { replay: { allowHosts: ["blocked.test:1"], allowCidrs: ["::1/128"] }, resolver });
       expect(r.evidenceText).toMatch(/core blocklist/);
       expect(s.conns()).toBe(0);
     } finally { undo(); s.close(); }
   });
 
   it("waitForUrl: 302 → blocked address refused at once (not retried); zero connections; same-host redirect + header still work", async () => {
-    const undo = addTestCoreBlocked("127.0.0.2");
+    const undo = addTestCoreBlocked(BLOCKED_STANDIN);
     const s = await servers();
     try {
       for (const path of ["/to-literal", "/to-standin", "/to-standin-name"]) {
@@ -191,10 +195,10 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
   });
 
   it("DNS rebinding: a host that resolves to an allowed IP first and the blocked one afterwards never reaches the second", async () => {
-    const undo = addTestCoreBlocked("127.0.0.2");
+    const undo = addTestCoreBlocked(BLOCKED_STANDIN);
     const s = await servers();
     let n = 0;
-    const rebinding = async () => (n++ === 0 ? "127.0.0.1" : "127.0.0.2");
+    const rebinding = async () => (n++ === 0 ? "127.0.0.1" : BLOCKED_STANDIN);
     try {
       const r = await httpSource.run({ type: "http", url: `http://rebind.test:${s.port}/to-self` }, { replay: { allowHosts: [`rebind.test:${s.port}`], allowCidrs: ["127.0.0.1/32"] }, resolver: rebinding });
       expect(r.status === undefined || r.status === 200).toBe(true);
