@@ -3,7 +3,7 @@
 // targets are a local stand-in (127.0.0.2, marked core-blocked via addTestCoreBlocked) with a server counting every
 // connection; the real address only appears in a pure guard check that fails before any browser starts.
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
@@ -201,5 +201,45 @@ describe("screenshot command log", () => {
     await expect(c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` })).rejects.toThrow();
     expect(existsSync(join(c.dir(w.id), "evidence", "ev-1.png"))).toBe(false);
     expect(c.load(w.id).evidence).toHaveLength(0);
+  });
+  it("if the log write fails AND the PNG cannot be removed, both errors are reported (log error first, also as cause)", async () => {
+    const c = core(both(), { page: async (u) => okPage(u) });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    mkdirSync(join(c.dir(w.id), "commands.jsonl"), { recursive: true }); // appending fails (EISDIR)
+    const evDir = join(c.dir(w.id), "evidence");
+    mkdirSync(evDir, { recursive: true });
+    writeFileSync(join(evDir, "ev-1.png"), ""); // existing writable file: overwrite works...
+    chmodSync(evDir, 0o555); // ...but unlinking it from a read-only directory fails (EACCES)
+    let err: unknown;
+    try { await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` }); } catch (e) { err = e; } finally { chmodSync(evDir, 0o755); }
+    expect(err).toBeInstanceOf(AggregateError);
+    const agg = err as AggregateError;
+    expect(agg.errors).toHaveLength(2);
+    expect((agg.errors[0] as NodeJS.ErrnoException).code).toBe("EISDIR");
+    expect((agg.errors[1] as NodeJS.ErrnoException).code).toBe("EACCES");
+    expect(agg.cause).toBe(agg.errors[0]);
+    expect(agg.message).toContain("evidence/ev-1.png");
+    expect(c.load(w.id).evidence).toHaveLength(0);
+  });
+  it("capture_page masks every query value in sub-resource URLs too", async () => {
+    const page = (u: string) => ({ ...okPage(u), subresources: [{ url: `http://127.0.0.1:${port}/app.js?v=UNKNOWNsub5512&b=2`, method: "GET", type: "script", status: 200, ip: "127.0.0.1" }] });
+    const c = core(both(), { page: async (u) => page(u) });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    await c.planChecks(w.id, { goal: "g", checks: [{ id: "c1", intent: "c1", method: "ui", target: "page", expect: { type: "ui", value: { text: { contains: "x" } } }, severity_if_fail: "high" } as never] });
+    await c.capturePage(w.id, { checkId: "c1", url: `http://127.0.0.1:${port}/` });
+    const raw = readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8");
+    expect(raw).not.toContain("UNKNOWNsub5512");
+    const entry = raw.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "capture_page");
+    expect(entry.subresources).toHaveLength(1);
+    expect(entry.subresources[0].url).toMatch(/app\.js\?v=.+&b=/);
+    expect(entry.subresources[0].url).not.toContain("b=2");
+  });
+  it("runFlow with a core that lacks the flow capability fails with a clear error before any capture", async () => {
+    let called = 0;
+    const real = core(both(), { page: async () => { called++; throw new Error("must not run"); } });
+    const fake = Object.create(real) as WalkthroughCore; // same methods, but not the registered instance
+    await expect(runFlow(fake, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://127.0.0.1:${port}/` }], claims: [] }, { skipWait: true }))
+      .rejects.toThrow("runFlow: flow screenshot capture is not available for this core");
+    expect(called).toBe(0);
   });
 });

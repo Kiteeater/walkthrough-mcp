@@ -305,7 +305,10 @@ export class WalkthroughCore {
         });
         w.commandLogHead = { seq: log.seq, hash: log.hash };
       } catch (e) {
-        rmSync(abs(ev.path), { force: true });
+        // Keep the original log error even if cleanup fails too: both are reported, the log error first (and as cause).
+        try { rmSync(abs(ev.path), { force: true }); } catch (rmErr) {
+          throw new AggregateError([e, rmErr], `command log write failed and the screenshot ${ev.path} could not be removed`, { cause: e });
+        }
         throw e;
       }
     } else if (input.type === "logs") {
@@ -444,7 +447,7 @@ export class WalkthroughCore {
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
         navigations: p.navigations.map((n) => ({ ...n, url: maskAllQuery(redactUrl(n.url, r)) })),
-        subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: redactUrl(s.url, r) })),
+        subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: maskAllQuery(redactUrl(s.url, r)) })),
         blocked: blocked.length,
         websockets,
         // counts only: no path, cookie names or values
