@@ -16,11 +16,13 @@
 //    Not hits: a member of some other object (`guard.fetch(...)`) or a declared member name (`fetch(url: string)`).
 // Only exemption by shape: `import { isIP, isIPv4, isIPv6, BlockList, SocketAddress } from "node:net"` (pure address
 // helpers, no sockets). A default/namespace import, any other name, or require/import() of net is a hit.
-// Suspicious (rule "suspicious"): import()/require() with a non-literal argument, createRequire / node:module,
-// destructuring fetch/WebSocket out of a global object
-// (counted as "net"). Global objects (globalThis/window/self/global), after unwrapping (), as, satisfies, !, <T>:
-// only `<g>.prop` with prop not fetch/WebSocket and `typeof <g>` pass; any other use (alias, argument, return,
-// spread, ternary, comma, Object.assign, element access, ...) is "suspicious".
+// Suspicious (rule "suspicious"): import()/require() with a non-literal argument, createRequire / node:module /
+// node:vm / worker_threads, eval / Function / new Function, process.binding / process._linkedBinding,
+// Reflect.get(<global>, ...), destructuring fetch/WebSocket out of a global object (counted as "net").
+// Global objects (globalThis/window/self/global), after unwrapping (), as, satisfies, !, <T> and chained global
+// names (window.window, self.globalThis): only `<g>.prop` with prop not fetch/WebSocket and `typeof <g>` pass; any
+// other use (alias, argument, return, spread, ternary, comma, Object.assign, element access incl. concatenated
+// keys, ...) is "suspicious".
 // .sh files: `#` comments removed (shell only), then the same module names / identifiers are matched as text,
 // since the scripts embed node code in heredocs.
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -33,7 +35,7 @@ type Rule = "net" | "browser" | "process" | "suspicious";
 const MODULES: Record<string, Rule> = {
   http: "net", https: "net", http2: "net", net: "net", tls: "net", dgram: "net", undici: "net", ws: "net",
   child_process: "process",
-  module: "suspicious",
+  worker_threads: "suspicious", module: "suspicious", vm: "suspicious",
   playwright: "browser", "playwright-core": "browser", "@playwright/test": "browser",
 };
 const GLOBALS = new Set(["globalThis", "window", "self", "global"]);
@@ -43,7 +45,7 @@ const IDENTS = new Set(["fetch", "WebSocket"]);
 const OWNERS: Record<string, { rules: Rule[]; why: string }> = {
   "src/core/egress/fetch.ts": { rules: ["net"], why: "guarded HTTP: checkHop + IP pinning + manual redirects" },
   "src/core/egress/ws.ts": { rules: ["net"], why: "guarded WebSocket client: same checkHop + IP pinning" },
-  "src/core/capture.ts": { rules: ["browser", "suspicious"], why: "suspicious: the page init script intentionally passes `window` to Object.defineProperty to lock page-side network globals (in-page hardening, no outbound request). browser: Playwright browser; only driven via WalkthroughCore.guardedPage, every request routed to the guard (route.fulfill from guard.fetch / guard.websocket). Not moved into egress/ in this PR" },
+  "src/core/capture.ts": { rules: ["browser"], why: "Playwright browser; only driven via WalkthroughCore.guardedPage, every request routed to the guard (route.fulfill from guard.fetch / guard.websocket). Not moved into egress/ in this PR" },
   "src/core/sandbox.ts": { rules: ["process"], why: "sandbox up/down/exec: spawn(file,args), no shell, allowlisted env" },
 };
 
@@ -84,7 +86,9 @@ function pureNetImport(n: ts.Node, spec: string): boolean {
 /** `globalThis` / `(globalThis as any)!` etc.: a global object behind parens / type assertions. */
 function isGlobalRef(e: ts.Expression): boolean {
   while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isNonNullExpression(e) || ts.isTypeAssertionExpression(e)) e = e.expression;
-  return ts.isIdentifier(e) && GLOBALS.has(e.text);
+  if (ts.isIdentifier(e)) return GLOBALS.has(e.text);
+  // N2: window.window / self.globalThis / globalThis.global ...: a global-named property of a global is a global.
+  return (ts.isPropertyAccessExpression(e) || ts.isPropertyAccessChain(e)) && GLOBALS.has(e.name.text) && isGlobalRef(e.expression);
 }
 
 function isDeclaredName(id: ts.Identifier): boolean {
@@ -99,7 +103,7 @@ function isDeclaredName(id: ts.Identifier): boolean {
 
 /** AST hits for one JS/TS source. */
 export function scanSource(file: string, text: string): Hit[] {
-  const kind = /\.(?:ts|mts|cts)$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : file.endsWith(".jsx") ? ts.ScriptKind.JSX : /\.(?:ts|mts|cts)$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
   const hits: Hit[] = [];
   const add = (node: ts.Node, rule: Rule) => {
@@ -114,20 +118,27 @@ export function scanSource(file: string, text: string): Hit[] {
     else if (ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument)) spec = n.argument.literal as ts.Expression;
     const isLit = (e: ts.Expression) => ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e);
     if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require")) && (!n.arguments[0] || !isLit(n.arguments[0]))) add(n, "suspicious");
-    if (ts.isIdentifier(n) && GLOBALS.has(n.text) && !isDeclaredName(n) && !((n.parent as { name?: ts.Node }).name === n) &&
-      !(ts.isQualifiedName(n.parent) || ts.isTypeQueryNode(n.parent))) {
-      // B1': unwrap (x), x as T, x satisfies T, x!, <T>x; then only `.prop` (prop not fetch/WebSocket) and `typeof x` pass.
-      let outer: ts.Expression = n;
+    const chained = ts.isIdentifier(n) && GLOBALS.has(n.text) && (ts.isPropertyAccessExpression(n.parent) || ts.isPropertyAccessChain(n.parent)) &&
+      n.parent.name === n && isGlobalRef(n.parent.expression);
+    if (ts.isIdentifier(n) && GLOBALS.has(n.text) && (chained || (!isDeclaredName(n) && !((n.parent as { name?: ts.Node }).name === n) &&
+      !(ts.isQualifiedName(n.parent) || ts.isTypeQueryNode(n.parent))))) {
+      // B1': unwrap (x), x as T, x satisfies T, x!, <T>x; then only `.prop` (prop not fetch/WebSocket/a global name) and
+      // `typeof x` pass. N2: for `g.window` the whole access is the global object and is judged instead.
+      let outer: ts.Expression = chained ? (n.parent as ts.Expression) : n;
       while ((ts.isParenthesizedExpression(outer.parent) || ts.isAsExpression(outer.parent) || ts.isSatisfiesExpression(outer.parent) ||
         ts.isNonNullExpression(outer.parent) || ts.isTypeAssertionExpression(outer.parent)) && outer.parent.expression === outer) outer = outer.parent;
       const q = outer.parent;
-      const okProp = (ts.isPropertyAccessExpression(q) || ts.isPropertyAccessChain(q)) && q.expression === outer && !IDENTS.has(q.name.text);
+      const okProp = (ts.isPropertyAccessExpression(q) || ts.isPropertyAccessChain(q)) && q.expression === outer && !IDENTS.has(q.name.text); // g.window: judged as a whole by the chained pass
       if (!okProp && !ts.isTypeOfExpression(q)) add(q, "suspicious");
       if (ts.isVariableDeclaration(q) && q.initializer === outer && ts.isObjectBindingPattern(q.name) &&
         q.name.elements.some((e) => IDENTS.has(((e.propertyName ?? e.name) as ts.Identifier).text ?? ""))) add(q, "net");
     }
-    if (ts.isIdentifier(n) && n.text === "createRequire" && !isDeclaredName(n) &&
+    if (ts.isIdentifier(n) && (n.text === "eval" || n.text === "Function" || n.text === "createRequire") && !isDeclaredName(n) &&
       !((ts.isPropertyAccessExpression(n.parent)) && n.parent.name === n && !(ts.isIdentifier(n.parent.expression) && GLOBALS.has(n.parent.expression.text)))) add(n, "suspicious");
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "process" && (n.name.text === "binding" || n.name.text === "_linkedBinding")) add(n, "suspicious");
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) && n.expression.expression.text === "Reflect" &&
+      n.expression.name.text === "get" && n.arguments[0] && isGlobalRef(n.arguments[0])) add(n, "suspicious");
+    if (ts.isElementAccessExpression(n) && isGlobalRef(n.expression) && !ts.isStringLiteralLike(n.argumentExpression)) add(n, "suspicious");
     if (spec && (ts.isStringLiteral(spec) || ts.isNoSubstitutionTemplateLiteral(spec)) && !pureNetImport(n, spec.text)) { const r = moduleRule(spec.text); if (r) add(n, r); }
     if (ts.isIdentifier(n) && IDENTS.has(n.text)) {
       const p = n.parent;
@@ -135,7 +146,7 @@ export function scanSource(file: string, text: string): Hit[] {
         if (isGlobalRef(p.expression)) add(p, "net");
       } else if (!isDeclaredName(n)) add(n, "net");
     }
-    if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && GLOBALS.has(n.expression.text) &&
+    if (ts.isElementAccessExpression(n) && isGlobalRef(n.expression) &&
       ts.isStringLiteralLike(n.argumentExpression) && IDENTS.has(n.argumentExpression.text)) add(n, "net");
     ts.forEachChild(n, visit);
   };
@@ -163,6 +174,7 @@ export function scanShell(file: string, text: string): Hit[] {
   const modRe = new RegExp(`["'\`](?:node:)?(${mod})(?:/[^"'\`]*)?["'\`]`);
   text.split("\n").forEach((raw, i) => {
     const l = stripShellComment(raw);
+    if (/(?:^|[\s;|&(`$])(?:curl|wget|nc|ncat|socat|telnet)(?=\s|$)/.test(l)) hits.push({ file, rule: "net", line: i + 1, text: l.trim().slice(0, 120) });
     const m = modRe.exec(l);
     if (m) hits.push({ file, rule: moduleRule(m[1])!, line: i + 1, text: l.trim().slice(0, 120) });
     if (/(?<![\w.$#])(?:fetch|WebSocket)\b|\b(?:globalThis|window|self|global)\.(?:fetch|WebSocket)\b/.test(l)) hits.push({ file, rule: "net", line: i + 1, text: l.trim().slice(0, 120) });
@@ -170,7 +182,13 @@ export function scanShell(file: string, text: string): Hit[] {
   return hits;
 }
 
-const EXT = /\.(?:ts|mts|cts|js|mjs|cjs|sh)$/;
+const EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|sh)$/;
+/** Single-occurrence exemptions: one exact hit (file + rule + code text), never a whole file for that rule. */
+const SNIPPETS: { file: string; rule: Rule; text: string; why: string }[] = [
+  { file: "src/core/capture.ts", rule: "suspicious", text: "Object.defineProperty(window, name, { value: blocked, configurable: false, writable: false })",
+    why: "page init script intentionally passes `window` to Object.defineProperty to lock page-side network globals (in-page hardening, no outbound request)" },
+];
+const snippetAllowed = (h: Hit) => SNIPPETS.some((x) => x.file === h.file && x.rule === h.rule && x.text === h.text);
 type Allow = Record<string, { rules: Rule[] }>;
 /** OWNERS + KNOWN with per-file rule lists unioned (a file may be in both). */
 const ALLOWED: Allow = (() => {
@@ -179,7 +197,7 @@ const ALLOWED: Allow = (() => {
   return out;
 })();
 /** Every hit under `dirs` of `root` that is not covered by `allowed`. */
-export function scan(root: string, dirs: string[], allowed: Record<string, { rules: Rule[] }>): Hit[] {
+export function scan(root: string, dirs: string[], allowed: Record<string, { rules: Rule[] }>, useSnippets = true): Hit[] {
   const files: string[] = [];
   const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) { if (f !== "node_modules" && f !== "output" && f !== "output-trace") walk(p); } else if (EXT.test(f) && !f.endsWith(".d.ts")) files.push(p); } };
   for (const d of dirs) walk(join(root, d));
@@ -187,7 +205,7 @@ export function scan(root: string, dirs: string[], allowed: Record<string, { rul
   for (const p of files) {
     const file = relative(root, p).split("\\").join("/");
     const text = readFileSync(p, "utf8");
-    for (const h of file.endsWith(".sh") ? scanShell(file, text) : scanSource(file, text)) if (!allowed[file]?.rules.includes(h.rule)) out.push(h);
+    for (const h of file.endsWith(".sh") ? scanShell(file, text) : scanSource(file, text)) if (!allowed[file]?.rules.includes(h.rule) && !(useSnippets && snippetAllowed(h))) out.push(h);
   }
   return out;
 }
@@ -237,7 +255,29 @@ describe("egress static scan", () => {
     ["require-template", "const x = 'http';\nexport const a = () => require(`node:${x}`);", "suspicious"],
     ["create-require", "import { createRequire } from 'node:module';\nconst r = createRequire(import.meta.url);\nexport const a = () => r('http');", "suspicious"],
     ["module-namespace", "import * as m from 'module';\nexport const a = m;", "suspicious"],
+    ["eval", "export const a = () => eval('fet' + 'ch')('x');", "suspicious"],
+    ["new-function", "export const a = () => new Function('return fe' + 'tch')();", "suspicious"],
+    ["reflect-get", "export const a = () => Reflect.get(globalThis, 'fe' + 'tch')('x');", "suspicious"],
+    ["concat-key", "export const a = () => globalThis['fe' + 'tch']('x');", "suspicious"],
+    ["process-binding", "export const a = () => process.binding('tcp_wrap');", "suspicious"],
+    ["worker-threads", "import { Worker } from 'node:worker_threads';\nexport const a = () => new Worker('x.js');", "suspicious"],
   ];
+  it("every snippet exemption still matches exactly one hit", () => {
+    const hits = scan(process.cwd(), ["src", "examples"], {}, false);
+    for (const x of SNIPPETS) expect(hits.filter((h) => h.file === x.file && h.rule === x.rule && h.text === x.text), x.text).toHaveLength(1);
+  });
+  it("N3: a new suspicious use in capture.ts is still reported (only the exact snippet is exempt)", () => {
+    const root = mkdtempSync(join(tmpdir(), "wt-scan-c-"));
+    mkdirSync(join(root, "src", "core"), { recursive: true });
+    writeFileSync(join(root, "src", "core", "capture.ts"), "export const lock = (name: string, blocked: unknown) => {\n  Object.defineProperty(window, name, { value: blocked, configurable: false, writable: false });\n};\nexport const leak = () => { const g = globalThis; return g; };\n");
+    expect(scan(root, ["src"], ALLOWED).map((h) => `${h.file}:${h.rule}:${h.line}`)).toEqual(["src/core/capture.ts:suspicious:4"]);
+  });
+  it("N2: window.window.fetch and self.globalThis.fetch are reported", () => {
+    expect(scanSource("src/core/a.ts", "export const a = () => window.window.fetch('x');\n").map((h) => h.rule)).toContain("net");
+    expect(scanSource("src/core/b.ts", "export const b = () => self.globalThis.fetch('x');\n").map((h) => h.rule)).toContain("net");
+    expect(scanSource("src/core/c.ts", "export const c = () => use(window.self);\ndeclare const use: (o: unknown) => unknown;\n").map((h) => h.rule)).toContain("suspicious");
+    expect(scanSource("src/core/d.ts", "export const d = () => window.window.setTimeout(() => {}, 1);\n")).toEqual([]);
+  });
   const WRAPPED: [string, string][] = [
     ["g-as-any", "export const a = () => (globalThis as any).fetch('x');"],
     ["g-paren", "export const a = () => (globalThis).fetch('x');"],
@@ -259,12 +299,17 @@ describe("egress static scan", () => {
     const root = mkdtempSync(join(tmpdir(), "wt-scan-s-"));
     mkdirSync(join(root, "src", "core"), { recursive: true });
     for (const [name, code] of SUSPICIOUS) writeFileSync(join(root, "src", "core", `${name}.ts`), code + "\n");
+    writeFileSync(join(root, "src", "core", "comp.tsx"), "export const C = () => <button onClick={() => fetch('x')}>x</button>;\n");
+    writeFileSync(join(root, "src", "core", "comp.jsx"), "export const C = () => <a onClick={() => new WebSocket('ws://x')}>x</a>;\n");
     const hits = scan(root, ["src"], ALLOWED);
     for (const [name, , rule] of SUSPICIOUS) expect(hits.some((h) => h.file === `src/core/${name}.ts` && h.rule === rule), name).toBe(true);
+    expect(hits.some((h) => h.file === "src/core/comp.tsx" && h.rule === "net"), ".tsx").toBe(true);
+    expect(hits.some((h) => h.file === "src/core/comp.jsx" && h.rule === "net"), ".jsx").toBe(true);
   });
-  it("negative: .sh quoted # is not a comment", () => {
-    expect(scanShell("x.sh", "echo ok # node -e 'fetch(1)'\n")).toEqual([]);
-    expect(scanShell("x.sh", "echo \"#\"; node -e 'fetch(1)'\n").map((h) => h.rule)).toEqual(["net"]);
+  it("negative: .sh curl / wget / nc are net; quoted # is not a comment", () => {
+    for (const cmd of ["curl -s http://x/", "x=$(wget -qO- http://x/)", "echo hi | nc x 80", "ok && curl http://x/"]) expect(scanShell("x.sh", cmd + "\n").map((h) => h.rule), cmd).toContain("net");
+    expect(scanShell("x.sh", "echo curl-free # curl http://x/\n")).toEqual([]);
+    expect(scanShell("x.sh", "echo \"#\"; curl http://x/\n").map((h) => h.rule)).toEqual(["net"]);
     expect(scanShell("x.sh", "node -e 'const a=\"#\"; fetch(a)'\n").map((h) => h.rule)).toEqual(["net"]);
     expect(stripShellComment("echo 'a # b' # c")).toBe("echo 'a # b' ");
   });
