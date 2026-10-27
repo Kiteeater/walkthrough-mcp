@@ -51,20 +51,20 @@ const OWNERS: Record<string, { rules: Rule[]; why: string }> = {
 
 /** KNOWN violations that exist today. Not fixed in this PR (move-only); new ones fail the test. */
 const KNOWN: Record<string, { rules: Rule[]; why: string }> = {
-  "src/core/alerts.ts": { rules: ["process"], why: "KNOWN ISSUE_ALERTS: spawnDetachedPoller spawns `walkthrough watch _poll` with the full process.env (should go through sandbox/allowlistEnv)" },
-  "src/demo-agent/trace-run.ts": { rules: ["net"], why: "KNOWN ISSUE_TRACE: direct fetch to LANGFUSE_URL, not through the egress guard" },
-  "examples/demo.mjs": { rules: ["process"], why: "ISSUE_EXAMPLES example launcher: spawns examples/trace-demo/run.mjs" },
-  "examples/regen-output-trace.mjs": { rules: ["process"], why: "ISSUE_EXAMPLES dev script: regenerates example output" },
-  "examples/screenshot.mjs": { rules: ["browser"], why: "ISSUE_EXAMPLES dev script: screenshots a local generated HTML report" },
-  "examples/run-local-e2e.sh": { rules: ["browser", "net"], why: "ISSUE_EXAMPLES e2e script: screenshots the local report file; picks a free local port with net.createServer" },
-  "examples/run-e2e.sh": { rules: ["net"], why: "ISSUE_EXAMPLES e2e script: picks a free local port with net.createServer" },
-  "examples/ui-demo/run.mjs": { rules: ["process", "browser"], why: "ISSUE_EXAMPLES demo: starts the local orders service and a browser on it" },
-  "examples/trace-demo/run.mjs": { rules: ["process", "net"], why: "ISSUE_EXAMPLES demo: spawns dist/demo-agent/trace-run.js with local mock env; net.createServer for a free local port" },
-  "examples/trace-demo/mongo-demo.mjs": { rules: ["process"], why: "ISSUE_EXAMPLES demo: docker for a throwaway local MongoDB" },
-  "examples/trace-demo/mock-langfuse.mjs": { rules: ["net"], why: "ISSUE_EXAMPLES local mock server (node:http server only)" },
-  "examples/trace-demo/mock-prometheus.mjs": { rules: ["net"], why: "ISSUE_EXAMPLES local mock server; fetches the demo service's local /metrics.json" },
-  "examples/trace-demo/service/server.js": { rules: ["net"], why: "ISSUE_EXAMPLES demo service: local http server, posts to the local mock Langfuse" },
-  "examples/orders-service/server.js": { rules: ["net"], why: "ISSUE_EXAMPLES demo service: local http server (browser fetch in served page)" },
+  "src/core/alerts.ts": { rules: ["process"], why: "KNOWN #45: spawnDetachedPoller spawns `walkthrough watch _poll` with the full process.env (should go through sandbox/allowlistEnv)" },
+  "src/demo-agent/trace-run.ts": { rules: ["net"], why: "KNOWN #46: direct fetch to LANGFUSE_URL, not through the egress guard" },
+  "examples/demo.mjs": { rules: ["process"], why: "#47 example launcher: spawns examples/trace-demo/run.mjs" },
+  "examples/regen-output-trace.mjs": { rules: ["process"], why: "#47 dev script: regenerates example output" },
+  "examples/screenshot.mjs": { rules: ["browser"], why: "#47 dev script: screenshots a local generated HTML report" },
+  "examples/run-local-e2e.sh": { rules: ["browser", "net"], why: "#47 e2e script: screenshots the local report file; picks a free local port with net.createServer" },
+  "examples/run-e2e.sh": { rules: ["net"], why: "#47 e2e script: picks a free local port with net.createServer" },
+  "examples/ui-demo/run.mjs": { rules: ["process", "browser"], why: "#47 demo: starts the local orders service and a browser on it" },
+  "examples/trace-demo/run.mjs": { rules: ["process", "net"], why: "#47 demo: spawns dist/demo-agent/trace-run.js with local mock env; net.createServer for a free local port" },
+  "examples/trace-demo/mongo-demo.mjs": { rules: ["process"], why: "#47 demo: docker for a throwaway local MongoDB" },
+  "examples/trace-demo/mock-langfuse.mjs": { rules: ["net"], why: "#47 local mock server (node:http server only)" },
+  "examples/trace-demo/mock-prometheus.mjs": { rules: ["net"], why: "#47 local mock server; fetches the demo service's local /metrics.json" },
+  "examples/trace-demo/service/server.js": { rules: ["net"], why: "#47 demo service: local http server, posts to the local mock Langfuse" },
+  "examples/orders-service/server.js": { rules: ["net"], why: "#47 demo service: local http server (browser fetch in served page)" },
 };
 
 type Hit = { file: string; rule: Rule; line: number; text: string };
