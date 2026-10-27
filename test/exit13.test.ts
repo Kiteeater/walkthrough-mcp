@@ -9,11 +9,11 @@ import { describe, expect, it } from "vitest";
  * The CLI top-level-awaits runFlow -> waitForUrl -> fetch(). If that fetch never settles and holds no
  * ref'd handle (here: a stub that returns a bare pending promise), the event loop drains and Node exits 13
  * with no output. waitForUrl must give every attempt a ref'd deadline so the run always settles.
- * Runs against dist/ (`pretest` builds it).
+ * Runs against dist/ (test/global-setup.ts rebuilds it before every run).
  */
 const CLI = resolve("dist/cli/index.js");
 describe("exit 13: waitForUrl with a fetch that never settles", () => {
-  it("dist/cli/index.js exists (run via npm test so pretest builds it)", () => {
+  it("dist/cli/index.js exists (test/global-setup.ts builds it)", () => {
     expect(existsSync(CLI), `${CLI} missing — run npm run build`).toBe(true);
   });
 
