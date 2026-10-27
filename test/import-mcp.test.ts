@@ -118,7 +118,7 @@ describe("cross-source root-cause chain: HTTP 500 → Langfuse trace → Mongo d
     const auth = "Basic " + Buffer.from("pk:sk-test-xyz").toString("base64");
     Object.assign(process.env, { MONGO_URL: mms.getUri(), LANGFUSE_URL: `http://127.0.0.1:${lfPort}`, LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk-test-xyz", PORT: String(port), DEMO_HEALTH_TOKEN: healthToken });
     const root = resolve(".");
-    const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: { screenshot: async () => {} } as Capturer, redactor: new Redactor(["sk-test-xyz"]) });
+    const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: { screenshot: async () => {} } as Capturer, redactor: new Redactor(["sk-test-xyz"]), replay: { allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] } });
     const w = core.startWalkthrough({ title: "trace", sandbox: { backend: "local", cwd: join(root, "examples/trace-demo/service"), up: "", down: "", local: { up: "exec node server.js", passEnv: ["MONGO_URL", "LANGFUSE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "DEMO_HEALTH_TOKEN", "PORT"], killTimeoutMs: 1000 } } });
     await core.runInSandbox(w.id, "up");
     try {

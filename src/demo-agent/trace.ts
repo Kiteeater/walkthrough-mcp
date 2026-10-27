@@ -41,7 +41,7 @@ export async function runTraceAgent(core: WalkthroughCore, id: string, mcp: McpC
   const actedAt = new Date().toISOString();
   for (const main of plan.filter((c) => /^chk-\d+$/.test(c.id))) {
     const [method, url] = main.target.split(" ");
-    const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never });
+    const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never, replay: core.replayPolicy() });
     await new Promise((r) => setTimeout(r, o.settleMs ?? 300));
     const httpEv = await core.captureEvidence(id, { type: "submit", checkId: main.id, kind: "http", source: { tool: "fetch", command: out.repro }, content: out.evidenceText });
     const logEv = await core.captureEvidence(id, { type: "logs", service, delta: true, checkId: `${main.id}-logs` });

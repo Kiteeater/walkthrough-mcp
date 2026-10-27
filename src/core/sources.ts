@@ -1,4 +1,4 @@
-import { flowPolicy, type Resolver } from "./egress/policy.js";
+import { ReplayRejectedError } from "./egress/policy.js";
 import { guardedFetch } from "./egress/fetch.js";
 import { withDeadline } from "./settle.js";
 import { evaluateExpect } from "./checks.js";
@@ -6,18 +6,21 @@ import { Registry, type SourceContext } from "./registry.js";
 import { MCP_IMPORT_PRESETS, mcpImportSource } from "./imports.js";
 import type { Check, CommandAction, HttpAction, LogObserve } from "./types.js";
 
+const HTTP_ACTION_TIMEOUT_MS = 15_000;
+const HTTP_ACTION_MAX_BODY_BYTES = 1024 * 1024; // what flowPolicy used before; unchanged
+
 export const httpSource = {
   type: "http" as const,
-  async run(a: HttpAction, ctx?: { resolver?: Resolver } & Partial<SourceContext>) {
+  async run(a: HttpAction, ctx: Pick<SourceContext, "replay" | "resolver">) {
     const method = a.method ?? "GET";
     const repro = `curl -i -X ${method} ${JSON.stringify(a.url)}`;
     try {
-      // Same guarded path as replay: flow policy (own host only), checkHop + pinned IP, manual redirects, every hop
-      // re-checked (core blocklist, metadata, DNS rebinding).
-      const r = await withDeadline(async () => {
-        const policy = await flowPolicy(a.url, ctx?.resolver, 15_000);
-        return guardedFetch(policy, a.url, { method, body: a.body, headers: a.headers, resolver: ctx?.resolver });
-      }, 15_000, `${method} ${a.url}`);
+      // Same guarded path and policy as replay: replay.allowHosts + allowCidrs, checkHop + pinned IP, manual redirects,
+      // every hop re-checked (core blocklist, metadata, DNS rebinding). No allowlist configured → refused, no fallback.
+      const replay = ctx.replay;
+      if (!replay?.allowHosts?.length) throw new ReplayRejectedError("http action needs replay.allowHosts (same policy as replay)");
+      const policy = { ...replay, timeoutMs: HTTP_ACTION_TIMEOUT_MS, maxBodyBytes: HTTP_ACTION_MAX_BODY_BYTES };
+      const r = await withDeadline(() => guardedFetch(policy, a.url, { method, body: a.body, headers: a.headers, resolver: ctx.resolver }), HTTP_ACTION_TIMEOUT_MS, `${method} ${a.url}`);
       return { status: r.status, body: r.body, repro, evidenceText: `${method} ${a.url}\nHTTP ${r.status}\n\n${r.body}` };
     } catch (e) {
       return { body: "", repro, evidenceText: `${method} ${a.url}\nrequest failed: ${(e as Error).message}` };

@@ -17,7 +17,7 @@ export async function runDemoAgent(core: WalkthroughCore, id: string, routes: Ro
     const group = checks.filter((c) => c.id === main.id || c.id.startsWith(`${main.id}-`));
     const [method, url] = main.target.split(" ");
     // 1. execute it ourselves through the action-source seam (http today, connector:<name> later)
-    const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never });
+    const out = await core.registry.action("http").run({ type: "http", method, url }, { walkthrough: core.load(id), sandbox: undefined as never, replay: core.replayPolicy() });
     await new Promise((r) => setTimeout(r, o.settleMs ?? 200));
     // 2. submit raw output; the core hashes and redacts it
     const evIds: Record<string, string> = {};
