@@ -100,9 +100,12 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
     if (opts.agent) await opts.agent(w.id);
     for (const cap of cfg.captures) {
       // Screenshots: same guarded browser path as capture_page, under the flow policy (own host only, core blocklist).
-      const ev = cap.type === "screenshot"
-        ? await flowScreenshot.get(core)!(w.id, cap.url)
-        : await core.captureEvidence(w.id, { type: "logs", service: cap.service });
+      let ev: { id: string };
+      if (cap.type === "screenshot") {
+        const shot = flowScreenshot.get(core);
+        if (!shot) throw new Error("runFlow: flow screenshot capture is not available for this core (it must be a WalkthroughCore instance created with new WalkthroughCore)");
+        ev = await shot(w.id, cap.url);
+      } else ev = await core.captureEvidence(w.id, { type: "logs", service: cap.service });
       names.set(cap.as, ev.id);
     }
     for (const s of cfg.sources ?? []) names.set(s.as, (await core.linkSource(w.id, s)).id);
