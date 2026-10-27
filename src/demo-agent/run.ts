@@ -3,7 +3,7 @@
 // usage: node dist/demo-agent/run.js <flow.json> <routes.json> [--sandbox local|compose] [--root <dir>]
 // Uses an explicit main() (no top-level await) so a stalled promise can never end the process silently with exit 13.
 import { parseArgs } from "node:util";
-import { createCore, loadFlowConfig, Redactor, runFlow } from "../core/index.js";
+import { createCore, loadFlowConfig, Redactor, runFlow, type FlowConfig } from "../core/index.js";
 import { runDemoAgent } from "./agent.js";
 import { loopbackCidrs } from "./allowlist.js";
 import { loadRoutes } from "./planner.js";
@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   const [flowFile, routesFile] = positionals;
   if (!flowFile || !routesFile) throw new Error("usage: run.js <flow.json> <routes.json> [--sandbox local|compose] [--root <dir>]");
   const cfg = loadFlowConfig(flowFile, { backend: values.sandbox as "local" | undefined });
-  const agentCfg = ((cfg as unknown as { agent?: { goal?: string; baseUrl?: string; service?: string } }).agent) ?? {}; // env-expanded
+  const agentCfg: Partial<NonNullable<FlowConfig["agent"]>> = cfg.agent ?? {}; // env-expanded, schema-checked by loadFlowConfig
   // Allowlist: the service under test (same host the flow's waitFor / screenshots use). Local demo → loopback only.
   const svc = new URL(agentCfg.baseUrl ?? DEFAULT_BASE_URL);
   const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: [svc.host], allowCidrs: loopbackCidrs([svc]) });

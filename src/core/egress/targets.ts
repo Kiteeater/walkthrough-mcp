@@ -52,9 +52,3 @@ export async function assertNoCoreBlockedTargets(tokens: string[], resolveAll: R
   }
 }
 
-/** Same check for one URL (flow http actions, readiness polling). */
-export function assertUrlNotCoreBlocked(url: string, resolveAll: ResolveAll = defaultResolveAll): Promise<void> {
-  let host: string;
-  try { host = new URL(url).hostname; } catch { return Promise.resolve(); }
-  return assertNoCoreBlockedTargets([host], resolveAll);
-}

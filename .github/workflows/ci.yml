@@ -22,7 +22,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       # Real-Chromium SSRF tests (test/ssrf-policy.test.ts) must run here, not be skipped.
       - run: npx playwright install --with-deps chromium
-      - run: npm run build
+      # No `npm run build` here: vitest's globalSetup (test/global-setup.ts) cleans and rebuilds dist before each run.
       - run: npx vitest run --reporter=verbose test/ssrf-policy.test.ts
         env: { REQUIRE_CHROMIUM: "1" }
       # Full suite through the count gate: fails on any skipped/todo test or if fewer than

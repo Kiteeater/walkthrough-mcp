@@ -6,6 +6,7 @@ import type { ReplayConfig } from "./replay.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";
+import { parseFlowConfig, parseJsonConfig } from "./config.js";
 import { withDeadline } from "./settle.js";
 import type { ClaimKind, SandboxConfig } from "./types.js";
 import type { WalkthroughCore } from "./walkthrough.js";
@@ -20,6 +21,8 @@ export interface FlowConfig {
   sources?: { as: string; file: string; line: number; note?: string }[];
   claims: { question: string; conclusion: string; kind: ClaimKind; evidence?: string[]; sources?: string[] }[];
   keepRunning?: boolean;
+  /** Demo agents only (src/demo-agent): what the agent checks. `walkthrough run` ignores it. */
+  agent?: { goal: string; baseUrl: string; service?: string; orders?: string[] };
   /** Token-type values substituted for `${NAME}` at load time; runFlow registers them with the core's Redactor. */
   substituted?: string[];
 }
@@ -55,7 +58,7 @@ export function loadFlowConfig(path: string, overrides: Partial<Pick<SandboxConf
   // `${NAME}` (upper-case env var) in any string is replaced from the environment, so per-run values (an OS-assigned
   // port, a readiness token for waitFor.header) never have to be hard-coded. An unset variable is an error.
   const used: string[] = [];
-  const cfg = expandEnv(JSON.parse(readFileSync(path, "utf8")), path, process.env, used) as FlowConfig;
+  const cfg = parseFlowConfig(expandEnv(parseJsonConfig(readFileSync(path, "utf8"), path), path, process.env, used), path);
   if (used.length) cfg.substituted = [...new Set(used)];
   cfg.sandbox.cwd = resolve(dirname(path), cfg.sandbox.cwd ?? ".");
   if (overrides.up) cfg.sandbox.up = overrides.up;
