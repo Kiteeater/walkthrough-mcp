@@ -23,7 +23,8 @@ function setup(cfg: Record<string, unknown> = {}) {
   const bin = mkdtempSync(join(tmpdir(), "wt-mq-"));
   const dir = join(bin, "msgbodys");
   const conn: ConnectorConfig = { ...mq, messageBody: { ...preset.messageBody!, dir }, binary: mockMqadmin(bin, { dir, ...cfg }) };
-  const { core, root } = mockCore({ secrets: [TOKEN], connectors: [conn] });
+  // Injected resolver: the name server is pinned to this loopback answer (no real DNS).
+  const { core, root } = mockCore({ secrets: [TOKEN], connectors: [conn], resolver: async () => "127.0.0.1" });
   const calls = () => (existsSync(join(bin, "calls.jsonl")) ? readFileSync(join(bin, "calls.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { argv: string[]; env: string[] }) : []);
   const start = async () => (await core.startWalkthrough({ title: "mq", sandbox: { cwd: root, up: "true", down: "true" } })).id;
   const ev = (id: string, evId: string) => readFileSync(join(root, ".walkthrough", id, "evidence", `${evId}.txt`), "utf8");
@@ -130,7 +131,7 @@ describe("mqadmin via run_cli with a mock binary", () => {
     try {
       const id = await start();
       const r = await core.runCli(id, { connector: "mqadmin", argv: ["topicStatus", "-t", "orders"] });
-      expect(calls()[0].argv).toEqual(["topicStatus", "-t", "orders", "-n", NS]);
+      expect(calls()[0].argv).toEqual(["topicStatus", "-t", "orders", "-n", "127.0.0.1:9876"]); // pinned to the checked IP
       expect(calls()[0].env).not.toContain("NAMESRV_ADDR");
       expect(r.evidence).toMatchObject({ executedBy: "core", kind: "cli_output" });
       expect(r.log.cli).toEqual({ name: "mqadmin", version: "mqadmin 5.5.1-mock", profile: "readonly-ops" });
