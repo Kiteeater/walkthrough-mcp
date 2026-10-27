@@ -99,7 +99,7 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
     for (const cap of cfg.captures) {
       // Screenshots: same guarded browser path as capture_page, under the flow policy (own host only, core blocklist).
       const ev = cap.type === "screenshot"
-        ? await core.captureEvidence(w.id, { type: "screenshot", url: cap.url }, { policy: await flowPolicy(cap.url) })
+        ? await core.captureFlowScreenshot(w.id, cap.url)
         : await core.captureEvidence(w.id, { type: "logs", service: cap.service });
       names.set(cap.as, ev.id);
     }

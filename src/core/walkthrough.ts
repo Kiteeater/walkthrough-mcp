@@ -17,7 +17,7 @@ import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
-import { checkHop, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { checkHop, flowPolicy, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { assertNoCoreBlockedTargets } from "./blocklist.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
@@ -262,8 +262,22 @@ export class WalkthroughCore {
   captureEvidence(
     id: string,
     input: { type: "screenshot"; url: string; checkId?: string } | { type: "logs"; service: string; checkId?: string; delta?: boolean } | SubmittedEvidence,
-    /** Internal (runFlow only, never reachable from MCP): egress policy for screenshots instead of replay.allowHosts. */
-    opts: { policy?: ReplayConfig } = {},
+  ): Promise<Evidence> {
+    return this.captureEvidenceWith(id, input);
+  }
+
+  /**
+   * Flow screenshot (runFlow only): same guarded path, under flowPolicy(url) — own host only, core blocklist and IP
+   * rules still apply. The policy is derived here from the URL; no caller can pass one in.
+   */
+  async captureFlowScreenshot(id: string, url: string): Promise<Evidence> {
+    return this.captureEvidenceWith(id, { type: "screenshot", url }, await flowPolicy(url));
+  }
+
+  private captureEvidenceWith(
+    id: string,
+    input: { type: "screenshot"; url: string; checkId?: string } | { type: "logs"; service: string; checkId?: string; delta?: boolean } | SubmittedEvidence,
+    policy?: ReplayConfig,
   ): Promise<Evidence> {
     return this.withLock(id, async () => {
     const w = this.load(id);
@@ -275,9 +289,21 @@ export class WalkthroughCore {
       ev = { id: evId, type: "screenshot", kind: "screenshot", path: `evidence/${evId}.png`, source: this.redactor.text(input.url), executedBy: "core" };
       // B1: same guarded browser path as capture_page (core blocklist, allowHosts + IP rules, pinned DNS, every redirect
       // hop re-checked, read-only methods); only the screenshot is kept. No login state is loaded for this path.
-      const cfg = opts.policy ?? this.deps.replay;
+      const cfg = policy ?? this.deps.replay;
       if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("screenshot capture needs replay.allowHosts (same policy as capture_page)");
-      writeFileSync(abs(ev.path), await this.guardedPage(cfg, input.url).then((p) => p.screenshot));
+      const p = await this.guardedPage(cfg, input.url);
+      writeFileSync(abs(ev.path), p.screenshot);
+      // Requests the guard blocked while loading the page are not dropped: redacted entries go to the command log.
+      if (p.blocked?.length) {
+        const r = this.redactor.with(blockedUrlSecrets(p.blocked.map((b) => b.url)));
+        const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+          ts: this.ts(), walkthroughId: id, type: "capture_screenshot", ...(input.checkId ? { checkId: input.checkId } : {}), evidenceIds: [evId],
+          navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
+          blocked: p.blocked.slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) })),
+          blockedCount: p.blocked.length, executedBy: "core",
+        });
+        w.commandLogHead = { seq: log.seq, hash: log.hash };
+      }
     } else if (input.type === "logs") {
       ev = { id: evId, type: "logs", kind: "log", path: `evidence/${evId}.log`, source: `${w.sandbox.backend === "local" ? "local" : "docker"}:${input.service}`, executedBy: "core" };
       const raw = await this.deps.sandboxFactory(w.sandbox, w.id).logs(input.service);

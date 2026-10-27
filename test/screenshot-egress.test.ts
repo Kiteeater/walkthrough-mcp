@@ -22,7 +22,8 @@ const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: 
 const PROD = CORE_BLOCKED_IPS[0];
 const STANDIN = "127.0.0.2";
 
-let srv: http.Server, port = 0;
+let srv: http.Server, port = 0, srvHits = 0;
+const SECRET = "SHOTblockedTok9917";
 let trap: net.Server, trapPort = 0, trapHits = 0;
 let undo: () => void = () => undefined;
 const core = (replay: ReplayConfig | undefined, capturer: Capturer = new PlaywrightCapturer()) =>
@@ -30,6 +31,8 @@ const core = (replay: ReplayConfig | undefined, capturer: Capturer = new Playwri
 
 beforeAll(async () => {
   srv = http.createServer((req, res) => {
+    srvHits++;
+    if (req.url === "/with-blocked") { res.writeHead(200, { "content-type": "text/html" }); return res.end(`<h1>page</h1><img src="http://${STANDIN}:${trapPort}/x.png?token=${SECRET}">`); }
     if (req.url === "/redir") { res.writeHead(302, { location: `http://${STANDIN}:${trapPort}/` }); return res.end(); }
     res.writeHead(200, { "content-type": "text/html" }); res.end("<h1>ok</h1>");
   });
@@ -90,9 +93,11 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
   it("(2) host outside allowHosts throws the guard error", async () => {
     const c = core({ allowHosts: [`127.0.0.1:${port + 1}`], allowCidrs: ["127.0.0.1/32"] });
     const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const before = srvHits;
     const err = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` }).catch((e) => e);
     expect(err).toBeInstanceOf(ReplayRejectedError);
     expect(String(err.message)).toMatch(/allowHosts|not allowed|allowlist/i);
+    expect(srvHits).toBe(before); // the not-allowlisted server got no request at all
   }, 60_000);
 
   it("(3) 302 from an allowed page to the core-blocked stand-in throws the guard error; no connection", async () => {
@@ -116,4 +121,38 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
     expect(err).toBeInstanceOf(ReplayRejectedError);
     expect(trapHits).toBe(before);
   }, 60_000);
+
+  it("requests blocked while loading the page are written (redacted) to the command log", async () => {
+    const c = core({ allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const before = trapHits;
+    const ev = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/with-blocked` });
+    expect(trapHits).toBe(before);
+    const raw = readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8");
+    expect(raw).not.toContain(SECRET);
+    const entry = raw.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "capture_screenshot");
+    expect(entry).toMatchObject({ evidenceIds: [ev.id], executedBy: "core" });
+    expect(entry.blockedCount).toBeGreaterThanOrEqual(1);
+    expect(entry.blocked.some((b: { url: string }) => b.url.includes(`${STANDIN}:${trapPort}/x.png`))).toBe(true);
+    expect(c.verifyCommandLog(w.id).ok).toBe(true);
+  }, 60_000);
+});
+
+describe("B1: flow policy is internal", () => {
+  it("captureEvidence ignores any extra policy argument: without replay.allowHosts a screenshot is still refused", async () => {
+    let called = 0;
+    const c = core(undefined, { page: async () => { called++; throw new Error("must not run"); } });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const call = c.captureEvidence as unknown as (id: string, i: unknown, o: unknown) => Promise<unknown>;
+    const err = await call.call(c, w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` }, { policy: { allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] } }).catch((e) => e);
+    expect(err).toBeInstanceOf(ReplayRejectedError);
+    expect(called).toBe(0);
+  });
+  it("the flow path derives its own policy (own host only) and still refuses core-blocked targets before the browser", async () => {
+    let called = 0;
+    const c = core(undefined, { page: async () => { called++; throw new Error("must not run"); } });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    await expect(c.captureFlowScreenshot(w.id, `http://${STANDIN}:${trapPort}/`)).rejects.toThrow(/core blocklist/);
+    expect(called).toBe(0);
+  });
 });
