@@ -6,7 +6,8 @@ import type { AddressInfo } from "node:net";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { acquireFileLock, Redactor, renderWalkthrough, WalkthroughCore, type Check, type Sandbox } from "../src/core/index.js";
+import { Redactor, renderWalkthrough, WalkthroughCore, type Check, type Sandbox } from "../src/core/index.js";
+import { acquireFileLock } from "../src/core/lockfile.js";
 import { SB } from "./helpers.js";
 
 let srv: http.Server, port = 0;

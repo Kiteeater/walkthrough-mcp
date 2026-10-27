@@ -7,21 +7,26 @@ import { createSandboxFactory } from "./sandbox.js";
 import { WalkthroughCore } from "./walkthrough.js";
 import type { ConnectorConfig } from "./runcli.js";
 
-export * from "./types.js";
-export * from "./redact.js";
-export * from "./sandbox.js";
-export * from "./capture.js";
-export * from "./metrics.js";
-export * from "./walkthrough.js";
-export * from "./render.js";
-export * from "./flow.js";
-export * from "./checks.js";
-export * from "./registry.js";
-export * from "./sources.js";
-export * from "./schemas.js";
-export * from "./settle.js";
-export * from "./argv.js";
-export * from "./runcli.js";
+// Public API of the package (the only entry in package.json "exports"): what the CLI, the MCP server, the demo agent
+// and the examples use, plus the types needed to construct a WalkthroughCore. Guard internals (egress/*, loginstate)
+// are not re-exported; tests import those from their source files.
+export type { Check, CheckResult, Expect, RootCauseLink, SandboxConfig, Severity, Walkthrough } from "./types.js";
+export { Redactor } from "./redact.js";
+export { createSandboxFactory, LocalSandbox, type Sandbox } from "./sandbox.js";
+export { PlaywrightCapturer, type Capturer } from "./capture.js";
+export type { PrometheusConfig } from "./metrics.js";
+export { ClaimRejectedError, WalkthroughCore } from "./walkthrough.js";
+export { renderWalkthrough } from "./render.js";
+export { loadFlowConfig, runFlow, type FlowConfig } from "./flow.js";
+export { DEFAULT_ALERTS, traceStack } from "./checks.js";
+export {
+  captureEvidenceShape, captureInput, COLLECT_WATCH_DESC, collectWatchShape, evaluateCheckShape, importInput, importMcpResultShape,
+  planChecksShape, QUERY_METRICS_DESC, queryMetricsShape, recordFindingShape, START_WATCH_DESC, startWatchShape, watchInput,
+} from "./schemas.js";
+export { CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } from "./runcli.js";
+export type { ReplayConfig } from "./replay.js";
+export { ReplayRejectedError } from "./egress/policy.js";
+export { spawnDetachedPoller } from "./alerts.js";
 
 /** Default wiring: Docker Compose sandbox + Playwright capturer. */
 export function createCore(root = process.cwd(), capturer: Capturer = new PlaywrightCapturer(), replay?: ReplayConfig, connectors?: ConnectorConfig[]): WalkthroughCore {
@@ -29,7 +34,7 @@ export function createCore(root = process.cwd(), capturer: Capturer = new Playwr
 }
 
 /** `replay` block of `<root>/walkthrough.config.json`, if any (or the file named by WALKTHROUGH_CONFIG). */
-export function replayConfigFrom(root: string): ReplayConfig | undefined {
+function replayConfigFrom(root: string): ReplayConfig | undefined {
   const f = process.env.WALKTHROUGH_CONFIG ?? join(root, "walkthrough.config.json");
   if (!existsSync(f)) return undefined;
   try { return (JSON.parse(readFileSync(f, "utf8")) as { replay?: ReplayConfig }).replay; } catch { return undefined; }
@@ -38,16 +43,3 @@ export function replayConfigFrom(root: string): ReplayConfig | undefined {
 export function readJsonFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
-export * from "./imports.js";
-export * from "./sls.js";
-export * from "./har.js";
-export * from "./replay.js";
-export * from "./egress/allowhosts.js";
-export * from "./egress/policy.js";
-export * from "./egress/fetch.js";
-export * from "./egress/ws.js";
-export * from "./loginstate.js";
-export * from "./egress/targets.js";
-export * from "./alerts.js";
-export * from "./lockfile.js";
-export * from "./execpolicy.js";

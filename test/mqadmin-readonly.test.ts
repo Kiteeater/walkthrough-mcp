@@ -2,7 +2,8 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CLI_ENV_DENY, CliRejectedError, PRESET_CONNECTORS, cliArgv, collectMessageBodies, type ConnectorConfig } from "../src/core/index.js";
+import { CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } from "../src/core/index.js";
+import { CLI_ENV_DENY, cliArgv, collectMessageBodies } from "../src/core/runcli.js";
 import { mockCore } from "./helpers.js";
 // @ts-expect-error plain ESM helper without types
 import { writeMockMqadmin } from "../examples/trace-demo/mock-mqadmin.mjs";

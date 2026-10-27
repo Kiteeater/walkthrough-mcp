@@ -8,7 +8,8 @@ import type { AddressInfo, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { loadLoginState, PlaywrightCapturer, Redactor, renderWalkthrough, ReplayRejectedError, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { PlaywrightCapturer, Redactor, renderWalkthrough, ReplayRejectedError, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { loadLoginState } from "../src/core/loginstate.js";
 import { SB } from "./helpers.js";
 
 const require = createRequire(import.meta.url);

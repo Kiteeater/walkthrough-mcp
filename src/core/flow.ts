@@ -1,6 +1,8 @@
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { flowPolicy, ReplayRejectedError, type Resolver } from "./egress/policy.js";
 import { guardedFetch } from "./egress/fetch.js";
+import { hostAllowed } from "./egress/allowhosts.js";
+import type { ReplayConfig } from "./replay.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";
@@ -87,7 +89,24 @@ export async function waitForUrl(url: string, timeoutMs: number, attemptTimeoutM
   throw new Error(`timed out waiting for ${url}${last}`);
 }
 
+/**
+ * Config rule: every host a flow contacts (waitFor.url, screenshot captures) must also be listed in replay.allowHosts,
+ * so the flow can never reach a host the core's own policy would refuse. Checked before the sandbox starts.
+ */
+export function assertFlowHostsAllowed(cfg: FlowConfig, replay: Readonly<ReplayConfig> | undefined): void {
+  const urls = [
+    ...(cfg.waitFor ? [{ where: "waitFor.url", url: cfg.waitFor.url }] : []),
+    ...cfg.captures.flatMap((c) => (c.type === "screenshot" ? [{ where: `captures[${c.as}].url`, url: c.url }] : [])),
+  ];
+  for (const { where, url } of urls) {
+    const u = new URL(url);
+    if (!replay?.allowHosts?.length) throw new Error(`flow config: ${where} contacts ${u.host}, but replay.allowHosts is not configured (flow hosts must be listed there)`);
+    if (!hostAllowed(u, replay as ReplayConfig)) throw new Error(`flow config: ${where} host ${u.host} is not in replay.allowHosts`);
+  }
+}
+
 export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { skipWait?: boolean; agent?: (id: string) => Promise<void> } = {}) {
+  assertFlowHostsAllowed(cfg, core.replayPolicy());
   if (cfg.substituted?.length) core.addRedactions(cfg.substituted); // never in evidence / reports
   const w = core.startWalkthrough({ title: cfg.title, sandbox: cfg.sandbox });
   const names = new Map<string, string>();

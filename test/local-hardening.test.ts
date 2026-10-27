@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { allowlistEnv, LocalSandbox, type SandboxConfig } from "../src/core/index.js";
+import { LocalSandbox, type SandboxConfig } from "../src/core/index.js";
+import { allowlistEnv } from "../src/core/sandbox.js";
 
 const cwd = () => mkdtempSync(join(tmpdir(), "wt-lh-"));
 const cfg = (local: SandboxConfig["local"]): SandboxConfig => ({ backend: "local", cwd: cwd(), up: "unused", down: "unused", local });

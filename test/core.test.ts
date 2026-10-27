@@ -1,7 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NotImplementedMetricsAdapter, Redactor, renderWalkthrough, sha256File, secretValues } from "../src/core/index.js";
+import { Redactor, renderWalkthrough } from "../src/core/index.js";
+import { NotImplementedMetricsAdapter } from "../src/core/metrics.js";
+import { secretValues } from "../src/core/redact.js";
+import { sha256File } from "../src/core/walkthrough.js";
 import { LOCAL_REPLAY, mockCore, SB } from "./helpers.js";
 
 describe("core", () => {

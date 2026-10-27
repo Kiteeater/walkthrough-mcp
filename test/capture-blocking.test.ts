@@ -7,7 +7,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PlaywrightCapturer, Redactor, redactHar, redactUrlsIn, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { PlaywrightCapturer, Redactor, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { redactHar, redactUrlsIn } from "../src/core/har.js";
 import { SB } from "./helpers.js";
 
 const require = createRequire(import.meta.url);

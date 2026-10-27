@@ -2,7 +2,9 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliRejectedError, LocalSandbox, PRESET_CONNECTORS, sh, tokenize, type ConnectorConfig } from "../src/core/index.js";
+import { CliRejectedError, LocalSandbox, PRESET_CONNECTORS, type ConnectorConfig } from "../src/core/index.js";
+import { tokenize } from "../src/core/argv.js";
+import { sh } from "../src/core/sandbox.js";
 import { mockCore } from "./helpers.js";
 
 const SECRET = "LTAI-fake-secret-9f8e7d";

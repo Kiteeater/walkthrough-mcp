@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cliArgv, PRESET_CONNECTORS } from "../src/core/index.js";
+import { PRESET_CONNECTORS } from "../src/core/index.js";
+import { cliArgv } from "../src/core/runcli.js";
 // @ts-expect-error plain ESM helper without types
 import { writeMockAliyun } from "../examples/trace-demo/mock-aliyun.mjs";
 

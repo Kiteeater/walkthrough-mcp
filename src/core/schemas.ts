@@ -50,7 +50,6 @@ export const recordFindingShape = {
   check_id: z.string().optional(),
 };
 
-export const signOffShape = { id: z.string(), decision: z.enum(["accept", "reject"]), comment: z.string().optional() };
 
 type Cap = { [K in keyof typeof captureEvidenceShape]?: unknown };
 /** Map capture_evidence tool args to the core input. */
