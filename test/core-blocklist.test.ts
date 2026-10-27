@@ -5,8 +5,14 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 const require_ = createRequire(import.meta.url);
-import { addTestCoreBlocked, assertNoCoreBlockedTargets, checkHop, CliRejectedError, CORE_BLOCKED_IPS, guardedGet, guardedRequest, guardedWebSocket, hostCandidates, httpSource, ipProblem,
-  promInstantQuery, Redactor, replayRequest, ReplayRejectedError, waitForUrl, WalkthroughCore, type ConnectorConfig, type Sandbox } from "../src/core/index.js";
+import { CliRejectedError, Redactor, ReplayRejectedError, WalkthroughCore, type ConnectorConfig, type Sandbox } from "../src/core/index.js";
+import { guardedGet, guardedRequest, replayRequest } from "../src/core/egress/fetch.js";
+import { addTestCoreBlocked, checkHop, CORE_BLOCKED_IPS, ipProblem } from "../src/core/egress/policy.js";
+import { assertNoCoreBlockedTargets, hostCandidates } from "../src/core/egress/targets.js";
+import { guardedWebSocket } from "../src/core/egress/ws.js";
+import { waitForUrl } from "../src/core/flow.js";
+import { promInstantQuery } from "../src/core/metrics.js";
+import { httpSource } from "../src/core/sources.js";
 import { SB } from "./helpers.js";
 
 const BAD = "34.142.135.39";

@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { judgeMetric, promQueryUrl, Redactor, renderWalkthrough, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { Redactor, renderWalkthrough, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { judgeMetric, promQueryUrl } from "../src/core/metrics.js";
 import { SB } from "./helpers.js";
 
 // Token in an env var whose NAME does not look secret: only explicit per-run redaction can hide it.

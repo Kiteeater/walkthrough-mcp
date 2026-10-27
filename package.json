@@ -9,6 +9,13 @@
     "walkthrough-mcp": "dist/mcp/index.js"
   },
   "main": "dist/core/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist"
   ],

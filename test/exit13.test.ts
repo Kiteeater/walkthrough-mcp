@@ -25,6 +25,8 @@ describe("exit 13: waitForUrl with a fetch that never settles", () => {
       title: "exit13", sandbox: { cwd: ".", up: "true", down: "true" },
       waitFor: { url: "http://127.0.0.1:9/health", timeoutMs: 1500, attemptTimeoutMs: 300 }, captures: [], claims: [],
     }));
+    // flow hosts must be in replay.allowHosts (read from <root>/walkthrough.config.json)
+    writeFileSync(join(dir, "walkthrough.config.json"), JSON.stringify({ replay: { allowHosts: ["127.0.0.1:9"] } }));
     const script = join(dir, "run.mjs");
     writeFileSync(script, `globalThis.fetch = () => new Promise(() => {});
 process.argv = [process.argv[0], "walkthrough", "run", "--config", ${JSON.stringify(cfg)}, "--root", ${JSON.stringify(dir)}];

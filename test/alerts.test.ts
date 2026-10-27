@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Redactor, renderWalkthrough, MAX_ACTIVE_WATCHES, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { Redactor, renderWalkthrough, WalkthroughCore, type Check, type PrometheusConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { MAX_ACTIVE_WATCHES } from "../src/core/alerts.js";
 import { SB } from "./helpers.js";
 
 const TOKEN = "promWATCHlogin4242";

@@ -2,7 +2,8 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cliArgv, CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } from "../src/core/index.js";
+import { CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } from "../src/core/index.js";
+import { cliArgv } from "../src/core/runcli.js";
 import { mockCore } from "./helpers.js";
 
 const aliyun = PRESET_CONNECTORS.find((c) => c.name === "aliyun")!;

@@ -13,7 +13,7 @@ describe("redaction", () => {
 
   it("never writes env secret values to the output dir or HTML", async () => {
     process.env.WALKTHROUGH_TEST_API_KEY = SECRET;
-    const { core, root } = mockCore({ redactor: Redactor.fromEnv(), logs: `web | key=${SECRET}`, output: `booted with ${SECRET}` });
+    const { core, root } = mockCore({ redactor: Redactor.fromEnv(), logs: `web | key=${SECRET}`, output: `booted with ${SECRET}`, replay: { allowHosts: ["localhost:3000"] } });
     const cfg: FlowConfig = {
       title: `Demo ${SECRET}`,
       sandbox: { cwd: ".", up: `env TOKEN=${SECRET} docker compose up -d`, down: "docker compose down", allowExec: true },

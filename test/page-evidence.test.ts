@@ -4,7 +4,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { authFor, ipProblem, Redactor, replayRequest, WalkthroughCore, type Check, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { Redactor, WalkthroughCore, type Check, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { authFor } from "../src/core/egress/allowhosts.js";
+import { replayRequest } from "../src/core/egress/fetch.js";
+import { ipProblem } from "../src/core/egress/policy.js";
 import { mkdtempSync } from "node:fs";
 import { SB } from "./helpers.js";
 
@@ -295,14 +298,14 @@ describe("replay (core-executed)", () => {
 
 describe("name-pattern redaction and ReDoS guard", () => {
   it("secret header names by pattern; param names anchored to the last segment", async () => {
-    const { SECRET_HEADER, SECRET_PARAM } = await import("../src/core/index.js");
+    const { SECRET_HEADER, SECRET_PARAM } = await import("../src/core/har.js");
     for (const h of ["X-Access-Token", "Api-Key", "X-Goog-Api-Key", "X-Session-Id", "Set-Cookie", "Proxy-Authorization", "X-CSRF-Token"]) expect(SECRET_HEADER.test(h), h).toBe(true);
     for (const h of ["Accept", "Content-Type", "User-Agent", "Cache-Control"]) expect(SECRET_HEADER.test(h), h).toBe(false);
     for (const n of ["access_token", "api_key", "X-Amz-Signature", "sid", "jwt", "ticket", "code", "client_secret"]) expect(SECRET_PARAM.test(n), n).toBe(true);
     for (const n of ["barcode", "zipcode", "monkey", "page", "sort"]) expect(SECRET_PARAM.test(n), n).toBe(false);
   });
   it("agent regexes: nested quantifiers, backrefs and over-long patterns are rejected", async () => {
-    const { safeRegex } = await import("../src/core/index.js");
+    const { safeRegex } = await import("../src/core/har.js");
     for (const p of ["(a+)+$", "(a*)*", "(\\w+\\s?)+$", "(a|aa)+", "(.*){2,}", "(a)\\1", "x".repeat(201)]) expect(() => safeRegex(p), p).toThrow();
     expect(safeRegex("/api/orders$").test("http://x/api/orders")).toBe(true);
     const { core } = mk();

@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ClaimRejectedError, evaluateExpect, type Check, type Expect } from "../src/core/index.js";
+import { ClaimRejectedError, type Check, type Expect } from "../src/core/index.js";
+import { evaluateExpect } from "../src/core/checks.js";
 import { mockCore, SB } from "./helpers.js";
 
 const chk = (id: string, expect: Expect, extra: Partial<Check> = {}): Check =>

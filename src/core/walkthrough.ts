@@ -1147,6 +1147,9 @@ export class WalkthroughCore {
   }
 
   redact(s: string): string { return this.redactor.text(s); }
+
+  /** The replay policy this core enforces (runFlow checks flow hosts against it). */
+  replayPolicy(): Readonly<ReplayConfig> | undefined { return this.deps.replay; }
 }
 
 /** Matching key in capture.allowWebSocketHosts for a ws(s) URL: exact host:port, or bare host (any port). */

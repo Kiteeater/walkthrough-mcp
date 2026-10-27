@@ -5,6 +5,8 @@ import { spawnDetachedPoller, createCore, loadFlowConfig, readJsonFile, renderWa
 
 const USAGE = `usage:
   walkthrough run --config <file> [--sandbox compose|local] [--up <cmd>] [--down <cmd>] [--root <dir>]
+      (every host the flow contacts — waitFor.url, screenshot captures — must be in replay.allowHosts of
+       <root>/walkthrough.config.json, otherwise the run is refused before the sandbox starts)
   walkthrough render <id> [--root <dir>]
   walkthrough sign-off <id> --decision accept|reject [--comment <text>] [--root <dir>]
       (HUMAN ONLY: the report-level decision; not exposed over MCP)

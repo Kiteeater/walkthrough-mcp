@@ -2,7 +2,9 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CliRejectedError, cliArgv, judgeSlsEmpty, PRESET_CONNECTORS, renderWalkthrough } from "../src/core/index.js";
+import { CliRejectedError, PRESET_CONNECTORS, renderWalkthrough } from "../src/core/index.js";
+import { cliArgv } from "../src/core/runcli.js";
+import { judgeSlsEmpty } from "../src/core/sls.js";
 import { checkSlsInfra } from "../src/demo-agent/trace.js";
 import { mockCore } from "./helpers.js";
 // @ts-expect-error plain ESM helper without types

@@ -61,7 +61,7 @@ describe("local backend", () => {
   it("captures child-process logs, shows the not-isolated badge, and leaks no secret", async () => {
     process.env.WT_LOCAL_API_KEY = SECRET;
     const root = mkdtempSync(join(tmpdir(), "wt-local-"));
-    const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: fakeCapturer, redactor: Redactor.fromEnv() });
+    const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: fakeCapturer, redactor: Redactor.fromEnv(), replay: { allowHosts: ["localhost"] } });
     const cfg: FlowConfig = {
       title: "local",
       sandbox: {

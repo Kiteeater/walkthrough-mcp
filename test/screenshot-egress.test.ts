@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { addTestCoreBlocked, checkHop, CORE_BLOCKED_IPS, PlaywrightCapturer, Redactor, ReplayRejectedError, runFlow, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { PlaywrightCapturer, Redactor, ReplayRejectedError, runFlow, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { addTestCoreBlocked, checkHop, CORE_BLOCKED_IPS } from "../src/core/egress/policy.js";
 import { SB } from "./helpers.js";
 
 const require = createRequire(import.meta.url);
@@ -46,6 +47,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { undo(); await new Promise((r) => srv.close(r)); await new Promise((r) => trap.close(r)); });
 
+// Flow hosts must be listed in replay.allowHosts; no allowCidrs, so the loopback exception comes from the flow policy.
+const listed = (): ReplayConfig => ({ allowHosts: [`127.0.0.1:${port}`] });
 const both = (): ReplayConfig => ({ allowHosts: [`127.0.0.1:${port}`, `${STANDIN}:${trapPort}`], allowCidrs: ["127.0.0.1/32", `${STANDIN}/32`] });
 
 describe("B1: guard unit check (no browser)", () => {
@@ -114,10 +117,10 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
   }, 60_000);
 
   it("flow screenshot captures use the guarded path: own page works, 302 to the stand-in throws; no connection", async () => {
-    const ok = core(undefined);
+    const ok = core(listed());
     const r = await runFlow(ok, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://127.0.0.1:${port}/` }], claims: [] }, { skipWait: true });
     expect(ok.load(r.id).evidence[0].kind).toBe("screenshot");
-    const bad = core(undefined);
+    const bad = core(listed());
     const before = trapHits;
     const err = await runFlow(bad, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://127.0.0.1:${port}/redir` }], claims: [] }, { skipWait: true }).catch((e) => e);
     expect(err).toBeInstanceOf(ReplayRejectedError);
@@ -152,7 +155,7 @@ describe("B1: flow policy is internal", () => {
   });
   it("the flow path derives its own policy (own host only) and still refuses core-blocked targets before the browser", async () => {
     let called = 0;
-    const c = core(undefined, { page: async () => { called++; throw new Error("must not run"); } });
+    const c = core({ allowHosts: [`${STANDIN}:${trapPort}`] }, { page: async () => { called++; throw new Error("must not run"); } });
     await expect(runFlow(c, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://${STANDIN}:${trapPort}/` }], claims: [] }, { skipWait: true })).rejects.toThrow(/core blocklist/);
     expect(called).toBe(0);
   });

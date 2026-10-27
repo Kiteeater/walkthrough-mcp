@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fmtTime, Redactor, renderTimeZone, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { Redactor, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { fmtTime, renderTimeZone } from "../src/core/render.js";
 import { SB } from "./helpers.js";
 
 const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };

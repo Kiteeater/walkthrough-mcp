@@ -2,7 +2,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSandboxFactory, execDecision, PRESET_CONNECTORS, Redactor, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { createSandboxFactory, PRESET_CONNECTORS, Redactor, renderWalkthrough, WalkthroughCore, type Sandbox } from "../src/core/index.js";
+import { execDecision } from "../src/core/execpolicy.js";
 import { SB } from "./helpers.js";
 
 /** Records what the sandbox was asked to spawn; never runs anything. */

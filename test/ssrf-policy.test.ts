@@ -7,7 +7,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ipProblem, norm, PlaywrightCapturer, Redactor, ReplayRejectedError, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { PlaywrightCapturer, Redactor, ReplayRejectedError, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { ipProblem, norm } from "../src/core/egress/policy.js";
 import { SB } from "./helpers.js";
 
 describe("IPv6 forms embedding IPv4 are judged by the IPv4 rules", () => {

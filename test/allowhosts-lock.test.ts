@@ -6,7 +6,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkHop, loadLoginState, Redactor, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { Redactor, WalkthroughCore, type Capturer, type ReplayConfig, type Sandbox } from "../src/core/index.js";
+import { checkHop } from "../src/core/egress/policy.js";
+import { loadLoginState } from "../src/core/loginstate.js";
 import { SB } from "./helpers.js";
 
 const LOOPBACK = "127.0.0.1";

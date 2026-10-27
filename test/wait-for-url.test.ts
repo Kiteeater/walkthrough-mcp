@@ -108,7 +108,7 @@ describe("PORT is substituted but never redacted", () => {
       expect(cfg.substituted).toEqual([token]);
       expect(cfg.title).toBe(`svc 127.0.0.1:${port}`);
       const sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: async () => ({ exitCode: 0, output: "" }), exec: async () => ({ exitCode: 0, output: "" }), logs: async () => "" };
-      const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => {} }, redactor: new Redactor([]) });
+      const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => {} }, redactor: new Redactor([]), replay: { allowHosts: [`127.0.0.1:${port}`] } });
       const body = `HTTP/1.1 200\nx-walkthrough-demo-token: ${token}\n\n{"orderId":"ord-${port}","createdAt":"2026-10-13T07:${port.slice(0, 2)}:00.${port}Z","amount":${port}.50,"url":"http://127.0.0.1:${port}/api"}`;
       let evPath = "";
       const { id, html } = await runFlow(core, cfg, { skipWait: true, agent: async (wid) => {
