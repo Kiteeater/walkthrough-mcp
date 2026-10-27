@@ -14,6 +14,10 @@
 //    Not hits: a member of some other object (`guard.fetch(...)`) or a declared member name (`fetch(url: string)`).
 // Only exemption by shape: `import { isIP, isIPv4, isIPv6, BlockList, SocketAddress } from "node:net"` (pure address
 // helpers, no sockets). A default/namespace import, any other name, or require/import() of net is a hit.
+// Suspicious (rule "suspicious"): import()/require() with a non-literal argument, createRequire / node:module /
+// node:vm / worker_threads, eval / Function / new Function, process.binding / process._linkedBinding,
+// Reflect.get(<global>, ...), <global>[<non-literal key>], destructuring fetch/WebSocket out of a global object
+// (counted as "net"), and assigning a global object to a variable (`const g = globalThis`).
 // .sh files: `#` comments removed (shell only), then the same module names / identifiers are matched as text,
 // since the scripts embed node code in heredocs.
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -22,10 +26,11 @@ import { join, relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-type Rule = "net" | "browser" | "process";
+type Rule = "net" | "browser" | "process" | "suspicious";
 const MODULES: Record<string, Rule> = {
   http: "net", https: "net", http2: "net", net: "net", tls: "net", dgram: "net", undici: "net", ws: "net",
   child_process: "process",
+  worker_threads: "suspicious", module: "suspicious", vm: "suspicious",
   playwright: "browser", "playwright-core": "browser", "@playwright/test": "browser",
 };
 const GLOBALS = new Set(["globalThis", "window", "self", "global"]);
@@ -85,7 +90,7 @@ function isDeclaredName(id: ts.Identifier): boolean {
 
 /** AST hits for one JS/TS source. */
 export function scanSource(file: string, text: string): Hit[] {
-  const kind = /\.(?:ts|mts|cts)$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : file.endsWith(".jsx") ? ts.ScriptKind.JSX : /\.(?:ts|mts|cts)$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
   const hits: Hit[] = [];
   const add = (node: ts.Node, rule: Rule) => {
@@ -98,6 +103,21 @@ export function scanSource(file: string, text: string): Hit[] {
     else if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)) spec = n.moduleReference.expression;
     else if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require")) && n.arguments[0]) spec = n.arguments[0];
     else if (ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument)) spec = n.argument.literal as ts.Expression;
+    const isLit = (e: ts.Expression) => ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e);
+    if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require")) && (!n.arguments[0] || !isLit(n.arguments[0]))) add(n, "suspicious");
+    if (ts.isIdentifier(n) && GLOBALS.has(n.text)) {
+      const p = n.parent;
+      if ((ts.isVariableDeclaration(p) && p.initializer === n) || (ts.isBinaryExpression(p) && p.right === n && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) {
+        add(p, "suspicious");
+        if (ts.isVariableDeclaration(p) && ts.isObjectBindingPattern(p.name) && p.name.elements.some((e) => IDENTS.has(((e.propertyName ?? e.name) as ts.Identifier).text ?? ""))) add(p, "net");
+      }
+    }
+    if (ts.isIdentifier(n) && (n.text === "eval" || n.text === "Function" || n.text === "createRequire") && !isDeclaredName(n) &&
+      !((ts.isPropertyAccessExpression(n.parent)) && n.parent.name === n && !(ts.isIdentifier(n.parent.expression) && GLOBALS.has(n.parent.expression.text)))) add(n, "suspicious");
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "process" && (n.name.text === "binding" || n.name.text === "_linkedBinding")) add(n, "suspicious");
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) && n.expression.expression.text === "Reflect" &&
+      n.expression.name.text === "get" && n.arguments[0] && ts.isIdentifier(n.arguments[0]) && GLOBALS.has(n.arguments[0].text)) add(n, "suspicious");
+    if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && GLOBALS.has(n.expression.text) && !ts.isStringLiteralLike(n.argumentExpression)) add(n, "suspicious");
     if (spec && (ts.isStringLiteral(spec) || ts.isNoSubstitutionTemplateLiteral(spec)) && !pureNetImport(n, spec.text)) { const r = moduleRule(spec.text); if (r) add(n, r); }
     if (ts.isIdentifier(n) && IDENTS.has(n.text)) {
       const p = n.parent;
@@ -113,13 +133,27 @@ export function scanSource(file: string, text: string): Hit[] {
   return hits;
 }
 
+/** Drop a shell `#` comment: only an unquoted `#` at the start of a word; `#` inside '...' / "..." is kept. */
+export function stripShellComment(line: string): string {
+  let q = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === "\\" && q === '"') i++; else if (c === q) q = ""; continue; }
+    if (c === "\\") { i++; continue; }
+    if (c === "'" || c === '"') q = c;
+    else if (c === "#" && (i === 0 || /\s/.test(line[i - 1])) && line[i + 1] !== "!") return line.slice(0, i);
+  }
+  return line;
+}
+
 /** Shell scripts: drop `#` comments, then match module names / identifiers as text (node code lives in heredocs). */
 export function scanShell(file: string, text: string): Hit[] {
   const hits: Hit[] = [];
   const mod = Object.keys(MODULES).map((m) => m.replace(/[/@-]/g, "\\$&")).join("|");
   const modRe = new RegExp(`["'\`](?:node:)?(${mod})(?:/[^"'\`]*)?["'\`]`);
   text.split("\n").forEach((raw, i) => {
-    const l = raw.replace(/(^|\s)#(?!!).*$/, "$1");
+    const l = stripShellComment(raw);
+    if (/(?:^|[\s;|&(`$])(?:curl|wget|nc|ncat|socat|telnet)(?=\s|$)/.test(l)) hits.push({ file, rule: "net", line: i + 1, text: l.trim().slice(0, 120) });
     const m = modRe.exec(l);
     if (m) hits.push({ file, rule: moduleRule(m[1])!, line: i + 1, text: l.trim().slice(0, 120) });
     if (/(?<![\w.$#])(?:fetch|WebSocket)\b|\b(?:globalThis|window|self|global)\.(?:fetch|WebSocket)\b/.test(l)) hits.push({ file, rule: "net", line: i + 1, text: l.trim().slice(0, 120) });
@@ -127,7 +161,7 @@ export function scanShell(file: string, text: string): Hit[] {
   return hits;
 }
 
-const EXT = /\.(?:ts|mts|cts|js|mjs|cjs|sh)$/;
+const EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|sh)$/;
 /** Every hit under `dirs` of `root` that is not covered by `allowed`. */
 export function scan(root: string, dirs: string[], allowed: Record<string, { rules: Rule[] }>): Hit[] {
   const files: string[] = [];
@@ -176,6 +210,41 @@ describe("egress static scan", () => {
     for (const [name, code] of CASES) writeFileSync(join(root, "src", "core", `${name}.ts`), code + "\n");
     const hits = scan(root, ["src"], { ...OWNERS, ...KNOWN });
     for (const [name, , rule] of CASES) expect(hits.some((h) => h.file === `src/core/${name}.ts` && h.rule === rule), name).toBe(true);
+  });
+  const SUSPICIOUS: [string, string, Rule][] = [
+    ["destructure-globalThis", "const { fetch: f } = globalThis;\nexport const a = () => f('x');", "net"],
+    ["destructure-window-ws", "const { WebSocket: W } = window;\nexport const a = () => new W('ws://x');", "net"],
+    ["global-alias", "const g = globalThis;\nexport const a = () => g.fetch('x');", "suspicious"],
+    ["global-assign", "let g; g = self;\nexport const a = () => g;", "suspicious"],
+    ["import-nonliteral", "const m = 'node:' + 'http';\nexport const a = () => import(m);", "suspicious"],
+    ["require-nonliteral", "const m = ['ht', 'tp'].join('');\nexport const a = () => require(m);", "suspicious"],
+    ["require-template", "const x = 'http';\nexport const a = () => require(`node:${x}`);", "suspicious"],
+    ["create-require", "import { createRequire } from 'node:module';\nconst r = createRequire(import.meta.url);\nexport const a = () => r('http');", "suspicious"],
+    ["module-namespace", "import * as m from 'module';\nexport const a = m;", "suspicious"],
+    ["eval", "export const a = () => eval('fet' + 'ch')('x');", "suspicious"],
+    ["new-function", "export const a = () => new Function('return fe' + 'tch')();", "suspicious"],
+    ["reflect-get", "export const a = () => Reflect.get(globalThis, 'fe' + 'tch')('x');", "suspicious"],
+    ["concat-key", "export const a = () => globalThis['fe' + 'tch']('x');", "suspicious"],
+    ["process-binding", "export const a = () => process.binding('tcp_wrap');", "suspicious"],
+    ["worker-threads", "import { Worker } from 'node:worker_threads';\nexport const a = () => new Worker('x.js');", "suspicious"],
+  ];
+  it("negative: suspicious / indirect forms are reported", () => {
+    const root = mkdtempSync(join(tmpdir(), "wt-scan-s-"));
+    mkdirSync(join(root, "src", "core"), { recursive: true });
+    for (const [name, code] of SUSPICIOUS) writeFileSync(join(root, "src", "core", `${name}.ts`), code + "\n");
+    writeFileSync(join(root, "src", "core", "comp.tsx"), "export const C = () => <button onClick={() => fetch('x')}>x</button>;\n");
+    writeFileSync(join(root, "src", "core", "comp.jsx"), "export const C = () => <a onClick={() => new WebSocket('ws://x')}>x</a>;\n");
+    const hits = scan(root, ["src"], { ...OWNERS, ...KNOWN });
+    for (const [name, , rule] of SUSPICIOUS) expect(hits.some((h) => h.file === `src/core/${name}.ts` && h.rule === rule), name).toBe(true);
+    expect(hits.some((h) => h.file === "src/core/comp.tsx" && h.rule === "net"), ".tsx").toBe(true);
+    expect(hits.some((h) => h.file === "src/core/comp.jsx" && h.rule === "net"), ".jsx").toBe(true);
+  });
+  it("negative: .sh curl / wget / nc are net; quoted # is not a comment", () => {
+    for (const cmd of ["curl -s http://x/", "x=$(wget -qO- http://x/)", "echo hi | nc x 80", "ok && curl http://x/"]) expect(scanShell("x.sh", cmd + "\n").map((h) => h.rule), cmd).toContain("net");
+    expect(scanShell("x.sh", "echo curl-free # curl http://x/\n")).toEqual([]);
+    expect(scanShell("x.sh", "echo \"#\"; curl http://x/\n").map((h) => h.rule)).toEqual(["net"]);
+    expect(scanShell("x.sh", "node -e 'const a=\"#\"; fetch(a)'\n").map((h) => h.rule)).toEqual(["net"]);
+    expect(stripShellComment("echo 'a # b' # c")).toBe("echo 'a # b' ");
   });
   it("negative: no false hits from comments, strings, other objects' .fetch, or declared member names", () => {
     const src = '// fetch("x") import("node:http")\n/* new WebSocket() */\nconst s = "fetch( require(\\"https\\") //";\nexport interface G { fetch(u: string): void; WebSocket?: number }\nexport const a = (g: G) => g.fetch(s);\n';
