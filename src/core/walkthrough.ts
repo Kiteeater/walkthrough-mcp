@@ -1093,7 +1093,7 @@ export class WalkthroughCore {
         if (!raw.includes(String(l.key))) throw new ClaimRejectedError(`unlinked: key "${l.key}" not found in the imported result`);
       }
       const params = sanitizeParams(input.params ?? {}, this.redactor);
-      const out = await this.registry.action(`connector:${c.name}`).run({ type: `connector:${c.name}`, tool: input.tool, params, result: input.result } as never, { walkthrough: w, sandbox: undefined as never });
+      const out = await this.registry.action(`connector:${c.name}`).run({ type: `connector:${c.name}`, tool: input.tool, params, result: input.result } as never, { walkthrough: w, sandbox: undefined as never, replay: this.deps.replay });
       const evId = `ev-${w.evidence.length + 1}`;
       const rel = `evidence/${evId}.json.txt`;
       writeFileSync(join(this.dir(id), rel), scrub(out.evidenceText, this.redactor));

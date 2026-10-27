@@ -144,22 +144,24 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
     return { port, hits, conns: () => blockedConns, close: () => { ok.close(); blocked.close(); } };
   }
   const resolver = async (h: string) => (h === "blocked.test" ? "127.0.0.2" : "127.0.0.1");
+  const appReplay = (port: number) => ({ allowHosts: [`app.test:${port}`], allowCidrs: ["127.0.0.1/32"] });
 
   it("httpSource: allowlisted server 302 → blocked address (literal, stand-in IP, name resolving to it) is refused; zero connections on the blocked side", async () => {
     const undo = addTestCoreBlocked("127.0.0.2");
     const s = await servers();
     try {
       for (const path of ["/to-literal", "/to-standin", "/to-standin-name"]) {
-        const r = await httpSource.run({ type: "http", url: `http://app.test:${s.port}${path}` }, { resolver });
+        const r = await httpSource.run({ type: "http", url: `http://app.test:${s.port}${path}` }, { replay: appReplay(s.port), resolver });
         expect(r.evidenceText, path).toMatch(/core blocklist|not in the replay allowlist/);
         expect(r.status, path).toBeUndefined();
       }
       expect(s.conns()).toBe(0);
       // a same-host redirect still works (each hop re-checked, IP pinned)
-      const good = await httpSource.run({ type: "http", url: `http://app.test:${s.port}/to-self` }, { resolver });
+      const good = await httpSource.run({ type: "http", url: `http://app.test:${s.port}/to-self` }, { replay: appReplay(s.port), resolver });
       expect(good).toMatchObject({ status: 200, body: "healthy" });
       // literal blocked target, no redirect
-      expect((await httpSource.run({ type: "http", url: `http://${BAD}/` })).evidenceText).toMatch(/core blocklist/);
+      // allowlisted on purpose: the core blocklist must still win (refused before any connection)
+      expect((await httpSource.run({ type: "http", url: `http://${BAD}/` }, { replay: { allowHosts: [BAD], allowCidrs: [`${BAD}/32`] } })).evidenceText).toMatch(/core blocklist/);
     } finally { undo(); s.close(); }
   });
 
@@ -167,7 +169,7 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
     const undo = addTestCoreBlocked("127.0.0.2");
     const s = await servers();
     try {
-      const r = await httpSource.run({ type: "http", url: "http://blocked.test:1/" }, { resolver });
+      const r = await httpSource.run({ type: "http", url: "http://blocked.test:1/" }, { replay: { allowHosts: ["blocked.test:1"], allowCidrs: ["127.0.0.2/32"] }, resolver });
       expect(r.evidenceText).toMatch(/core blocklist/);
       expect(s.conns()).toBe(0);
     } finally { undo(); s.close(); }
@@ -194,7 +196,7 @@ describe("core blocklist: flow http actions and readiness polling use the guarde
     let n = 0;
     const rebinding = async () => (n++ === 0 ? "127.0.0.1" : "127.0.0.2");
     try {
-      const r = await httpSource.run({ type: "http", url: `http://rebind.test:${s.port}/to-self` }, { resolver: rebinding });
+      const r = await httpSource.run({ type: "http", url: `http://rebind.test:${s.port}/to-self` }, { replay: { allowHosts: [`rebind.test:${s.port}`], allowCidrs: ["127.0.0.1/32"] }, resolver: rebinding });
       expect(r.status === undefined || r.status === 200).toBe(true);
       expect(s.conns()).toBe(0);
     } finally { undo(); s.close(); }

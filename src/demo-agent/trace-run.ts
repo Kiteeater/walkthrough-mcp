@@ -4,6 +4,7 @@
 // env: MONGO_URL, LANGFUSE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (the agent's OWN access; never given to walkthrough).
 import { parseArgs } from "node:util";
 import { createCore, loadFlowConfig, PRESET_CONNECTORS, readJsonFile, Redactor, runFlow, type ConnectorConfig } from "../core/index.js";
+import { loopbackCidrs } from "./allowlist.js";
 import { runTraceAgent, type McpClients } from "./trace.js";
 
 async function main(): Promise<void> {
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
     ? PRESET_CONNECTORS.map((c) => (useMq && c.name === "mqadmin" ? { ...c, binary: mqBin!, namesrvs: [mqNs!], profile: "demo-readonly" }
       : useSls && c.name === "aliyun" ? { ...c, binary: slsBin!, profile: "demo-readonly" } : c))
     : undefined;
-  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: [svc, ...(prom ? [prom] : [])].some((u) => u.hostname === "127.0.0.1") ? ["127.0.0.1/32"] : [] }, connectors);
+  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: hosts, allowCidrs: loopbackCidrs([svc, ...(prom ? [prom] : [])]) }, connectors);
   try {
     const r = await runFlow(core, cfg, { agent: (id) => runTraceAgent(core, id, mcp, { ...a, metrics: !!prom, replay: true, ...(useMq ? { mq: { group: "order-pricing-consumer", topic: "ORDER_CREATED" } } : {}),
       ...(useSls ? { sls: { project: "demo-prod-logs", logstore: "infra" } } : {}) }) });

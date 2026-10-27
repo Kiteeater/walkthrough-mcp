@@ -1,3 +1,4 @@
+import type { ReplayConfig } from "./replay.js";
 import type { Sandbox } from "./sandbox.js";
 import type { Judgement } from "./checks.js";
 import type { Check, CheckAction, ObserveSpec, Walkthrough } from "./types.js";
@@ -8,7 +9,14 @@ import type { Check, CheckAction, ObserveSpec, Walkthrough } from "./types.js";
  * sources (e.g. `connector:<name>` for read-only environment connectors) and verifier types can be
  * registered without touching them.
  */
-export interface SourceContext { walkthrough: Walkthrough; sandbox: Sandbox; /** DNS resolver for guarded HTTP (tests inject one). */ resolver?: (host: string) => Promise<string> }
+export interface SourceContext {
+  walkthrough: Walkthrough;
+  sandbox: Sandbox;
+  /** The core's replay policy (`core.replayPolicy()`): http actions may only reach its allowHosts. Required, so no caller can forget it. */
+  replay: Readonly<ReplayConfig> | undefined;
+  /** DNS resolver for guarded HTTP (tests inject one). */
+  resolver?: (host: string) => Promise<string>;
+}
 
 /** Result of running an action source; `evidenceText` is stored as sha256 `response` evidence. */
 export interface ActionOutcome {

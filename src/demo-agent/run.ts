@@ -5,6 +5,7 @@
 import { parseArgs } from "node:util";
 import { createCore, loadFlowConfig, Redactor, runFlow } from "../core/index.js";
 import { runDemoAgent } from "./agent.js";
+import { loopbackCidrs } from "./allowlist.js";
 import { loadRoutes } from "./planner.js";
 
 const DEFAULT_BASE_URL = "http://localhost:3000";
@@ -17,7 +18,7 @@ async function main(): Promise<void> {
   const agentCfg = ((cfg as unknown as { agent?: { goal?: string; baseUrl?: string; service?: string } }).agent) ?? {}; // env-expanded
   // Allowlist: the service under test (same host the flow's waitFor / screenshots use). Local demo → loopback only.
   const svc = new URL(agentCfg.baseUrl ?? DEFAULT_BASE_URL);
-  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: [svc.host], allowCidrs: svc.hostname === "127.0.0.1" ? ["127.0.0.1/32"] : [] });
+  const core = createCore(values.root ?? process.cwd(), undefined, { allowHosts: [svc.host], allowCidrs: loopbackCidrs([svc]) });
   const routes = loadRoutes(routesFile);
   const r = await runFlow(core, cfg, {
     agent: async (id) => { await runDemoAgent(core, id, routes, { goal: agentCfg.goal ?? "every declared route works", baseUrl: agentCfg.baseUrl ?? DEFAULT_BASE_URL, service: agentCfg.service }); },

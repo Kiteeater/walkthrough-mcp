@@ -69,7 +69,7 @@ async function runReal(bug: "a" | "b" | null) {
   const nonce = randomBytes(8).toString("hex");
   process.env.WT_AUDIT_PORT = String(port);
   process.env.WT_AUDIT_NONCE = nonce;
-  const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: fakeCapturer, redactor: new Redactor([]) });
+  const core = new WalkthroughCore({ root, sandboxFactory: createSandboxFactory(), capturer: fakeCapturer, redactor: new Redactor([]), replay: { allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] } });
   const w = await core.startWalkthrough({
     title: "audit", sandbox: { backend: "local", cwd: svc, up: "", down: "", local: { up: "PORT=$WT_AUDIT_PORT exec node server.js", passEnv: ["WT_AUDIT_PORT", "WT_AUDIT_NONCE"], killTimeoutMs: 1000 } },
   });
