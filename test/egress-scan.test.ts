@@ -18,7 +18,9 @@
 // helpers, no sockets). A default/namespace import, any other name, or require/import() of net is a hit.
 // Suspicious (rule "suspicious"): import()/require() with a non-literal argument, createRequire / node:module,
 // destructuring fetch/WebSocket out of a global object
-// (counted as "net"), and assigning a global object to a variable (`const g = globalThis`).
+// (counted as "net"). Global objects (globalThis/window/self/global), after unwrapping (), as, satisfies, !, <T>:
+// only `<g>.prop` with prop not fetch/WebSocket and `typeof <g>` pass; any other use (alias, argument, return,
+// spread, ternary, comma, Object.assign, element access, ...) is "suspicious".
 // .sh files: `#` comments removed (shell only), then the same module names / identifiers are matched as text,
 // since the scripts embed node code in heredocs.
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -47,6 +49,7 @@ const OWNERS: Record<string, { rules: Rule[]; why: string }> = {
 
 /** KNOWN violations that exist today. Not fixed in this PR (move-only); new ones fail the test. */
 const KNOWN: Record<string, { rules: Rule[]; why: string }> = {
+  "src/core/capture.ts": { rules: ["suspicious"], why: "KNOWN ISSUE_CAPTURE_INIT: page init script passes `window` to Object.defineProperty to lock down page-side network globals (in-page hardening, not an outbound call; review whether to restructure)" },
   "src/core/alerts.ts": { rules: ["process"], why: "KNOWN ISSUE_ALERTS: spawnDetachedPoller spawns `walkthrough watch _poll` with the full process.env (should go through sandbox/allowlistEnv)" },
   "src/demo-agent/trace-run.ts": { rules: ["net"], why: "KNOWN ISSUE_TRACE: direct fetch to LANGFUSE_URL, not through the egress guard" },
   "examples/demo.mjs": { rules: ["process"], why: "ISSUE_EXAMPLES example launcher: spawns examples/trace-demo/run.mjs" },
@@ -79,6 +82,12 @@ function pureNetImport(n: ts.Node, spec: string): boolean {
   return c.namedBindings.elements.every((e) => NET_PURE.has((e.propertyName ?? e.name).text));
 }
 
+/** `globalThis` / `(globalThis as any)!` etc.: a global object behind parens / type assertions. */
+function isGlobalRef(e: ts.Expression): boolean {
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isNonNullExpression(e) || ts.isTypeAssertionExpression(e)) e = e.expression;
+  return ts.isIdentifier(e) && GLOBALS.has(e.text);
+}
+
 function isDeclaredName(id: ts.Identifier): boolean {
   const p = id.parent;
   if ((ts.isPropertyAccessExpression(p) || ts.isPropertyAccessChain(p)) && p.name === id) return true; // handled by caller
@@ -106,12 +115,17 @@ export function scanSource(file: string, text: string): Hit[] {
     else if (ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument)) spec = n.argument.literal as ts.Expression;
     const isLit = (e: ts.Expression) => ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e);
     if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require")) && (!n.arguments[0] || !isLit(n.arguments[0]))) add(n, "suspicious");
-    if (ts.isIdentifier(n) && GLOBALS.has(n.text)) {
-      const p = n.parent;
-      if ((ts.isVariableDeclaration(p) && p.initializer === n) || (ts.isBinaryExpression(p) && p.right === n && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) {
-        add(p, "suspicious");
-        if (ts.isVariableDeclaration(p) && ts.isObjectBindingPattern(p.name) && p.name.elements.some((e) => IDENTS.has(((e.propertyName ?? e.name) as ts.Identifier).text ?? ""))) add(p, "net");
-      }
+    if (ts.isIdentifier(n) && GLOBALS.has(n.text) && !isDeclaredName(n) && !((n.parent as { name?: ts.Node }).name === n) &&
+      !(ts.isQualifiedName(n.parent) || ts.isTypeQueryNode(n.parent))) {
+      // B1': unwrap (x), x as T, x satisfies T, x!, <T>x; then only `.prop` (prop not fetch/WebSocket) and `typeof x` pass.
+      let outer: ts.Expression = n;
+      while ((ts.isParenthesizedExpression(outer.parent) || ts.isAsExpression(outer.parent) || ts.isSatisfiesExpression(outer.parent) ||
+        ts.isNonNullExpression(outer.parent) || ts.isTypeAssertionExpression(outer.parent)) && outer.parent.expression === outer) outer = outer.parent;
+      const q = outer.parent;
+      const okProp = (ts.isPropertyAccessExpression(q) || ts.isPropertyAccessChain(q)) && q.expression === outer && !IDENTS.has(q.name.text);
+      if (!okProp && !ts.isTypeOfExpression(q)) add(q, "suspicious");
+      if (ts.isVariableDeclaration(q) && q.initializer === outer && ts.isObjectBindingPattern(q.name) &&
+        q.name.elements.some((e) => IDENTS.has(((e.propertyName ?? e.name) as ts.Identifier).text ?? ""))) add(q, "net");
     }
     if (ts.isIdentifier(n) && n.text === "createRequire" && !isDeclaredName(n) &&
       !((ts.isPropertyAccessExpression(n.parent)) && n.parent.name === n && !(ts.isIdentifier(n.parent.expression) && GLOBALS.has(n.parent.expression.text)))) add(n, "suspicious");
@@ -119,7 +133,7 @@ export function scanSource(file: string, text: string): Hit[] {
     if (ts.isIdentifier(n) && IDENTS.has(n.text)) {
       const p = n.parent;
       if ((ts.isPropertyAccessExpression(p) || ts.isPropertyAccessChain(p)) && p.name === n) {
-        if (ts.isIdentifier(p.expression) && GLOBALS.has(p.expression.text)) add(p, "net");
+        if (isGlobalRef(p.expression)) add(p, "net");
       } else if (!isDeclaredName(n)) add(n, "net");
     }
     if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && GLOBALS.has(n.expression.text) &&
@@ -158,6 +172,13 @@ export function scanShell(file: string, text: string): Hit[] {
 }
 
 const EXT = /\.(?:ts|mts|cts|js|mjs|cjs|sh)$/;
+type Allow = Record<string, { rules: Rule[] }>;
+/** OWNERS + KNOWN with per-file rule lists unioned (a file may be in both). */
+const ALLOWED: Allow = (() => {
+  const out: Allow = {};
+  for (const m of [OWNERS, KNOWN]) for (const [f, { rules }] of Object.entries(m)) out[f] = { rules: [...(out[f]?.rules ?? []), ...rules] };
+  return out;
+})();
 /** Every hit under `dirs` of `root` that is not covered by `allowed`. */
 export function scan(root: string, dirs: string[], allowed: Record<string, { rules: Rule[] }>): Hit[] {
   const files: string[] = [];
@@ -174,11 +195,11 @@ export function scan(root: string, dirs: string[], allowed: Record<string, { rul
 
 describe("egress static scan", () => {
   it("network / browser / child-process use appears only in owner files or the explicit known list", () => {
-    expect(scan(process.cwd(), ["src", "examples"], { ...OWNERS, ...KNOWN })).toEqual([]);
+    expect(scan(process.cwd(), ["src", "examples"], ALLOWED)).toEqual([]);
   });
   it("every listed exception is still needed (no stale entries, none skipped)", () => {
     const hits = scan(process.cwd(), ["src", "examples"], {});
-    for (const [file, { rules }] of Object.entries({ ...OWNERS, ...KNOWN })) for (const r of rules)
+    for (const [file, { rules }] of Object.entries(ALLOWED)) for (const r of rules)
       expect(hits.some((h) => h.file === file && h.rule === r), `${file} ${r}`).toBe(true);
   });
 
@@ -204,7 +225,7 @@ describe("egress static scan", () => {
     const root = mkdtempSync(join(tmpdir(), "wt-scan-"));
     mkdirSync(join(root, "src", "core"), { recursive: true });
     for (const [name, code] of CASES) writeFileSync(join(root, "src", "core", `${name}.ts`), code + "\n");
-    const hits = scan(root, ["src"], { ...OWNERS, ...KNOWN });
+    const hits = scan(root, ["src"], ALLOWED);
     for (const [name, , rule] of CASES) expect(hits.some((h) => h.file === `src/core/${name}.ts` && h.rule === rule), name).toBe(true);
   });
   const SUSPICIOUS: [string, string, Rule][] = [
@@ -218,11 +239,28 @@ describe("egress static scan", () => {
     ["create-require", "import { createRequire } from 'node:module';\nconst r = createRequire(import.meta.url);\nexport const a = () => r('http');", "suspicious"],
     ["module-namespace", "import * as m from 'module';\nexport const a = m;", "suspicious"],
   ];
+  const WRAPPED: [string, string][] = [
+    ["g-as-any", "export const a = () => (globalThis as any).fetch('x');"],
+    ["g-paren", "export const a = () => (globalThis).fetch('x');"],
+    ["g-comma", "export const a = () => (0, globalThis).fetch('x');"],
+    ["g-object-assign", "export const a = () => Object.assign({}, globalThis).fetch('x');"],
+    ["g-spread", "export const a = () => ({ ...globalThis });"],
+    ["g-argument", "const use = (o: unknown) => o;\nexport const a = () => use(globalThis);"],
+    ["g-return", "export function a() { return globalThis; }"],
+    ["g-ternary", "export const a = (b: boolean) => (b ? globalThis : {});"],
+  ];
+  for (const [name, code] of WRAPPED) it(`negative B1': ${name} is reported`, () => {
+    expect(scanSource(`src/core/${name}.ts`, code + "\n").some((h) => h.rule === "suspicious" || h.rule === "net"), name).toBe(true);
+  });
+  it("B1': globalThis.setTimeout and typeof globalThis are not reported", () => {
+    expect(scanSource("src/core/ok.ts", "export const a = () => globalThis.setTimeout(() => {}, 1);\n")).toEqual([]);
+    expect(scanSource("src/core/ok.ts", "export const a = typeof globalThis;\nexport type G = typeof globalThis;\n")).toEqual([]);
+  });
   it("negative: suspicious / indirect forms are reported", () => {
     const root = mkdtempSync(join(tmpdir(), "wt-scan-s-"));
     mkdirSync(join(root, "src", "core"), { recursive: true });
     for (const [name, code] of SUSPICIOUS) writeFileSync(join(root, "src", "core", `${name}.ts`), code + "\n");
-    const hits = scan(root, ["src"], { ...OWNERS, ...KNOWN });
+    const hits = scan(root, ["src"], ALLOWED);
     for (const [name, , rule] of SUSPICIOUS) expect(hits.some((h) => h.file === `src/core/${name}.ts` && h.rule === rule), name).toBe(true);
   });
   it("negative: .sh quoted # is not a comment", () => {
