@@ -3,7 +3,7 @@
 // usage: node dist/demo-agent/trace-run.js <flow.json> [--root <dir>]
 // env: MONGO_URL, LANGFUSE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (the agent's OWN access; never given to walkthrough).
 import { parseArgs } from "node:util";
-import { createCore, loadFlowConfig, PRESET_CONNECTORS, readJsonFile, Redactor, runFlow, type ConnectorConfig } from "../core/index.js";
+import { createCore, loadFlowConfig, PRESET_CONNECTORS, Redactor, runFlow, type ConnectorConfig } from "../core/index.js";
 import { loopbackCidrs } from "./allowlist.js";
 import { runTraceAgent, type McpClients } from "./trace.js";
 
@@ -26,7 +26,8 @@ async function main(): Promise<void> {
   // Prometheus (read-only) is optional: when configured, its host is the only replay/metrics allowlist entry.
   const prom = process.env.WALKTHROUGH_PROMETHEUS_URL ? new URL(process.env.WALKTHROUGH_PROMETHEUS_URL) : undefined;
   const cfg = loadFlowConfig(flowFile);
-  const a = ((readJsonFile(flowFile) as { agent?: { goal: string; baseUrl: string; service?: string; orders: string[] } }).agent)!;
+  if (!cfg.agent?.orders) throw new Error(`${flowFile}: agent.orders is required by the trace demo`);
+  const a = { ...cfg.agent, orders: cfg.agent.orders };
   // Allowlist: the service under test (for replay_request) + Prometheus when configured. Local demo → loopback only.
   const svc = new URL(a.baseUrl);
   const hosts = [svc.host, ...(prom ? [prom.host] : [])];
