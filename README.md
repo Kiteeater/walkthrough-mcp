@@ -10,7 +10,8 @@ walkthrough is built to look, not touch. Keep it that way:
 - **Read-only everywhere.**
   - `run_cli` only runs allowlisted read-only subcommands and flags. Shell syntax (`|`, `;`, …), credential, profile
     and endpoint flags are rejected.
-  - `replay_request` and `capture_page` only reach hosts in `replay.allowHosts`. Private, loopback and link-local
+  - `replay_request`, `capture_page` and `capture_evidence` type=screenshot only reach hosts in `replay.allowHosts`
+    (a screenshot without `replay.allowHosts` is rejected). Private, loopback and link-local
     addresses are refused unless listed in `allowCidrs`.
   - `run_in_sandbox exec` is off by default.
 - **Blocklist (core-enforced).** `34.142.135.39` is on a hardcoded core blocklist and is always refused, even if

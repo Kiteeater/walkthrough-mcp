@@ -2,13 +2,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NotImplementedMetricsAdapter, Redactor, renderWalkthrough, sha256File, secretValues } from "../src/core/index.js";
-import { LOCAL_POLICY, mockCore, SB } from "./helpers.js";
+import { LOCAL_REPLAY, mockCore, SB } from "./helpers.js";
 
 describe("core", () => {
   it("stores evidence in the fixed format under .walkthrough/<id>/evidence", async () => {
-    const { core, root } = mockCore();
+    const { core, root } = mockCore({ replay: LOCAL_REPLAY });
     const w = core.startWalkthrough({ title: "t", sandbox: SB, id: "wt-fixed" });
-    const ev = await core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" }, LOCAL_POLICY);
+    const ev = await core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" });
     expect(Object.keys(ev).sort()).toEqual(["createdAt", "executedBy", "id", "kind", "path", "sha256", "source", "type"]);
     const file = join(root, ".walkthrough", "wt-fixed", ev.path);
     expect(ev.path).toBe("evidence/ev-1.png");

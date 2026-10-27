@@ -28,7 +28,7 @@ server.tool("run_in_sandbox", "Bring the sandbox up/down, or exec a command (dis
   id, action: z.enum(["up", "down", "exec"]), command: z.string().optional(),
 }, (a) => wrap(() => core.runInSandbox(a.id, a.action, a.command))());
 
-server.tool("capture_evidence", "Submit raw output you obtained yourself (type=submit, check_id, kind, source, content), or have walkthrough capture a screenshot/logs. Stored redacted with sha256.",
+server.tool("capture_evidence", "Submit raw output you obtained yourself (type=submit, check_id, kind, source, content), or have walkthrough capture a screenshot/logs. type=screenshot goes through the capture_page guard and requires replay.allowHosts (otherwise rejected). Stored redacted with sha256.",
   captureEvidenceShape, (a) => wrap(() => core.captureEvidence(a.id, captureInput(a)))());
 
 server.tool("import_mcp_result", "Import a result you got from another READ-ONLY MCP server (mongodb / langfuse / aliyun). Stored as agent-reported evidence (lower trust), hashed and redacted; must link to earlier evidence by a shared key.",

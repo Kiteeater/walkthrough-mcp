@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync, realpathSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync, realpathSync, statSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
 import { execDecision } from "./execpolicy.js";
@@ -17,8 +17,9 @@ import { expectProblem } from "./checks.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
 import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
-import { checkHop, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { checkHop, flowPolicy, guardedGet, guardedRequest, guardedWebSocket, replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
 import { assertNoCoreBlockedTargets } from "./blocklist.js";
+import { flowScreenshot } from "./flow-capture.internal.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
 import {
@@ -165,6 +166,9 @@ export class WalkthroughCore {
     this.redactor = deps.redactor ?? Redactor.fromEnv();
     this.now = deps.now ?? (() => new Date());
     this.registry = deps.registry ?? defaultRegistry();
+    // Flow screenshot (runFlow only, via the internal WeakMap capability): same guarded path under flowPolicy(url) —
+    // own host only; core blocklist and IP rules still apply. The policy is derived from the URL, never passed in.
+    flowScreenshot.set(this, async (id, url) => this.captureEvidenceWith(id, { type: "screenshot", url }, await flowPolicy(url)));
   }
 
   get root(): string { return this.deps.root; }
@@ -262,8 +266,14 @@ export class WalkthroughCore {
   captureEvidence(
     id: string,
     input: { type: "screenshot"; url: string; checkId?: string } | { type: "logs"; service: string; checkId?: string; delta?: boolean } | SubmittedEvidence,
-    /** Internal (runFlow only, never reachable from MCP): egress policy for screenshots instead of replay.allowHosts. */
-    opts: { policy?: ReplayConfig } = {},
+  ): Promise<Evidence> {
+    return this.captureEvidenceWith(id, input);
+  }
+
+  private captureEvidenceWith(
+    id: string,
+    input: { type: "screenshot"; url: string; checkId?: string } | { type: "logs"; service: string; checkId?: string; delta?: boolean } | SubmittedEvidence,
+    policy?: ReplayConfig,
   ): Promise<Evidence> {
     return this.withLock(id, async () => {
     const w = this.load(id);
@@ -275,9 +285,26 @@ export class WalkthroughCore {
       ev = { id: evId, type: "screenshot", kind: "screenshot", path: `evidence/${evId}.png`, source: this.redactor.text(input.url), executedBy: "core" };
       // B1: same guarded browser path as capture_page (core blocklist, allowHosts + IP rules, pinned DNS, every redirect
       // hop re-checked, read-only methods); only the screenshot is kept. No login state is loaded for this path.
-      const cfg = opts.policy ?? this.deps.replay;
+      const cfg = policy ?? this.deps.replay;
       if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("screenshot capture needs replay.allowHosts (same policy as capture_page)");
-      writeFileSync(abs(ev.path), await this.guardedPage(cfg, input.url).then((p) => p.screenshot));
+      const p = await this.guardedPage(cfg, input.url);
+      writeFileSync(abs(ev.path), p.screenshot);
+      // Always logged like capture_page (blocked requests included, redacted). If the log write fails, the PNG is
+      // removed again so no unregistered evidence file is left behind.
+      try {
+        const blocked = p.blocked ?? [];
+        const r = this.redactor.with(blockedUrlSecrets(blocked.map((b) => b.url)));
+        const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
+          ts: this.ts(), walkthroughId: id, type: "capture_screenshot", ...(input.checkId ? { checkId: input.checkId } : {}), evidenceIds: [evId],
+          navigations: p.navigations.map((n) => ({ ...n, url: maskAllQuery(redactUrl(n.url, r)) })),
+          blocked: blocked.slice(0, 500).map((b) => ({ url: maskAllQuery(redactUrl(b.url, r)), method: b.method, type: b.type, reason: r.text(redactUrlsIn(b.reason, r)) })),
+          blockedCount: blocked.length, executedBy: "core",
+        });
+        w.commandLogHead = { seq: log.seq, hash: log.hash };
+      } catch (e) {
+        rmSync(abs(ev.path), { force: true });
+        throw e;
+      }
     } else if (input.type === "logs") {
       ev = { id: evId, type: "logs", kind: "log", path: `evidence/${evId}.log`, source: `${w.sandbox.backend === "local" ? "local" : "docker"}:${input.service}`, executedBy: "core" };
       const raw = await this.deps.sandboxFactory(w.sandbox, w.id).logs(input.service);
@@ -413,7 +440,7 @@ export class WalkthroughCore {
       if (blocked.length) add("blocked", "blocked", "json", JSON.stringify({ format: BLOCKED_EVIDENCE, url: redactUrl(input.url, r), count: (p.blocked ?? []).length, blocked }, null, 2));
       const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
         ts: this.ts(), walkthroughId: id, type: "capture_page", checkId: input.checkId,
-        navigations: p.navigations.map((n) => ({ ...n, url: redactUrl(n.url, r) })),
+        navigations: p.navigations.map((n) => ({ ...n, url: maskAllQuery(redactUrl(n.url, r)) })),
         subresources: p.subresources.slice(0, 200).map((s) => ({ ...s, url: redactUrl(s.url, r) })),
         blocked: blocked.length,
         websockets,

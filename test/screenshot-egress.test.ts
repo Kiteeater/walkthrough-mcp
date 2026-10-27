@@ -3,7 +3,7 @@
 // targets are a local stand-in (127.0.0.2, marked core-blocked via addTestCoreBlocked) with a server counting every
 // connection; the real address only appears in a pure guard check that fails before any browser starts.
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
@@ -22,7 +22,8 @@ const sandbox: Sandbox = { up: async () => ({ exitCode: 0, output: "" }), down: 
 const PROD = CORE_BLOCKED_IPS[0];
 const STANDIN = "127.0.0.2";
 
-let srv: http.Server, port = 0;
+let srv: http.Server, port = 0, srvHits = 0;
+const SECRET = "SHOTblockedTok9917";
 let trap: net.Server, trapPort = 0, trapHits = 0;
 let undo: () => void = () => undefined;
 const core = (replay: ReplayConfig | undefined, capturer: Capturer = new PlaywrightCapturer()) =>
@@ -30,6 +31,8 @@ const core = (replay: ReplayConfig | undefined, capturer: Capturer = new Playwri
 
 beforeAll(async () => {
   srv = http.createServer((req, res) => {
+    srvHits++;
+    if (req.url === "/with-blocked") { res.writeHead(200, { "content-type": "text/html" }); return res.end(`<h1>page</h1><img src="http://${STANDIN}:${trapPort}/x.png?token=${SECRET}">`); }
     if (req.url === "/redir") { res.writeHead(302, { location: `http://${STANDIN}:${trapPort}/` }); return res.end(); }
     res.writeHead(200, { "content-type": "text/html" }); res.end("<h1>ok</h1>");
   });
@@ -75,6 +78,8 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
     const ev = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` });
     expect(readFileSync(join(c.dir(w.id), ev.path)).subarray(1, 4).toString()).toBe("PNG");
     expect(c.load(w.id).evidence).toHaveLength(1);
+    const entry = JSON.parse(readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8").trim().split("\n").at(-1)!);
+    expect(entry).toMatchObject({ type: "capture_screenshot", evidenceIds: [ev.id], blockedCount: 0 });
   }, 60_000);
 
   it("(1) direct core-blocked target (stand-in, even allowlisted) throws the guard error; no connection", async () => {
@@ -90,9 +95,11 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
   it("(2) host outside allowHosts throws the guard error", async () => {
     const c = core({ allowHosts: [`127.0.0.1:${port + 1}`], allowCidrs: ["127.0.0.1/32"] });
     const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const before = srvHits;
     const err = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` }).catch((e) => e);
     expect(err).toBeInstanceOf(ReplayRejectedError);
     expect(String(err.message)).toMatch(/allowHosts|not allowed|allowlist/i);
+    expect(srvHits).toBe(before); // the not-allowlisted server got no request at all
   }, 60_000);
 
   it("(3) 302 from an allowed page to the core-blocked stand-in throws the guard error; no connection", async () => {
@@ -116,4 +123,83 @@ describe.skipIf(!hasChromium)("B1: screenshot through real Chromium", () => {
     expect(err).toBeInstanceOf(ReplayRejectedError);
     expect(trapHits).toBe(before);
   }, 60_000);
+
+  it("requests blocked while loading the page are written (redacted) to the command log", async () => {
+    const c = core({ allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const before = trapHits;
+    const ev = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/with-blocked` });
+    expect(trapHits).toBe(before);
+    const raw = readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8");
+    expect(raw).not.toContain(SECRET);
+    const entry = raw.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "capture_screenshot");
+    expect(entry).toMatchObject({ evidenceIds: [ev.id], executedBy: "core" });
+    expect(entry.blockedCount).toBeGreaterThanOrEqual(1);
+    expect(entry.blocked.some((b: { url: string }) => b.url.includes(`${STANDIN}:${trapPort}/x.png`))).toBe(true);
+    expect(c.verifyCommandLog(w.id).ok).toBe(true);
+  }, 60_000);
+});
+
+describe("B1: flow policy is internal", () => {
+  it("captureEvidence ignores any extra policy argument: without replay.allowHosts a screenshot is still refused", async () => {
+    let called = 0;
+    const c = core(undefined, { page: async () => { called++; throw new Error("must not run"); } });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const call = c.captureEvidence as unknown as (id: string, i: unknown, o: unknown) => Promise<unknown>;
+    const err = await call.call(c, w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` }, { policy: { allowHosts: [`127.0.0.1:${port}`], allowCidrs: ["127.0.0.1/32"] } }).catch((e) => e);
+    expect(err).toBeInstanceOf(ReplayRejectedError);
+    expect(called).toBe(0);
+  });
+  it("the flow path derives its own policy (own host only) and still refuses core-blocked targets before the browser", async () => {
+    let called = 0;
+    const c = core(undefined, { page: async () => { called++; throw new Error("must not run"); } });
+    await expect(runFlow(c, { title: "f", sandbox: SB, captures: [{ as: "s", type: "screenshot", url: `http://${STANDIN}:${trapPort}/` }], claims: [] }, { skipWait: true })).rejects.toThrow(/core blocklist/);
+    expect(called).toBe(0);
+  });
+  it("the flow capability is not reachable from the instance, its prototype or the package entry", async () => {
+    const c = core(both());
+    const proto = WalkthroughCore.prototype;
+    expect(Object.getOwnPropertyNames(proto).filter((k) => /flow/i.test(k))).toEqual([]);
+    expect(Object.getOwnPropertySymbols(proto)).toEqual([]);
+    expect(Object.keys(c).filter((k) => /flow/i.test(k))).toEqual([]);
+    expect(Object.getOwnPropertySymbols(c)).toEqual([]);
+    expect("captureFlowScreenshot" in c).toBe(false);
+    const dist = await import(join(process.cwd(), "dist/core/index.js"));
+    for (const mod of [dist, await import("../src/core/index.js")]) {
+      expect(Object.keys(mod).filter((k) => /flowScreenshot|captureFlow/i.test(k))).toEqual([]);
+      expect(Object.values(mod).some((v) => v instanceof WeakMap)).toBe(false);
+    }
+  });
+});
+
+describe("screenshot command log", () => {
+  const okPage = (url: string) => ({ screenshot: Buffer.from("png"), har: JSON.stringify({ log: { entries: [] } }), text: "", navigations: [{ url, status: 200, ip: "127.0.0.1" }], subresources: [], blocked: [] });
+  it("always writes a capture_screenshot entry; navigation URLs have every query value masked", async () => {
+    const c = core(both(), { page: async (u) => okPage(u) });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    const ev = await c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/?sess=UNKNOWNtok4421` });
+    const raw = readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8");
+    expect(raw).not.toContain("UNKNOWNtok4421");
+    const entry = JSON.parse(raw.trim().split("\n").at(-1)!);
+    expect(entry).toMatchObject({ type: "capture_screenshot", evidenceIds: [ev.id], blockedCount: 0 });
+    expect(entry.navigations[0].url).toContain("sess=");
+    expect(c.verifyCommandLog(w.id).ok).toBe(true);
+  });
+  it("capture_page also masks every query value in navigation URLs", async () => {
+    const c = core(both(), { page: async (u) => okPage(u) });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    await c.planChecks(w.id, { goal: "g", checks: [{ id: "c1", intent: "c1", method: "ui", target: "page", expect: { type: "ui", value: { text: { contains: "x" } } }, severity_if_fail: "high" } as never] });
+    await c.capturePage(w.id, { checkId: "c1", url: `http://127.0.0.1:${port}/?sess=UNKNOWNtok7731` });
+    const raw = readFileSync(join(c.dir(w.id), "commands.jsonl"), "utf8");
+    const entry = raw.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.type === "capture_page");
+    expect(JSON.stringify(entry.navigations)).not.toContain("UNKNOWNtok7731");
+  });
+  it("if the command log cannot be written, the PNG is removed and no evidence is registered", async () => {
+    const c = core(both(), { page: async (u) => okPage(u) });
+    const w = c.startWalkthrough({ title: "t", sandbox: SB });
+    mkdirSync(join(c.dir(w.id), "commands.jsonl"), { recursive: true }); // a directory: appending fails
+    await expect(c.captureEvidence(w.id, { type: "screenshot", url: `http://127.0.0.1:${port}/` })).rejects.toThrow();
+    expect(existsSync(join(c.dir(w.id), "evidence", "ev-1.png"))).toBe(false);
+    expect(c.load(w.id).evidence).toHaveLength(0);
+  });
 });

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createSandboxFactory, Redactor, renderWalkthrough, runFlow, WalkthroughCore, type Capturer, type FlowConfig,
 } from "../src/core/index.js";
-import { fakePageCapturer, LOCAL_POLICY, mockCore, SB } from "./helpers.js";
+import { fakePageCapturer, LOCAL_REPLAY, mockCore, SB } from "./helpers.js";
 
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)]));
@@ -38,10 +38,10 @@ describe("redaction of JSON-special secrets", () => {
 
 describe("per-id lock", () => {
   it("loses no evidence or claims under concurrent calls", async () => {
-    const { core } = mockCore();
+    const { core } = mockCore({ replay: LOCAL_REPLAY });
     const w = await core.startWalkthrough({ title: "t", sandbox: SB });
     const evs = await Promise.all(Array.from({ length: 10 }, (_, i) =>
-      i % 2 ? core.captureEvidence(w.id, { type: "logs", service: "web" }) : core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" }, LOCAL_POLICY)));
+      i % 2 ? core.captureEvidence(w.id, { type: "logs", service: "web" }) : core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" })));
     await Promise.all([
       ...evs.map((e) => core.recordClaim(w.id, { question: "q", conclusion: e.id, kind: "observed", evidenceIds: [e.id] })),
       ...evs.map(() => core.recordClaim(w.id, { question: "q", conclusion: "i", kind: "inferred" })),

@@ -1,3 +1,4 @@
+import { flowScreenshot } from "./flow-capture.internal.js";
 import { flowPolicy, guardedFetch, ReplayRejectedError, type Resolver } from "./replay.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -99,7 +100,7 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
     for (const cap of cfg.captures) {
       // Screenshots: same guarded browser path as capture_page, under the flow policy (own host only, core blocklist).
       const ev = cap.type === "screenshot"
-        ? await core.captureEvidence(w.id, { type: "screenshot", url: cap.url }, { policy: await flowPolicy(cap.url) })
+        ? await flowScreenshot.get(core)!(w.id, cap.url)
         : await core.captureEvidence(w.id, { type: "logs", service: cap.service });
       names.set(cap.as, ev.id);
     }
