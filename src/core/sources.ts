@@ -1,4 +1,5 @@
-import { flowPolicy, guardedFetch, type Resolver } from "./replay.js";
+import { flowPolicy, type Resolver } from "./egress/policy.js";
+import { guardedFetch } from "./egress/fetch.js";
 import { withDeadline } from "./settle.js";
 import { evaluateExpect } from "./checks.js";
 import { Registry, type SourceContext } from "./registry.js";

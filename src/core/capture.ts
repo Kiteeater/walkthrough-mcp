@@ -53,7 +53,7 @@ export interface NavigationGuard {
   /** Chromium --host-resolver-rules: allowlisted hosts mapped to their checked IPs, everything else ~NOTFOUND. */
   hostResolverRules?: string;
   /** WebSocket pre-check (issue #18): allowlist + IP rules on the ws(s) URL; returns the pinned IP. Throw to block. */
-  websocket?(url: string, headers?: Record<string, string>): Promise<import("./replay.js").GuardedWebSocket & {
+  websocket?(url: string, headers?: Record<string, string>): Promise<import("./egress/ws.js").GuardedWebSocket & {
     /** Exact text messages the page may send on this socket (capture.webSocketOutbound); everything else is dropped. */
     outbound: string[];
   }>;

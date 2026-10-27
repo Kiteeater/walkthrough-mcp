@@ -2,7 +2,7 @@
 // mongo URIs, flow http actions and readiness polling). checkHop itself refuses blocked IPs via ipProblem.
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { CORE_BLOCKED_IPS, coreBlocked } from "./replay.js";
+import { CORE_BLOCKED_IPS, coreBlocked } from "./policy.js";
 
 export class CoreBlockedError extends Error {
   constructor(message: string) { super(message); this.name = "CoreBlockedError"; }

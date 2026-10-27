@@ -3,7 +3,8 @@
 // redactor secrets for the capture, the path never reaches evidence or the command log.
 import { readFileSync } from "node:fs";
 import type { LoginStorageState } from "./capture.js";
-import { ReplayRejectedError, type ReplayConfig } from "./replay.js";
+import { ReplayRejectedError } from "./egress/policy.js";
+import { type ReplayConfig } from "./replay.js";
 
 export interface LoadedLoginState {
   storageState: LoginStorageState;
