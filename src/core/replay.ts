@@ -2,6 +2,7 @@
 // host allowlist, IP policy checked on the address we actually connect to (DNS resolved once per hop and pinned),
 // no automatic redirects (each hop re-checked), HAR cookies/auth never forwarded.
 // The guarded network code lives in ./egress/ (policy, fetch, ws, targets); this file keeps the config type.
+// allowHosts parsing and authFor live in ./egress/allowhosts.ts.
 
 export interface ReplayConfig {
   /** Hostnames (optionally host:port) the replay may contact. Anything else is rejected. */
@@ -38,11 +39,3 @@ export interface ReplayConfig {
   maxBodyBytes?: number;
 }
 
-/** Auth headers for one hop: only when the hop's origin is one the account is bound to. Never cookies. */
-export function authFor(cfg: ReplayConfig, hop: URL, firstOrigin: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  if (!cfg.auth) return {};
-  const allowed = (cfg.auth.origins?.length ? cfg.auth.origins : [firstOrigin]).map((o) => new URL(o).origin);
-  if (!allowed.includes(hop.origin)) return {};
-  const v = env[cfg.auth.valueEnv];
-  return v ? { [cfg.auth.header.toLowerCase()]: v } : {};
-}

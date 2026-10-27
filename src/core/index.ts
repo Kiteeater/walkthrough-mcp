@@ -42,6 +42,7 @@ export * from "./imports.js";
 export * from "./sls.js";
 export * from "./har.js";
 export * from "./replay.js";
+export * from "./egress/allowhosts.js";
 export * from "./egress/policy.js";
 export * from "./egress/fetch.js";
 export * from "./egress/ws.js";

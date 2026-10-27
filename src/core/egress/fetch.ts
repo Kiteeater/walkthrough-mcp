@@ -2,7 +2,8 @@
 import { isIP } from "node:net";
 import http from "node:http";
 import https from "node:https";
-import { authFor, type ReplayConfig } from "../replay.js";
+import type { ReplayConfig } from "../replay.js";
+import { authFor } from "./allowhosts.js";
 import { checkHop, defaultResolver, norm, ReplayRejectedError, type Resolver } from "./policy.js";
 
 export interface ReplayHop { url: string; ip: string; status: number }

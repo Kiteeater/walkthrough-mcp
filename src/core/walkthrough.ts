@@ -20,6 +20,7 @@ import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, re
 import { checkHop, flowPolicy, ReplayRejectedError, type Resolver } from "./egress/policy.js";
 import { guardedGet, guardedRequest, replayRequest } from "./egress/fetch.js";
 import { guardedWebSocket } from "./egress/ws.js";
+import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
 import { assertNoCoreBlockedTargets } from "./egress/targets.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
@@ -477,7 +478,7 @@ export class WalkthroughCore {
     const pins = new Map<string, Promise<string>>();
     const resolver = (h: string) => { const k = h.toLowerCase(); if (!pins.has(k)) pins.set(k, base(k)); return pins.get(k)!; };
     const rules: string[] = [];
-    for (const h of new Set(cfg.allowHosts.map((x) => x.toLowerCase().split(/:(?=\d+$)/)[0]))) {
+    for (const h of allowedHostnames(cfg)) {
       if (isIP(h.replace(/^\[|\]$/g, ""))) continue;
       try {
         const ip = await checkHop(cfg, new URL(`http://${h}/`), resolver).catch(() => checkHop(cfg, new URL(`https://${h}/`), resolver));

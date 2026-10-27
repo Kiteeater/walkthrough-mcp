@@ -202,7 +202,9 @@ describe("screenshot command log", () => {
     expect(existsSync(join(c.dir(w.id), "evidence", "ev-1.png"))).toBe(false);
     expect(c.load(w.id).evidence).toHaveLength(0);
   });
-  it("if the log write fails AND the PNG cannot be removed, both errors are reported (log error first, also as cause)", async () => {
+  // Precondition: a non-root user. The unlink failure comes from a read-only directory (0555), which root ignores
+  // (CAP_DAC_OVERRIDE), so as root the PNG would be removed and the AggregateError path never taken.
+  it.skipIf(process.getuid?.() === 0)("if the log write fails AND the PNG cannot be removed, both errors are reported (log error first, also as cause)", async () => {
     const c = core(both(), { page: async (u) => okPage(u) });
     const w = c.startWalkthrough({ title: "t", sandbox: SB });
     mkdirSync(join(c.dir(w.id), "commands.jsonl"), { recursive: true }); // appending fails (EISDIR)
