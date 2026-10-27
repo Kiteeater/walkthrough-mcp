@@ -1,5 +1,6 @@
 import { flowScreenshot } from "./flow-capture.internal.js";
-import { flowPolicy, guardedFetch, ReplayRejectedError, type Resolver } from "./replay.js";
+import { flowPolicy, ReplayRejectedError, type Resolver } from "./egress/policy.js";
+import { guardedFetch } from "./egress/fetch.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { renderWalkthrough } from "./render.js";

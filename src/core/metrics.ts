@@ -1,6 +1,8 @@
 // Read-only Prometheus adapter: instant queries only (GET /api/v1/query). The endpoint goes through the same host
 // allowlist + IP policy as replay (pinned IP, every redirect hop re-checked, token bound to the endpoint's origin).
-import { replayRequest, ReplayRejectedError, type ReplayConfig, type Resolver } from "./replay.js";
+import { ReplayRejectedError, type Resolver } from "./egress/policy.js";
+import { replayRequest } from "./egress/fetch.js";
+import { type ReplayConfig } from "./replay.js";
 
 export interface MetricsSample { metric: Record<string, string>; value: number; at: string }
 
