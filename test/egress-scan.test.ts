@@ -43,13 +43,12 @@ const IDENTS = new Set(["fetch", "WebSocket"]);
 const OWNERS: Record<string, { rules: Rule[]; why: string }> = {
   "src/core/egress/fetch.ts": { rules: ["net"], why: "guarded HTTP: checkHop + IP pinning + manual redirects" },
   "src/core/egress/ws.ts": { rules: ["net"], why: "guarded WebSocket client: same checkHop + IP pinning" },
-  "src/core/capture.ts": { rules: ["browser"], why: "Playwright browser; only driven via WalkthroughCore.guardedPage, every request routed to the guard (route.fulfill from guard.fetch / guard.websocket). Not moved into egress/ in this PR" },
+  "src/core/capture.ts": { rules: ["browser", "suspicious"], why: "suspicious: the page init script intentionally passes `window` to Object.defineProperty to lock page-side network globals (in-page hardening, no outbound request). browser: Playwright browser; only driven via WalkthroughCore.guardedPage, every request routed to the guard (route.fulfill from guard.fetch / guard.websocket). Not moved into egress/ in this PR" },
   "src/core/sandbox.ts": { rules: ["process"], why: "sandbox up/down/exec: spawn(file,args), no shell, allowlisted env" },
 };
 
 /** KNOWN violations that exist today. Not fixed in this PR (move-only); new ones fail the test. */
 const KNOWN: Record<string, { rules: Rule[]; why: string }> = {
-  "src/core/capture.ts": { rules: ["suspicious"], why: "KNOWN ISSUE_CAPTURE_INIT: page init script passes `window` to Object.defineProperty to lock down page-side network globals (in-page hardening, not an outbound call; review whether to restructure)" },
   "src/core/alerts.ts": { rules: ["process"], why: "KNOWN ISSUE_ALERTS: spawnDetachedPoller spawns `walkthrough watch _poll` with the full process.env (should go through sandbox/allowlistEnv)" },
   "src/demo-agent/trace-run.ts": { rules: ["net"], why: "KNOWN ISSUE_TRACE: direct fetch to LANGFUSE_URL, not through the egress guard" },
   "examples/demo.mjs": { rules: ["process"], why: "ISSUE_EXAMPLES example launcher: spawns examples/trace-demo/run.mjs" },
