@@ -2,6 +2,7 @@
 import { BlockList, isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { ReplayConfig } from "../replay.js";
+import { hostAllowed } from "./allowhosts.js";
 
 export class ReplayRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "ReplayRejectedError"; }
@@ -90,11 +91,6 @@ export function ipProblem(ipRaw: string, allowCidrs: string[] = []): string | un
   return allow.check(ip, fam) ? undefined : `private/loopback/link-local/reserved address ${ip} is denied (not in allowCidrs)`;
 }
 
-function hostAllowed(u: URL, cfg: ReplayConfig): boolean {
-  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const port = u.port || (u.protocol === "https:" ? "443" : "80");
-  return cfg.allowHosts.some((h) => { const [hh, hp] = h.toLowerCase().split(/:(?=\d+$)/); return hh === host && (!hp || hp === port); });
-}
 
 /**
  * Policy check for one hop: scheme, no userinfo, host allowlist, then resolve ONCE and judge that address.

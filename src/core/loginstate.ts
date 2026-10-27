@@ -3,6 +3,7 @@
 // redactor secrets for the capture, the path never reaches evidence or the command log.
 import { readFileSync } from "node:fs";
 import type { LoginStorageState } from "./capture.js";
+import { loginCookieHostnames, loginOriginAllowed } from "./egress/allowhosts.js";
 import { ReplayRejectedError } from "./egress/policy.js";
 import { type ReplayConfig } from "./replay.js";
 
@@ -28,24 +29,11 @@ export function captureSecretValues(vals: string[]): string[] {
 const PUBLIC_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "com.tw", "org.tw", "net.tw", "edu.tw", "gov.tw", "com.hk", "com.au", "net.au", "org.au", "co.jp", "ne.jp", "or.jp", "co.kr", "com.br", "com.sg", "co.nz", "co.in", "github.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "appspot.com", "cloudfront.net", "azurewebsites.net"]);
 export function isPublicSuffix(d: string): boolean { return !d.includes(".") || PUBLIC_SUFFIXES.has(d); }
 
-function allowedHostnames(cfg: ReplayConfig): string[] {
-  return cfg.allowHosts.map((h) => h.toLowerCase().replace(/:\d+$/, "").replace(/^\[|\]$/g, ""));
-}
-
 /** Cookie domain matches an allowlisted hostname (RFC 6265 domain-match, leading dot = that host and subdomains). */
 function cookieDomainAllowed(domain: string, hosts: string[]): boolean {
   const d = domain.toLowerCase().replace(/^\./, "");
   // exact host, or a parent domain of an allowlisted host that is not a public suffix (`.example.com` ok, `com` not)
   return hosts.some((h) => h === d || (h.endsWith(`.${d}`) && !isPublicSuffix(d)));
-}
-
-function originAllowed(origin: string, hosts: string[], cfg: ReplayConfig): boolean {
-  try {
-    const u = new URL(origin);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    const host = u.hostname.replace(/^\[|\]$/g, "");
-    return cfg.allowHosts.some((a) => { const x = a.toLowerCase(); return x === u.host.toLowerCase() || x === host.toLowerCase(); }) && hosts.length > 0;
-  } catch { return false; }
 }
 
 export function loadLoginState(cfg: ReplayConfig, path: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): LoadedLoginState {
@@ -55,7 +43,7 @@ export function loadLoginState(cfg: ReplayConfig, path: string, readFile: (p: st
   const obj = (Array.isArray(raw) ? { cookies: raw, origins: [] } : raw) as { cookies?: unknown; origins?: unknown };
   if (!obj || typeof obj !== "object" || (obj.cookies !== undefined && !Array.isArray(obj.cookies)) || (obj.origins !== undefined && !Array.isArray(obj.origins)))
     throw new ReplayRejectedError("capture.storageStatePath: expected {cookies: [...], origins: [...]} or a cookie array");
-  const hosts = allowedHostnames(cfg);
+  const hosts = loginCookieHostnames(cfg);
   const secrets: string[] = [];
   const cookies: LoginStorageState["cookies"] = [];
   let droppedCookies = 0, droppedOrigins = 0;
@@ -74,7 +62,7 @@ export function loadLoginState(cfg: ReplayConfig, path: string, readFile: (p: st
   for (const o of (obj.origins ?? []) as { origin?: unknown; localStorage?: unknown }[]) {
     const ls = Array.isArray(o?.localStorage) ? (o.localStorage as { name?: unknown; value?: unknown }[]).filter((x) => typeof x?.name === "string" && typeof x?.value === "string") as { name: string; value: string }[] : [];
     for (const x of ls) if (x.value) secrets.push(x.value);
-    if (typeof o?.origin !== "string" || !originAllowed(o.origin, hosts, cfg)) { droppedOrigins++; continue; }
+    if (typeof o?.origin !== "string" || !loginOriginAllowed(o.origin, cfg)) { droppedOrigins++; continue; }
     origins.push({ origin: o.origin, localStorage: ls });
   }
   return { storageState: { cookies, origins }, secrets: captureSecretValues(secrets), summary: { cookies: cookies.length, origins: origins.length, droppedCookies, droppedOrigins } };
