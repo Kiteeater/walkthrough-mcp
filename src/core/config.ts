@@ -36,11 +36,14 @@ const sandboxSchema = z.object({
   local: z.object({ up: str, down: str.optional(), passEnv: strs.optional(), killTimeoutMs: posInt.optional() }).strict().optional(),
   allowExec: z.boolean().optional(),
   cwd: str.optional(), // resolved against the config file's directory by loadFlowConfig (default ".")
-  // Required like SandboxConfig; may be "" when backend is "local" (local.up is what runs).
+  // Required like SandboxConfig; may be "" only when backend is "local" (local.up is what runs then).
   up: z.string(),
   down: z.string(),
   logs: str.optional(),
-}).strict();
+}).strict().superRefine((sb, ctx) => {
+  if (sb.backend === "local") return;
+  for (const k of ["up", "down"] as const) if (sb[k] === "") ctx.addIssue({ code: z.ZodIssueCode.custom, path: [k], message: `must not be empty unless backend is "local"` });
+});
 
 export const flowSchema = z.object({
   title: str,
