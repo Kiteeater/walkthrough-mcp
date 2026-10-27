@@ -97,7 +97,10 @@ export async function runFlow(core: WalkthroughCore, cfg: FlowConfig, opts: { sk
     // The host agent plans, executes and submits evidence here (core only keeps the ledger and judges).
     if (opts.agent) await opts.agent(w.id);
     for (const cap of cfg.captures) {
-      const ev = await core.captureEvidence(w.id, cap.type === "screenshot" ? { type: "screenshot", url: cap.url } : { type: "logs", service: cap.service });
+      // Screenshots: same guarded browser path as capture_page, under the flow policy (own host only, core blocklist).
+      const ev = cap.type === "screenshot"
+        ? await core.captureEvidence(w.id, { type: "screenshot", url: cap.url }, { policy: await flowPolicy(cap.url) })
+        : await core.captureEvidence(w.id, { type: "logs", service: cap.service });
       names.set(cap.as, ev.id);
     }
     for (const s of cfg.sources ?? []) names.set(s.as, (await core.linkSource(w.id, s)).id);

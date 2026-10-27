@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, exists
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
 import { execDecision } from "./execpolicy.js";
-import { BLOCKED_EVIDENCE, type Capturer, type NavigationGuard } from "./capture.js";
+import { BLOCKED_EVIDENCE, type Capturer, type NavigationGuard, type PageCapture } from "./capture.js";
 import { isIP } from "node:net";
 import { Redactor } from "./redact.js";
 import {
@@ -262,6 +262,8 @@ export class WalkthroughCore {
   captureEvidence(
     id: string,
     input: { type: "screenshot"; url: string; checkId?: string } | { type: "logs"; service: string; checkId?: string; delta?: boolean } | SubmittedEvidence,
+    /** Internal (runFlow only, never reachable from MCP): egress policy for screenshots instead of replay.allowHosts. */
+    opts: { policy?: ReplayConfig } = {},
   ): Promise<Evidence> {
     return this.withLock(id, async () => {
     const w = this.load(id);
@@ -271,7 +273,11 @@ export class WalkthroughCore {
     let ev: Omit<Evidence, "sha256" | "createdAt">;
     if (input.type === "screenshot") {
       ev = { id: evId, type: "screenshot", kind: "screenshot", path: `evidence/${evId}.png`, source: this.redactor.text(input.url), executedBy: "core" };
-      await this.deps.capturer.screenshot(input.url, abs(ev.path));
+      // B1: same guarded browser path as capture_page (core blocklist, allowHosts + IP rules, pinned DNS, every redirect
+      // hop re-checked, read-only methods); only the screenshot is kept. No login state is loaded for this path.
+      const cfg = opts.policy ?? this.deps.replay;
+      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("screenshot capture needs replay.allowHosts (same policy as capture_page)");
+      writeFileSync(abs(ev.path), await this.guardedPage(cfg, input.url).then((p) => p.screenshot));
     } else if (input.type === "logs") {
       ev = { id: evId, type: "logs", kind: "log", path: `evidence/${evId}.log`, source: `${w.sandbox.backend === "local" ? "local" : "docker"}:${input.service}`, executedBy: "core" };
       const raw = await this.deps.sandboxFactory(w.sandbox, w.id).logs(input.service);
@@ -380,12 +386,9 @@ export class WalkthroughCore {
       if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("capture_page needs replay.allowHosts (same policy as replay)");
       const w = this.load(id);
       if (!(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
-      // Pre-check gives a clear error before any browser starts; every navigation hop is re-checked by the guard.
-      const guard = await this.pinnedGuard(cfg);
-      await checkHop(cfg, new URL(input.url), guard.resolver); // same pinned resolution the browser will use
       // Login state (issue #19): read from the configured path now; its values are secrets for this capture.
       const login = cfg.capture?.storageStatePath ? loadLoginState(cfg, cfg.capture.storageStatePath) : undefined;
-      const p = await this.deps.capturer.page(input.url, login ? { ...guard, storageState: login.storageState } : guard);
+      const p = await this.guardedPage(cfg, input.url, login?.storageState);
       // Every query value / userinfo of a BLOCKED URL is treated as a secret for this capture, wherever it shows up
       // (blocked evidence, HAR — incl. the page HTML that embeds it —, DOM text, command log, report).
       const r = this.redactor.with([...blockedUrlSecrets((p.blocked ?? []).map((b) => b.url)), ...(login?.secrets ?? []), ...captureSecretValues(p.setCookieValues ?? [])]);
@@ -422,6 +425,14 @@ export class WalkthroughCore {
       this.save(w);
       return out;
     });
+  }
+
+  /** The one browser entry point: pre-check (clear error before any browser starts), then load under the pinned guard. */
+  private async guardedPage(cfg: ReplayConfig, url: string, storageState?: NavigationGuard["storageState"]): Promise<PageCapture> {
+    if (!this.deps.capturer.page) throw new Error("page capture is not available (no Playwright capturer)");
+    const guard = await this.pinnedGuard(cfg);
+    await checkHop(cfg, new URL(url), guard.resolver); // same pinned resolution the browser will use
+    return this.deps.capturer.page(url, storageState ? { ...guard, storageState } : guard);
   }
 
   /**

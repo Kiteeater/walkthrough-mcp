@@ -62,9 +62,11 @@ export interface NavigationGuard {
 }
 
 export interface Capturer {
-  /** Write a PNG screenshot of `url` to `outPath`. */
-  screenshot(url: string, outPath: string): Promise<void>;
-  /** Optional `method: ui` fallback for hosts without computer use: load `url`, return screenshot + HAR + DOM text. */
+  /**
+   * Load `url` under `guard` (every request, redirect and WebSocket goes through it) and return screenshot + HAR + DOM
+   * text. This is the ONLY way the browser is driven: capture_page and capture_evidence type=screenshot both use it,
+   * so there is no unguarded navigation path (B1).
+   */
   page?(url: string, guard: NavigationGuard): Promise<PageCapture>;
 }
 
@@ -74,18 +76,6 @@ const READ_ONLY = new Set(["GET", "HEAD"]);
 
 /** Playwright-backed capturer. Playwright is loaded lazily so unit tests never need a browser. */
 export class PlaywrightCapturer implements Capturer {
-  async screenshot(url: string, outPath: string): Promise<void> {
-    const { chromium } = await import("playwright");
-    const browser = await chromium.launch();
-    try {
-      const page = await browser.newPage();
-      await page.goto(url, { waitUntil: "networkidle" });
-      await page.screenshot({ path: outPath, fullPage: true });
-    } finally {
-      await browser.close();
-    }
-  }
-
   async page(url: string, guard: NavigationGuard): Promise<PageCapture> {
     const { chromium } = await import("playwright");
     const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
