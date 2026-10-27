@@ -1,11 +1,11 @@
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createSandboxFactory, Redactor, renderWalkthrough, runFlow, WalkthroughCore, type Capturer, type FlowConfig,
 } from "../src/core/index.js";
-import { mockCore, SB } from "./helpers.js";
+import { fakePageCapturer, LOCAL_POLICY, mockCore, SB } from "./helpers.js";
 
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)]));
@@ -16,7 +16,7 @@ const assertAbsent = (dir: string, secret: string) => {
     for (const form of forms) expect(body.includes(form), `${f} contains ${form}`).toBe(false);
   }
 };
-const fakeCapturer: Capturer = { screenshot: async (_u, out) => writeFileSync(out, Buffer.from("png")) };
+const fakeCapturer: Capturer = fakePageCapturer();
 
 describe("redaction of JSON-special secrets", () => {
   const SECRET = 'q"uo\\te\\"d-secret';
@@ -41,7 +41,7 @@ describe("per-id lock", () => {
     const { core } = mockCore();
     const w = await core.startWalkthrough({ title: "t", sandbox: SB });
     const evs = await Promise.all(Array.from({ length: 10 }, (_, i) =>
-      core.captureEvidence(w.id, i % 2 ? { type: "logs", service: "web" } : { type: "screenshot", url: "http://x/" })));
+      i % 2 ? core.captureEvidence(w.id, { type: "logs", service: "web" }) : core.captureEvidence(w.id, { type: "screenshot", url: "http://localhost:3000/" }, LOCAL_POLICY)));
     await Promise.all([
       ...evs.map((e) => core.recordClaim(w.id, { question: "q", conclusion: e.id, kind: "observed", evidenceIds: [e.id] })),
       ...evs.map(() => core.recordClaim(w.id, { question: "q", conclusion: "i", kind: "inferred" })),
