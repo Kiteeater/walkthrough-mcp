@@ -214,6 +214,9 @@ describe("egress static scan", () => {
   it("network / browser / child-process use appears only in owner files or the explicit known list", () => {
     expect(scan(process.cwd(), ["src", "examples"], ALLOWED)).toEqual([]);
   });
+  it("every KNOWN entry cites a tracking issue (#N)", () => {
+    for (const [file, { why }] of Object.entries(KNOWN)) expect(why, file).toMatch(/#\d+/);
+  });
   it("every listed exception is still needed (no stale entries, none skipped)", () => {
     const hits = scan(process.cwd(), ["src", "examples"], {});
     for (const [file, { rules }] of Object.entries(ALLOWED)) for (const r of rules)
