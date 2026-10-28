@@ -10,6 +10,7 @@ import {
   appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
   CLI_ENV_DENY, collectMessageBodies, requestedMsgIds,
+  assertArgvHostsAllowed,
 } from "./runcli.js";
 import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
@@ -22,7 +23,7 @@ import { guardedGet, guardedRequest, replayRequest } from "./egress/fetch.js";
 import { guardedWebSocket } from "./egress/ws.js";
 import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
-import { assertNoCoreBlockedTargets } from "./egress/targets.js";
+import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
 import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
@@ -818,9 +819,16 @@ export class WalkthroughCore {
         argv = cliArgv(c, input.argv ?? []);
       }
       // Core blocklist: no argv value / connector target (URI, name server, endpoint…) may name or resolve to it.
+      // Each name is resolved ONCE; failure/timeout/no address refuses the call (the CLI connects by itself, so this is
+      // the only check). Lockable targets (`-n` host:port name servers) are rewritten to the checked IP so the CLI
+      // never resolves them again. HTTPS endpoints (aliyun) cannot be pinned without breaking TLS/SNI: there the agent
+      // may not name any host outside the connector's allowHosts, and --endpoint is on no allowlist.
+      if (c.kind !== "mongo") assertArgvHostsAllowed(c, input.argv ?? []);
       const resolveAll = this.deps.resolver ? async (h: string) => [await this.deps.resolver!(h)] : undefined;
-      try { await assertNoCoreBlockedTargets([...argv, ...(c.uri ? [c.uri] : []), ...(c.namesrvs ?? [])], resolveAll); }
-      catch (e) { throw new CliRejectedError((e as Error).message); }
+      try {
+        const checked = await assertNoCoreBlockedTargets([...argv, ...(c.uri ? [c.uri] : []), ...(c.namesrvs ?? [])], resolveAll);
+        if (c.namesrvs) argv = await pinNamesrvArgv(argv, checked, resolveAll);
+      } catch (e) { throw new CliRejectedError((e as Error).message); }
       const root = resolve(w.sandbox.cwd);
       const cwd = resolve(root, input.cwd ?? ".");
       if (cwd !== root && !cwd.startsWith(root + sep)) throw new CliRejectedError(`cwd outside the walkthrough root: ${input.cwd}`);

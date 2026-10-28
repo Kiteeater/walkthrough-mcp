@@ -19,7 +19,7 @@ if(process.argv[2]==="--version"){console.log("9.9.9");process.exit(0)}
 require("fs").appendFileSync(${JSON.stringify(join(root, "calls.jsonl"))},JSON.stringify([${JSON.stringify(name)},...process.argv.slice(2)])+"\\n");console.log("ok");`); chmodSync(p, 0o755); return p; };
   void bin;
   const connectors = PRESET_CONNECTORS.map((c) => ({ ...c, binary: fake(c.name), ...(c.name === "mqadmin" ? { namesrvs: ["ns:9876"] } : {}) }));
-  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => undefined }, redactor: new Redactor([]), connectors });
+  const core = new WalkthroughCore({ root, sandboxFactory: () => sandbox, capturer: { screenshot: async () => undefined }, redactor: new Redactor([]), connectors, resolver: async () => "127.0.0.1" }); // no real DNS
   const cliCalls = () => existsSync(join(root, "calls.jsonl")) ? readFileSync(join(root, "calls.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
   const id = core.startWalkthrough({ title: "t", sandbox: { ...SB, ...(allowExec === undefined ? {} : { allowExec }) } }).id;
   return { core, id, spawned, cliCalls };
@@ -78,7 +78,7 @@ describe("run_in_sandbox exec (issue #8)", () => {
     expect(routed.via).toBe("run_cli");
     expect(routed.output).toMatch(/routed to run_cli \(mqadmin\)/);
     expect(spawned).toEqual([]);
-    expect(cliCalls()).toEqual([["mqadmin", "topicList", "-n", "ns:9876"]]);
+    expect(cliCalls()).toEqual([["mqadmin", "topicList", "-n", "127.0.0.1:9876"]]); // name server pinned to the checked IP
     const run = await core.runInSandbox(id, "exec", "node -e 'console.log(1)'");
     expect(run.via).toBe("exec");
     expect(spawned).toEqual([["node", "-e", "console.log(1)"]]); // argv array: no shell

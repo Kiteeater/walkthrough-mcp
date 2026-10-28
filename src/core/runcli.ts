@@ -10,6 +10,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
 import { basename, dirname, resolve as resolvePath } from "node:path";
+import { isIP } from "node:net";
+import { hostCandidates } from "./egress/targets.js";
 
 export class CliRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "CliRejectedError"; }
@@ -56,6 +58,25 @@ export interface ConnectorConfig {
   appendProfile?: boolean;
   /** Host env var names passed to the CLI in addition to the sandbox defaults. */
   passEnv?: string[];
+  /**
+   * Hostnames an agent argv value may name (exact, case-insensitive). Default none: any host-like argv value is
+   * refused before the CLI starts. `-n` values are governed by `namesrvs` instead (and pinned to a checked IP).
+   * For HTTPS-endpoint CLIs (aliyun) the endpoint itself is never an argv value: --endpoint is not on any allowlist,
+   * so it comes only from the CLI's own profile/region, which the agent cannot set.
+   */
+  allowHosts?: string[];
+}
+
+/** Refuse host-like values in agent argv that are not in the connector's allowHosts (`-n` values excluded). */
+export function assertArgvHostsAllowed(c: ConnectorConfig, argv: string[]): void {
+  const allowed = new Set((c.allowHosts ?? []).map((h) => h.toLowerCase()));
+  argv.forEach((a, i) => {
+    if (argv[i - 1] === "-n" || a === "-n" || a.startsWith("-n=")) return;
+    // Names, plus IPs written as a dotted quad / IPv6 / URL host. Bare integers (timestamps, --line 100) are not hosts
+    // here; the core blocklist still checks their numeric-IP reading.
+    const explicitIp = /\d{1,3}(?:\.\d{1,3}){3}|:\/\/|\[[0-9a-f:]*:[0-9a-f:]*\]/i.test(a);
+    for (const h of hostCandidates(a)) if ((!isIP(h) || explicitIp) && !allowed.has(h)) throw new CliRejectedError(`${c.name}: host ${JSON.stringify(h)} in argv is not in the connector's allowHosts`);
+  });
 }
 
 export const PRESET_CONNECTORS: ConnectorConfig[] = [
