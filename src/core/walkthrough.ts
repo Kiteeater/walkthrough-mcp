@@ -29,6 +29,7 @@ import { nextActionFor, type NextAction, type SubmittedEvidence } from "./ops/ne
 import { ClaimRejectedError, SignedOffError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { agentFile, captureEvidence, captureEvidenceWith, importMcpResult, readEvidenceText } from "./ops/evidence.js";
+import { collectWatch, finalizeWatch, listWatches, queryMetrics, readWatch, runPoller, spawnPoller, startWatch, stopPoller, watchAlerts, watchFile, writeWatch } from "./ops/metrics.js";
 import { runInSandbox, sandboxCommand, sandboxExec } from "./ops/sandbox.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
@@ -96,7 +97,8 @@ export class WalkthroughCore {
   readonly base: string;
   /** @internal */
   redactor: Redactor;
-  private readonly now: () => Date;
+  /** @internal */
+  readonly now: () => Date;
   readonly registry: Registry;
   private readonly locks = new Map<string, Promise<unknown>>();
   /** Last raw log text seen per walkthrough+service, for `delta` log captures. */
@@ -365,46 +367,8 @@ export class WalkthroughCore {
    * response as core-executed evidence (redacted, sha256) + a hash-chained commands.jsonl entry. The endpoint is
    * subject to replay.allowHosts and the IP policy; the bearer token is redacted from everything written.
    */
-  async queryMetrics(id: string, input: { query: string; checkId?: string; time?: string }): Promise<Evidence> {
-    const prom = this.deps.prometheus;
-    if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
-    const cfg = this.deps.replay;
-    if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("query_metrics needs replay.allowHosts (same policy as replay)");
-    const env = this.deps.env ?? process.env;
-    const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
-    // Validate the current walkthrough under the lock, then release it while the network request runs. The commit
-    // below re-acquires the lock and re-checks sign-off, so a concurrent writer cannot corrupt the ledger.
-    await this.withLock(id, () => {
-      const w = this.load(id);
-      if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
-    });
-    let r;
-    try {
-      r = await promInstantQuery(prom, cfg, input.query, { time: input.time, resolver: this.deps.resolver, env });
-    } catch (e) {
-      throw new (e instanceof Error ? (e.constructor as ErrorConstructor) : Error)(this.redactor.with([token, token && `Bearer ${token}`]).text(String((e as Error).message)));
-    }
-    return this.withLock(id, () => {
-      const w = this.load(id);
-      if (input.checkId !== undefined && !(w.checks ?? []).some((c) => c.id === input.checkId)) throw new Error(`unknown check: ${input.checkId}`);
-      const red = this.redactor.with([...r.sentSecrets, token]);
-      const evId = `ev-${w.evidence.length + 1}`;
-      const rel = `evidence/${evId}.json`;
-      const doc = { format: METRIC_EVIDENCE, endpoint: red.text(new URL(r.url).origin + new URL(r.url).pathname), query: input.query, time: input.time ?? null, httpStatus: r.status, response: red.value(r.json) };
-      writeFileSync(join(this.dir(id), rel), red.text(JSON.stringify(doc, null, 2)));
-      const sha = sha256File(join(this.dir(id), rel));
-      const log = appendLogEntry(join(this.dir(id), "commands.jsonl"), {
-        ts: this.ts(), walkthroughId: id, type: "metrics_query", checkId: input.checkId, endpoint: doc.endpoint, query: red.text(input.query),
-        time: input.time ?? null, httpStatus: r.status, promStatus: r.json.status ?? null, hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })),
-        outputSha256: sha, evidenceId: evId, executedBy: "core",
-      });
-      w.commandLogHead = { seq: log.seq, hash: log.hash };
-      const ev: Evidence = { id: evId, type: "response", kind: "metric", path: rel, sha256: sha, createdAt: this.ts(), executedBy: "core",
-        ...(input.checkId ? { checkId: input.checkId } : {}), source: red.text(`prometheus:${doc.endpoint} ${input.query}`).slice(0, 500) };
-      w.evidence.push(ev);
-      this.save(w);
-      return ev;
-    });
+  queryMetrics(id: string, input: { query: string; checkId?: string; time?: string }): Promise<Evidence> {
+    return queryMetrics(this, id, input);
   }
 
   // ---------------- alert watches (start_watch / collect_watch) ----------------
@@ -412,31 +376,23 @@ export class WalkthroughCore {
   // writer) and never takes the walkthrough lock. In the MCP server it runs in-process in the background; the CLI
   // spawns it as a detached child (`walkthrough watch _poll`). collect_watch (or sign_off) stops it, then — briefly
   // under the walkthrough lock — appends every poll + the result to commands.jsonl and writes evidence/findings.
-  private readonly pollers = new Map<string, { stop: () => void; done: Promise<void> }>();
+  /** @internal */
+  readonly pollers = new Map<string, { stop: () => void; done: Promise<void> }>();
 
-  private watchFile(watchId: string): string {
-    if (typeof watchId !== "string" || !WATCH_ID_RE.test(watchId)) throw new ClaimRejectedError(`invalid watch id: ${JSON.stringify(watchId)}`);
-    const dir = resolve(this.base, "watches");
-    const f = resolve(dir, `${watchId}.json`);
-    if (!f.startsWith(dir + sep)) throw new ClaimRejectedError("watch path escapes .walkthrough/watches");
-    return f;
+  /** @internal Body lives in ops/metrics.ts. */
+  watchFile(watchId: string): string {
+    return watchFile(this, watchId);
   }
   readWatch(watchId: string): WatchState {
-    const f = this.watchFile(watchId);
-    if (!existsSync(f)) throw new ClaimRejectedError(`watch not found: ${watchId}`);
-    return JSON.parse(readFileSync(f, "utf8")) as WatchState;
+    return readWatch(this, watchId);
   }
-  private writeWatch(s: WatchState): void {
-    const f = this.watchFile(s.id);
-    mkdirSync(resolve(this.base, "watches"), { recursive: true });
-    writeFileSync(`${f}.tmp`, JSON.stringify(s, null, 2));
-    renameSync(`${f}.tmp`, f);
+  /** @internal Body lives in ops/metrics.ts. */
+  writeWatch(s: WatchState): void {
+    return writeWatch(this, s);
   }
-  private listWatches(walkthroughId?: string): WatchState[] {
-    const dir = resolve(this.base, "watches");
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir).filter((n) => /^w_[0-9a-f]{16}\.json$/.test(n)).map((n) => JSON.parse(readFileSync(join(dir, n), "utf8")) as WatchState)
-      .filter((s) => !walkthroughId || s.walkthroughId === walkthroughId);
+  /** @internal Body lives in ops/metrics.ts. */
+  listWatches(walkthroughId?: string): WatchState[] {
+    return listWatches(this, walkthroughId);
   }
 
   /**
@@ -445,171 +401,37 @@ export class WalkthroughCore {
    * detached poller itself).
    */
   startWatch(id: string, input: { windowS?: number; intervalS?: number; matchers?: { checkId: string; labels: AlertMatcher }[]; background?: "in-process" | "none" }): Promise<WatchState> {
-    return this.withLock(id, async () => {
-      const prom = this.deps.prometheus;
-      if (!prom) throw new MetricsError("Prometheus is not configured (WALKTHROUGH_PROMETHEUS_URL)");
-      const cfg = this.deps.replay;
-      if (!cfg || !cfg.allowHosts?.length) throw new ReplayRejectedError("start_watch needs replay.allowHosts (same policy as replay)");
-      const windowS = input.windowS ?? 60, intervalS = input.intervalS ?? 15;
-      if (!Number.isFinite(windowS) || windowS < 1 || windowS > ALERT_WATCH_MAX_WINDOW_S) throw new ClaimRejectedError(`window_s must be 1-${ALERT_WATCH_MAX_WINDOW_S}`);
-      if (!Number.isFinite(intervalS) || intervalS < ALERT_WATCH_MIN_INTERVAL_S || intervalS > ALERT_WATCH_MAX_INTERVAL_S) throw new ClaimRejectedError(`interval_s must be ${ALERT_WATCH_MIN_INTERVAL_S}-${ALERT_WATCH_MAX_INTERVAL_S}`);
-      const w = this.load(id);
-      for (const x of input.matchers ?? []) {
-        if (!(w.checks ?? []).some((c) => c.id === x.checkId)) throw new ClaimRejectedError(`unknown check: ${x.checkId}`);
-        const p = matcherProblem(x.labels); if (p) throw new ClaimRejectedError(p);
-      }
-      promUrl(prom.url, PROM_ALERTS_PATH); // validates the base URL before anything starts
-      await checkHop(cfg, new URL(prom.url), this.deps.resolver); // fail fast on allowlist / IP policy
-      const active = this.listWatches().filter((s) => s.status === "running");
-      if (active.length >= MAX_ACTIVE_WATCHES) throw new ClaimRejectedError(`too many active watches (${active.length}/${MAX_ACTIVE_WATCHES}); collect one first`);
-      const now = this.now();
-      const s: WatchState = {
-        id: `w_${randomBytes(8).toString("hex")}`, walkthroughId: id, windowS, intervalS, matchers: input.matchers ?? [],
-        start: now.toISOString(), deadline: new Date(now.getTime() + windowS * 1000).toISOString(), status: "running",
-        polls: [], heartbeat: now.toISOString(), pid: process.pid,
-      };
-      this.writeWatch(s);
-      if ((input.background ?? "in-process") === "in-process") this.spawnPoller(s.id);
-      return s;
-    });
+    return startWatch(this, id, input);
   }
 
-  private spawnPoller(watchId: string): void {
-    let stopped = false;
-    const done = this.runPoller(watchId, () => stopped).catch(() => undefined).finally(() => this.pollers.delete(watchId));
-    this.pollers.set(watchId, { stop: () => { stopped = true; }, done });
+  /** @internal Body lives in ops/metrics.ts. */
+  spawnPoller(watchId: string): void {
+    return spawnPoller(this, watchId);
   }
 
   /** The poll loop (in-process or in the CLI's detached child). Writes only the watch state file. */
-  async runPoller(watchId: string, stopped: () => boolean = () => false): Promise<void> {
-    const prom = this.deps.prometheus!, cfg = this.deps.replay!;
-    const env = this.deps.env ?? process.env;
-    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-    const url = promUrl(prom.url, PROM_ALERTS_PATH);
-    let s = this.readWatch(watchId);
-    s.pid = process.pid; this.writeWatch(s);
-    const token = env[prom.tokenEnv ?? "WALKTHROUGH_PROMETHEUS_TOKEN"];
-    for (let i = 0; i < ALERT_WATCH_MAX_POLLS; i++) {
-      s = this.readWatch(watchId);
-      if (s.status !== "running" || s.stopRequested || stopped()) break;
-      if (i && this.now().getTime() > Date.parse(s.deadline)) break;
-      const at = this.ts();
-      let red = this.redactor.with([token, token && `Bearer ${token}`]);
-      let rec: WatchPoll;
-      try {
-        const r = await promGet(prom, cfg, url, PROM_ALERTS_PATH, { resolver: this.deps.resolver, env });
-        red = red.with(r.sentSecrets);
-        if (r.json.status !== "success") rec = { at, httpStatus: r.status, error: red.text(`status ${r.json.status ?? "?"} ${r.json.error ?? ""}`).trim(), firing: [], pending: 0 };
-        else {
-          const alerts = ((((r.json.data as { alerts?: PromAlert[] })?.alerts) ?? []) as PromAlert[]).slice(0, 500);
-          // Redacted BEFORE it is written anywhere (the state file included).
-          rec = { at, httpStatus: r.status, firing: alerts.filter((a) => a?.state === "firing").map((a) => redactAlert(a, red)), pending: alerts.filter((a) => a?.state === "pending").length,
-            hops: r.hops.map((h) => ({ ...h, url: red.text(h.url) })) };
-        }
-      } catch (e) {
-        rec = { at, error: red.text(String((e as Error).message)), firing: [], pending: 0 };
-      }
-      s = this.readWatch(watchId);
-      if (s.status !== "running") break;
-      s.polls.push(rec); s.heartbeat = this.ts();
-      this.writeWatch(s);
-      if (this.now().getTime() + s.intervalS * 1000 > Date.parse(s.deadline) + 1) break;
-      if (this.deps.sleep) await sleep(s.intervalS * 1000);
-      else for (let t = 0; t < s.intervalS * 1000 && !stopped() && !this.readWatch(watchId).stopRequested; t += 200) await sleep(200); // stop-aware wait
-    }
-    s = this.readWatch(watchId);
-    if (s.status === "running") { s.status = (s.stopRequested || stopped()) && this.now().getTime() < Date.parse(s.deadline) ? "stopped" : "done"; s.heartbeat = this.ts(); this.writeWatch(s); }
+  runPoller(watchId: string, stopped: () => boolean = () => false): Promise<void> {
+    return runPoller(this, watchId, stopped);
   }
 
-  /** Stop the poller (own process: abort + await; other process: request stop and wait briefly). Returns final state. */
-  private async stopPoller(watchId: string): Promise<WatchState> {
-    const p = this.pollers.get(watchId);
-    if (p) { p.stop(); await p.done; return this.readWatch(watchId); }
-    let s = this.readWatch(watchId);
-    if (s.status !== "running") return s;
-    s.stopRequested = true; this.writeWatch(s);
-    const alive = (() => { try { process.kill(s.pid, 0); return s.pid !== process.pid; } catch { return false; } })();
-    if (alive) {
-      const until = Date.now() + Math.min(15_000, (s.intervalS + 11) * 1000);
-      while (Date.now() < until) { await new Promise((r) => setTimeout(r, 200)); s = this.readWatch(watchId); if (s.status !== "running") return s; }
-    }
-    // No live poller finished it: whatever was observed is partial. Never reported as a quiet window.
-    s = this.readWatch(watchId);
-    if (s.status === "running") { s.status = "interrupted"; this.writeWatch(s); }
-    return s;
+  /** @internal Body lives in ops/metrics.ts. */
+  stopPoller(watchId: string): Promise<WatchState> {
+    return stopPoller(this, watchId);
   }
 
   /** collect_watch: stop polling and finalize: evidence + findings (same matching/redaction), log entries. */
-  async collectWatch(watchId: string, opts: { reason?: "collect" | "sign_off" } = {}): Promise<{ evidence: Evidence; watch: AlertWatch; findings: Finding[] }> {
-    const s0 = this.readWatch(watchId);
-    if (s0.status === "finalized") throw new ClaimRejectedError(`watch ${watchId} already collected`);
-    const s = await this.stopPoller(watchId);
-    return this.withLock(s.walkthroughId, async () => this.finalizeWatch(this.load(s.walkthroughId), this.readWatch(watchId), opts.reason ?? "collect"));
+  collectWatch(watchId: string, opts: { reason?: "collect" | "sign_off" } = {}): Promise<{ evidence: Evidence; watch: AlertWatch; findings: Finding[] }> {
+    return collectWatch(this, watchId, opts);
   }
 
-  /** Caller holds the walkthrough lock. Saves w. */
-  private finalizeWatch(w: Walkthrough, s: WatchState, reason: "collect" | "sign_off"): { evidence: Evidence; watch: AlertWatch; findings: Finding[] } {
-    const id = w.id;
-    if (s.status === "finalized") throw new ClaimRejectedError(`watch ${s.id} already collected`);
-    const outcome: AlertWatch["outcome"] = s.status === "interrupted" ? "interrupted" : s.status === "done" ? "completed" : "stopped_early"; // "stopped"/"running" = collected before the deadline
-    const red = this.redactor;
-    const prom = this.deps.prometheus;
-    const endpoint = prom ? red.text(promUrl(prom.url, PROM_ALERTS_PATH).origin + PROM_ALERTS_PATH) : "(unconfigured)";
-    const log = (e: Record<string, unknown>) => { const l = appendLogEntry(join(this.dir(id), "commands.jsonl"), { ts: this.ts(), walkthroughId: id, executedBy: "core", ...e }); w.commandLogHead = { seq: l.seq, hash: l.hash }; };
-    for (const [i, p] of s.polls.entries()) log({ type: "alerts_poll", watchId: s.id, poll: i + 1, polledAt: p.at, endpoint, httpStatus: p.httpStatus ?? null, error: p.error ?? null, firing: p.firing.map((a) => a.labels.alertname ?? "?"), pending: p.pending, hops: p.hops ?? [] });
-    const end = s.polls.at(-1)?.at ?? s.start;
-    const firing = new Map<string, { alert: PromAlert; firstSeenAt: string }>();
-    for (const p of s.polls) for (const a of p.firing) if (!firing.has(alertKey(a))) firing.set(alertKey(a), { alert: a, firstSeenAt: p.at });
-    const pendingSeen = Math.max(0, ...s.polls.map((p) => p.pending));
-    const errors = s.polls.filter((p) => p.error).length;
-    const fired = [...firing.values()].map((x) => ({ ...x.alert, firstSeenAt: x.firstSeenAt }));
-    const note = outcome === "interrupted"
-      ? `已中断（interrupted）：轮询 ${s.polls.length} 次后停止；${end} 之后的数据缺失（不代表窗口内无告警）${fired.length ? `；此前看到 ${fired.length} 条触发中的告警` : ""}`
-      : fired.length ? `窗口内 ${fired.length} 条告警触发` : errors === s.polls.length && s.polls.length ? `没有一次轮询成功（${errors} 次错误）；不代表窗口内无告警` : "窗口内无告警";
-    const evId = `ev-${w.evidence.length + 1}`;
-    const rel = `evidence/${evId}.json`;
-    const doc = { format: ALERTS_EVIDENCE, watchId: s.id, endpoint, outcome, finalizedBy: reason, window: { start: s.start, end, deadline: s.deadline, requestedS: s.windowS, intervalS: s.intervalS },
-      polls: s.polls.map((p) => ({ at: p.at, httpStatus: p.httpStatus ?? null, error: p.error ?? null, firing: p.firing.map((a) => a.labels.alertname ?? "?"), pending: p.pending })),
-      firing: fired, pendingSeen, note };
-    writeFileSync(join(this.dir(id), rel), red.text(JSON.stringify(doc, null, 2)));
-    const ev: Evidence = { id: evId, type: "response", kind: "alert", path: rel, sha256: sha256File(join(this.dir(id), rel)), createdAt: this.ts(), executedBy: "core",
-      source: red.text(`prometheus:${endpoint} ${s.start}..${end} (${outcome})`) };
-    w.evidence.push(ev);
-    const matchersFor = (c: Check) => [...(c.alertMatchers ?? []), ...s.matchers.filter((x) => x.checkId === c.id).map((x) => x.labels)];
-    const watch: AlertWatch = { watchId: s.id, evidenceId: evId, start: s.start, end, polls: s.polls.length, outcome, ...(errors ? { errors: [...new Set(s.polls.flatMap((p) => p.error ? [p.error] : []))].slice(0, 5) } : {}), finalizedBy: reason, matched: [], unmatched: [], pendingSeen };
-    const newFindings: Finding[] = [];
-    for (const a of fired) {
-      const name = a.labels.alertname ?? "(unnamed alert)";
-      const checkIds = (w.checks ?? []).filter((c) => matchersFor(c).some((mm) => alertMatches(a, mm))).map((c) => c.id);
-      if (!checkIds.length) { watch.unmatched.push({ alertname: name, labels: a.labels, severity: severityOf(a), activeAt: a.activeAt, firstSeenAt: a.firstSeenAt }); continue; }
-      const claim = `Prometheus alert ${name} firing (activeAt ${a.activeAt ?? "?"}, first seen by walkthrough at ${a.firstSeenAt}) (${Object.entries(a.labels).filter(([k]) => k !== "alertname").map(([k, v]) => `${k}=${v}`).join(", ")})${a.annotations.summary ? `: ${a.annotations.summary}` : ""} — related to ${checkIds.join(", ")}`;
-      const existing = (w.findings ?? []).find((f) => f.checkId && checkIds.includes(f.checkId));
-      if (existing) {
-        // Corroborating signal, NOT a causal step: the root-cause chain is left untouched.
-        existing.corroborating = [...(existing.corroborating ?? []), { kind: "alert", claim, evidence_ids: [evId], alertname: name, activeAt: a.activeAt, firstSeenAt: a.firstSeenAt, alsoMatched: checkIds.filter((c) => c !== existing.checkId) }];
-        if (!existing.evidenceIds.includes(evId)) existing.evidenceIds.push(evId);
-        watch.matched.push({ alertname: name, checkIds, findingId: existing.id, attached: true, activeAt: a.activeAt, firstSeenAt: a.firstSeenAt });
-      } else {
-        const f: Finding = { id: `finding-${(w.findings ?? []).length + 1}`, title: `Alert ${name} firing`, severity: severityOf(a), symptom: claim,
-          repro_steps: [`GET ${endpoint}`], root_cause_chain: [{ claim, kind: "observed", evidence_ids: [evId] }], evidenceIds: [evId], kind: "observed", checkId: checkIds[0] };
-        w.findings = [...(w.findings ?? []), f];
-        newFindings.push(f);
-        watch.matched.push({ alertname: name, checkIds, findingId: f.id, attached: false, activeAt: a.activeAt, firstSeenAt: a.firstSeenAt });
-      }
-    }
-    w.alertWatches = [...(w.alertWatches ?? []), watch];
-    log({ type: "alerts_watch", watchId: s.id, evidenceId: evId, outputSha256: ev.sha256, start: s.start, end, outcome, finalizedBy: reason, polls: s.polls.length,
-      firing: fired.length, pendingSeen, matched: watch.matched.map((x) => ({ alertname: x.alertname, checkIds: x.checkIds, findingId: x.findingId, attached: x.attached })), unmatched: watch.unmatched.map((x) => x.alertname) });
-    this.save(w);
-    this.writeWatch({ ...s, status: "finalized", outcome, evidenceId: evId });
-    return { evidence: ev, watch, findings: newFindings };
+  /** @internal Body lives in ops/metrics.ts. */
+  finalizeWatch(w: Walkthrough, s: WatchState, reason: "collect" | "sign_off"): { evidence: Evidence; watch: AlertWatch; findings: Finding[] } {
+    return finalizeWatch(this, w, s, reason);
   }
 
   /** Convenience wrapper (tests / scripts): start_watch, wait for the window, collect_watch. Holds no lock while waiting. */
-  async watchAlerts(id: string, input: { windowS?: number; intervalS?: number; matchers?: { checkId: string; labels: AlertMatcher }[] }): Promise<{ evidence: Evidence; watch: AlertWatch; findings: Finding[] }> {
-    const s = await this.startWatch(id, { ...input, background: "in-process" });
-    await this.pollers.get(s.id)?.done;
-    return this.collectWatch(s.id);
+  watchAlerts(id: string, input: { windowS?: number; intervalS?: number; matchers?: { checkId: string; labels: AlertMatcher }[] }): Promise<{ evidence: Evidence; watch: AlertWatch; findings: Finding[] }> {
+    return watchAlerts(this, id, input);
   }
 
   private readonly versions = new Map<string, string>();
