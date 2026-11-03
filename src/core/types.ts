@@ -188,6 +188,8 @@ export interface SandboxConfig {
 }
 
 export interface Walkthrough {
+  /** File format version. Files without it are v1 and are upgraded in memory on load (domain/migrate.ts). */
+  schemaVersion: 2;
   id: string;
   title: string;
   createdAt: string;

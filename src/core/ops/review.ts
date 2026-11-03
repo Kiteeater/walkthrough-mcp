@@ -3,7 +3,7 @@
 // Not on the MCP surface: signOff / importReview are reached only from the CLI.
 import type { WatchState } from "../alerts.js";
 import { isReviewDecision, isSignOffDecision, toReview, toSignOff } from "../domain/decisions.js";
-import type { AlertWatch, Evidence, Finding, ReportDecision, SignOff, Walkthrough } from "../types.js";
+import type { AlertWatch, Evidence, Finding, ReportDecision, SignOff, SignOffDecision, Walkthrough } from "../types.js";
 
 /** Narrow view of WalkthroughCore: only the members the review ops touch. */
 export interface ReviewCore {
@@ -42,8 +42,13 @@ export function importReview(core: ReviewCore, review: unknown): Promise<{ id: s
   if (!r || typeof r.walkthroughId !== "string" || !(Array.isArray(r.decisions) || r.signoff)) return Promise.reject(new Error("invalid review file"));
   const decisions = r.decisions ?? [];
   const signoff = r.signoff;
-  if (signoff && !isSignOffDecision(signoff.decision)) return Promise.reject(new Error(`invalid sign-off: ${signoff.decision}`));
-  const reportVerdict = signoff?.decision;
+  let reportVerdict: SignOffDecision | undefined;
+  let reportComment: string | undefined;
+  if (signoff) {
+    if (!isSignOffDecision(signoff.decision)) return Promise.reject(new Error(`invalid sign-off: ${signoff.decision}`));
+    reportVerdict = signoff.decision;
+    reportComment = signoff.comment;
+  }
   return core.withLock(r.walkthroughId, () => {
   const w = core.load(r.walkthroughId as string);
   let applied = 0;
@@ -54,7 +59,7 @@ export function importReview(core: ReviewCore, review: unknown): Promise<{ id: s
     c.review = toReview({ scope: "claim", claimId: c.id, verdict: d.decision, note: d.note, source: { via: "review_import", decidedAt: core.now().toISOString() } });
     applied++;
   }
-  if (signoff && isSignOffDecision(reportVerdict)) w.signoff = toSignOff({ scope: "report", verdict: reportVerdict, comment: signoff.comment, source: { via: "review_import", decidedAt: core.now().toISOString() } });
+  if (reportVerdict) w.signoff = toSignOff({ scope: "report", verdict: reportVerdict, comment: reportComment, source: { via: "review_import", decidedAt: core.now().toISOString() } });
   core.save(w);
   return { id: w.id, applied };
   });
