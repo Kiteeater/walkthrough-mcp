@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { isSignedOff } from "./domain/decisions.js";
 import { migrate, SCHEMA_VERSION } from "./domain/migrate.js";
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync, existsSync, rmSync } from "node:fs";
+import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
 import { BLOCKED_EVIDENCE, type Capturer, type NavigationGuard, type PageCapture } from "./capture.js";
@@ -157,11 +157,8 @@ export class WalkthroughCore {
       const disk: unknown = JSON.parse(readFileSync(file, "utf8"));
       if (isSignedOff(disk as Walkthrough)) throw new SignedOffError(`walkthrough ${w.id} is signed off; it is read-only now`);
     }
-    const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-    const body = JSON.stringify(this.redactor.value(w), null, 2);
+    const tmp = this.writeTemp(file, w);
     try {
-      const fd = openSync(tmp, "w", 0o600);
-      try { writeSync(fd, Buffer.from(body, "utf8")); fsyncSync(fd); } finally { closeSync(fd); }
       renameSync(tmp, file);
     } catch (e) {
       try { rmSync(tmp, { force: true }); } catch { /* preserve the original failure */ }
@@ -179,8 +176,39 @@ export class WalkthroughCore {
       schemaVersion: SCHEMA_VERSION, id, title: input.title, createdAt: this.ts(), sandbox: input.sandbox,
       runs: [], evidence: [], sources: [], claims: [],
     };
-    this.save(w);
+    this.create(w);
     return w;
+  }
+
+  /**
+   * @internal First write of a new walkthrough.json. Exclusive: link(2) of a fully written temp file fails with EEXIST
+   * if the manifest already exists, so there is no window between "does it exist" and "create" (also across processes).
+   */
+  create(w: Walkthrough): void {
+    const file = join(this.dir(w.id), "walkthrough.json");
+    const tmp = this.writeTemp(file, w);
+    try {
+      linkSync(tmp, file);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`walkthrough ${w.id} already exists`);
+      throw e;
+    } finally {
+      try { rmSync(tmp, { force: true }); } catch { /* the manifest itself is already in place or the original error wins */ }
+    }
+  }
+
+  /** @internal Writes w (redacted) to a fresh temp file next to file, fsynced; returns its path. */
+  writeTemp(file: string, w: Walkthrough): string {
+    const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+    const body = JSON.stringify(this.redactor.value(w), null, 2);
+    try {
+      const fd = openSync(tmp, "w", 0o600);
+      try { writeSync(fd, Buffer.from(body, "utf8")); fsyncSync(fd); } finally { closeSync(fd); }
+    } catch (e) {
+      try { rmSync(tmp, { force: true }); } catch { /* preserve the original failure */ }
+      throw e;
+    }
+    return tmp;
   }
 
   runInSandbox(id: string, action: "up" | "down" | "exec", command?: string): Promise<RunRecord> {
