@@ -22,6 +22,7 @@ import type { NextAction, SubmittedEvidence } from "./ops/next-action.js";
 import { ClaimRejectedError, SignedOffError } from "./errors.js";
 import { sha256File } from "./hash.js";
 import { agentFile, captureEvidence, captureEvidenceWith, importMcpResult, readEvidenceText } from "./ops/evidence.js";
+import { importReview, signOff } from "./ops/review.js";
 import { evaluateCheck, linkSource, planChecks, recordClaim, recordFinding, sourceLine, verifyEvidence } from "./ops/judge.js";
 import { cliVersion, runCli, verifyCommandLogOp } from "./ops/cli.js";
 import { collectWatch, finalizeWatch, listWatches, queryMetrics, readWatch, runPoller, spawnPoller, startWatch, stopPoller, watchAlerts, watchFile, writeWatch } from "./ops/metrics.js";
@@ -34,7 +35,7 @@ import { type AlertMatcher, type WatchState } from "./alerts.js";
 import { type McpImportConnector } from "./imports.js";
 import type {
   AlertWatch, Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
-  Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
+  Claim, ClaimKind, Evidence, RunRecord, SandboxConfig, SourceLink, Walkthrough,
 } from "./types.js";
 
 const safeId = (id: string) => id.replace(/[^\w.-]/g, "_");
@@ -491,21 +492,7 @@ export class WalkthroughCore {
 
   /** sign_off: the human's single report-level decision. */
   signOff(id: string, input: { decision: string; comment?: string }): Promise<SignOff> {
-    if (input.decision !== "accept" && input.decision !== "reject") return Promise.reject(new Error(`invalid sign-off: ${input.decision} (accept|reject)`));
-    return this.withLock(id, async () => {
-      // Open watches are auto-finalized with what was observed so far (documented in README); the report lists them.
-      const open = this.listWatches(id).filter((s) => s.status !== "finalized");
-      const auto: { watchId: string; outcome: string }[] = [];
-      for (const s0 of open) {
-        const s = await this.stopPoller(s0.id);
-        const r = this.finalizeWatch(this.load(id), s, "sign_off");
-        auto.push({ watchId: s.id, outcome: r.watch.outcome });
-      }
-      const w = this.load(id);
-      w.signoff = { decision: input.decision as SignOff["decision"], ...(input.comment ? { comment: String(input.comment) } : {}), ...(auto.length ? { autoFinalizedWatches: auto } : {}) };
-      this.save(w);
-      return w.signoff;
-    });
+    return signOff(this, id, input);
   }
 
   /**
@@ -524,27 +511,7 @@ export class WalkthroughCore {
 
   /** Apply a downloaded review.json back into the walkthrough JSON. */
   importReview(review: unknown): Promise<{ id: string; applied: number }> {
-    const r = review as {
-      walkthroughId?: string; decisions?: { claimId: string; decision: string; note?: string }[]; signoff?: { decision?: string; comment?: string };
-    };
-    if (!r || typeof r.walkthroughId !== "string" || !(Array.isArray(r.decisions) || r.signoff)) return Promise.reject(new Error("invalid review file"));
-    const decisions = r.decisions ?? [];
-    const signoff = r.signoff;
-    if (signoff && signoff.decision !== "accept" && signoff.decision !== "reject") return Promise.reject(new Error(`invalid sign-off: ${signoff.decision}`));
-    return this.withLock(r.walkthroughId, () => {
-    const w = this.load(r.walkthroughId as string);
-    let applied = 0;
-    for (const d of decisions) {
-      const c = w.claims.find((x) => x.id === d.claimId);
-      if (!c) throw new Error(`unknown claim in review: ${d.claimId}`);
-      if (d.decision !== "agree" && d.decision !== "flag") throw new Error(`invalid decision: ${d.decision}`);
-      c.review = { decision: d.decision, ...(d.note ? { note: String(d.note) } : {}) } as Review;
-      applied++;
-    }
-    if (signoff) w.signoff = { decision: signoff.decision, ...(signoff.comment ? { comment: String(signoff.comment) } : {}) } as SignOff;
-    this.save(w);
-    return { id: w.id, applied };
-    });
+    return importReview(this, review);
   }
 
   readEvidenceText(w: Walkthrough, ev: Evidence): string {
