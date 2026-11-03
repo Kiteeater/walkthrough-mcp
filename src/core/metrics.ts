@@ -1,5 +1,6 @@
 // Read-only Prometheus adapter: instant queries only (GET /api/v1/query). The endpoint goes through the same host
 // allowlist + IP policy as replay (pinned IP, every redirect hop re-checked, token bound to the endpoint's origin).
+import { deepFreeze } from "./domain/freeze.js";
 import { ReplayRejectedError, type Resolver } from "./egress/policy.js";
 import { replayRequest } from "./egress/fetch.js";
 import { type ReplayConfig } from "./replay.js";
@@ -110,7 +111,7 @@ export function promInstantQuery(
 }
 
 export type MetricOp = ">" | ">=" | "<" | "<=" | "==" | "!=";
-export const METRIC_OPS: MetricOp[] = [">", ">=", "<", "<=", "==", "!="];
+export const METRIC_OPS: MetricOp[] = deepFreeze<MetricOp[]>([">", ">=", "<", "<=", "==", "!="]);
 export interface MetricExpect { op: MetricOp; value: number; query?: string }
 
 export function metricExpectProblem(v: unknown): string | undefined {

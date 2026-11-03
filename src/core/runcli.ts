@@ -163,9 +163,9 @@ export interface MongoTemplate {
   limit?: number; pipeline?: Record<string, unknown>[];
 }
 
-export const AGG_STAGES = ["$match", "$project", "$group", "$sort", "$limit", "$skip", "$count", "$unwind", "$addFields", "$set", "$unset", "$lookup", "$sortByCount", "$replaceRoot"];
+export const AGG_STAGES: string[] = deepFreeze<string[]>(["$match", "$project", "$group", "$sort", "$limit", "$skip", "$count", "$unwind", "$addFields", "$set", "$unset", "$lookup", "$sortByCount", "$replaceRoot"]);
 /** Operators that write ($out/$merge) or run server-side JS ($where/$function/$accumulator) — rejected at any depth. */
-export const MONGO_FORBIDDEN = ["$out", "$merge", "$where", "$function", "$accumulator"];
+export const MONGO_FORBIDDEN: string[] = deepFreeze<string[]>(["$out", "$merge", "$where", "$function", "$accumulator"]);
 const NAME = /^[A-Za-z0-9_][\w.-]{0,119}$/;
 
 function scanForbidden(v: unknown, at: string): void {

@@ -1,3 +1,4 @@
+import { deepFreeze } from "./domain/freeze.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { parseCommand, UnsafeCommandError } from "./argv.js";
 import type { SandboxConfig } from "./types.js";
@@ -76,7 +77,7 @@ export class ComposeSandbox implements Sandbox {
  * Local backend: runs the service as a child process on the host. NOT isolated.
  * Logs are the captured stdout/stderr of the `up` process.
  */
-export const DEFAULT_LOCAL_ENV = ["PATH", "HOME", "LANG", "TMPDIR", "TERM"];
+export const DEFAULT_LOCAL_ENV: string[] = deepFreeze<string[]>(["PATH", "HOME", "LANG", "TMPDIR", "TERM"]);
 
 /** Build the child env from an allowlist: defaults plus explicitly listed names. Nothing else from the host passes through. */
 export function allowlistEnv(passEnv: string[] = [], host: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

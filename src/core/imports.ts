@@ -1,5 +1,6 @@
 // Importing results from OTHER MCP servers (official MongoDB, Aliyun, Langfuse) as agent-reported evidence.
 // The host agent calls those servers itself (with its own read-only login); we never connect, never see credentials.
+import { deepFreeze } from "./domain/freeze.js";
 import type { ActionSource } from "./registry.js";
 import type { ConnectorAction } from "./types.js";
 import { MASK, type Redactor } from "./redact.js";
@@ -8,11 +9,11 @@ import { MASK, type Redactor } from "./redact.js";
 export interface McpImportConnector { name: string; server: string; tools: string[] }
 
 /** Read-only presets matching the recommended server configs in README (mongo --readOnly, aliyun --services, Langfuse allowlist). */
-export const MCP_IMPORT_PRESETS: McpImportConnector[] = [
+export const MCP_IMPORT_PRESETS: McpImportConnector[] = deepFreeze<McpImportConnector[]>([
   { name: "mongodb", server: "mongodb-mcp-server", tools: ["find", "aggregate", "count", "list-databases", "list-collections", "collection-schema", "collection-indexes", "explain", "db-stats"] },
   { name: "langfuse", server: "langfuse", tools: ["get_trace", "list_traces", "get_observation", "list_observations", "get_session", "list_sessions"] },
   { name: "aliyun", server: "alibaba-cloud-ops-mcp-server", tools: ["sls_GetLogs", "sls_GetHistograms", "cms_DescribeAlertLogList", "cms_DescribeMetricList", "ecs_DescribeInstances"] },
-];
+]);
 
 /** Call parameters as stored: credential-looking keys dropped to MASK, URI userinfo stripped, then env-secret redaction. */
 const CRED_KEY = /(pass(word|wd)?|secret|token|api[-_]?key|auth(orization)?|credential|cookie|session[-_]?key|private[-_]?key|^sk$|^pk$|access[-_]?key)/i;
