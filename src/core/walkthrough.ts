@@ -26,6 +26,7 @@ import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
 import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
 import { nextActionFor, type NextAction, type SubmittedEvidence } from "./ops/next-action.js";
+import { ClaimRejectedError, SignedOffError } from "./errors.js";
 import { runInSandbox, sandboxCommand, sandboxExec } from "./ops/sandbox.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
@@ -42,10 +43,7 @@ import type {
 } from "./types.js";
 
 const safeId = (id: string) => id.replace(/[^\w.-]/g, "_");
-export class SignedOffError extends Error { constructor(m: string) { super(m); this.name = "SignedOffError"; } }
-export class ClaimRejectedError extends Error {
-  constructor(message: string) { super(message); this.name = "ClaimRejectedError"; }
-}
+export { ClaimRejectedError, SignedOffError } from "./errors.js";
 
 export interface CoreDeps {
   /** Root directory that holds `.walkthrough/`. */
