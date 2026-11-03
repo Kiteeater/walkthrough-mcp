@@ -1,7 +1,7 @@
-/** `response` = HTTP response / command output / MCP result submitted for a check. */
-export type EvidenceType = "screenshot" | "logs" | "response" | "har" | "blocked";
+import type { Cite } from "./domain/cite.js";
+import type { CheckMethod, ClaimKind, EvidenceKind, EvidenceType, ExpectType, ReviewDecision, SandboxBackend, Severity, SignOffDecision, Verdict } from "./domain/enums.js";
+export type { CheckMethod, ClaimKind, EvidenceKind, EvidenceType, ExpectType, ReviewDecision, SandboxBackend, Severity, SignOffDecision, Verdict };
 /** Design-doc evidence kinds for capture_evidence. */
-export type EvidenceKind = "cli_output" | "mcp_result" | "http" | "screenshot" | "har" | "log" | "metric" | "alert" | "blocked";
 
 /** Fixed evidence format. Claims reference evidence only by `id`. */
 export interface Evidence {
@@ -24,7 +24,6 @@ export interface Evidence {
   links?: { evidenceId: string; key: string }[];
 }
 
-export type ClaimKind = "observed" | "inferred";
 
 export interface SourceLink {
   id: string;
@@ -34,7 +33,7 @@ export interface SourceLink {
 }
 
 export interface Review {
-  decision: "agree" | "flag";
+  decision: ReviewDecision;
   note?: string;
 }
 
@@ -60,7 +59,6 @@ export interface ConnectorObserve { source: `connector:${string}`; [key: string]
 export type ObserveSpec = LogObserve | ConnectorObserve;
 
 /** How the agent executes a check (design doc §工具). The MCP never executes it; the agent does. */
-export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
 /**
  * Machine-checkable expectation, judged by the core over the submitted evidence:
  * - status: `value` = number | [min, max]; read from `HTTP <code>` in http evidence (or `"status": n` JSON)
@@ -72,7 +70,6 @@ export type CheckMethod = "cli" | "mcp" | "ui" | "http" | "script";
  *   Screenshots are never judged.
  * - metric: `value` = {op: > >= < <= == !=, value, query?} over Prometheus instant-query evidence (exactly one finite series).
  */
-export type ExpectType = "status" | "count" | "regex" | "threshold" | "absent" | "ui" | "metric" | "sls_empty";
 export interface Expect { type: ExpectType; value: unknown }
 
 export interface Check {
@@ -92,7 +89,6 @@ export interface Check {
 }
 
 /** `pass_needs_review`: the rule passed but every piece of evidence was reported by the agent, none executed by us. */
-export type Verdict = "pass" | "pass_needs_review" | "fail" | "inconclusive";
 
 /** Written only by evaluate_check (the core). There is no API for the agent to set or change it. */
 export interface CheckResult {
@@ -103,13 +99,10 @@ export interface CheckResult {
   at: string;
 }
 
-export type Severity = "critical" | "high" | "medium" | "low";
 
 /** One step of a root-cause chain: symptom → … → cause. Observed steps must cite verified evidence. */
-export interface RootCauseLink {
-  claim: string;
+export interface RootCauseLink extends Cite {
   kind: ClaimKind;
-  evidence_ids: string[];
   /** Source link id (file:line) from link_source. */
   source_ref?: string;
 }
@@ -122,14 +115,14 @@ export interface Finding {
   repro_steps: string[];
   root_cause_chain: RootCauseLink[];
   /** Signals observed at the same time (e.g. firing alerts). Supporting context only, never part of the causal chain. */
-  corroborating?: { kind: "alert"; claim: string; evidence_ids: string[]; alertname: string; activeAt?: string; firstSeenAt?: string; alsoMatched: string[] }[];
+  corroborating?: (Cite & { kind: "alert"; alertname: string; activeAt?: string; firstSeenAt?: string; alsoMatched: string[] })[];
   /**
    * Hypotheses that were checked and excluded (e.g. message backlog). NOT part of the root-cause chain and not in
    * `evidenceIds`; each cites the core-executed evidence it rests on.
    */
-  ruled_out?: { claim: string; check_id?: string; evidence_ids: string[] }[];
+  ruled_out?: (Cite & { check_id?: string })[];
   /** Hypotheses checked WITHOUT a conclusion (e.g. an SLS query whose progress is not Complete): never excluded. */
-  inconclusive?: { claim: string; reason: string; check_id?: string; evidence_ids: string[] }[];
+  inconclusive?: (Cite & { reason: string; check_id?: string })[];
   /** Union of evidence ids cited in the chain. */
   evidenceIds: string[];
   /** observed only if every chain step is observed. */
@@ -138,7 +131,7 @@ export interface Finding {
 }
 
 export interface SignOff {
-  decision: "accept" | "reject";
+  decision: SignOffDecision;
   comment?: string;
   /** Watches still open at sign-off, auto-finalized with what was observed so far. */
   autoFinalizedWatches?: { watchId: string; outcome: string }[];
@@ -154,7 +147,6 @@ export interface RunRecord {
   via?: "exec" | "run_cli";
 }
 
-export type SandboxBackend = "compose" | "local";
 
 export interface SandboxConfig {
   /** `compose` (default, isolated) or `local` (child processes on the host, NOT isolated). */

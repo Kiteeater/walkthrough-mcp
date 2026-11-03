@@ -1,12 +1,12 @@
 // Demo agent: stands in for the host agent. It executes every check ITSELF, submits raw output through
 // capture_evidence, asks the core to judge (evaluate_check), and writes findings with a root-cause chain.
 // The core never executes a check and the agent never decides pass/fail.
-import { traceStack, type Check, type CheckResult, type RootCauseLink, type Severity, type WalkthroughCore } from "../core/index.js";
+import { SEVERITIES, traceStack, type Check, type CheckResult, type RootCauseLink, type Severity, type WalkthroughCore } from "../core/index.js";
 import { planFromRoutes, type RouteSpec } from "./planner.js";
 
 export interface DemoOptions { goal: string; baseUrl: string; service?: string; settleMs?: number }
 
-const RANK: Severity[] = ["critical", "high", "medium", "low"];
+const RANK = SEVERITIES;
 
 export async function runDemoAgent(core: WalkthroughCore, id: string, routes: RouteSpec[], o: DemoOptions): Promise<CheckResult[]> {
   const service = o.service ?? "app";

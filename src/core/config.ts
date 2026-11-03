@@ -3,6 +3,7 @@
 // ConfigError naming the file and the field path, never ignored: a typo in a guard setting (e.g. "allowHost") must
 // not silently fall back to a default.
 import { z } from "zod";
+import { CLAIM_KINDS, SANDBOX_BACKENDS } from "./domain/enums.js";
 import type { FlowConfig } from "./flow.js";
 import type { ReplayConfig } from "./replay.js";
 
@@ -32,7 +33,7 @@ export const replaySchema = z.object({
 export const rootConfigSchema = z.object({ replay: replaySchema.optional() }).strict();
 
 const sandboxSchema = z.object({
-  backend: z.enum(["compose", "local"]).optional(),
+  backend: z.enum(SANDBOX_BACKENDS).optional(),
   local: z.object({ up: str, down: str.optional(), passEnv: strs.optional(), killTimeoutMs: posInt.optional() }).strict().optional(),
   allowExec: z.boolean().optional(),
   cwd: str.optional(), // resolved against the config file's directory by loadFlowConfig (default ".")
@@ -59,7 +60,7 @@ export const flowSchema = z.object({
   ])),
   sources: z.array(z.object({ as: str, file: str, line: posInt, note: z.string().optional() }).strict()).optional(),
   claims: z.array(z.object({
-    question: str, conclusion: str, kind: z.enum(["observed", "inferred"]), evidence: strs.optional(), sources: strs.optional(),
+    question: str, conclusion: str, kind: z.enum(CLAIM_KINDS), evidence: strs.optional(), sources: strs.optional(),
   }).strict()),
   keepRunning: z.boolean().optional(),
   /** Read by the demo agents (src/demo-agent), ignored by `walkthrough run`. */

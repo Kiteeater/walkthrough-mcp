@@ -1,16 +1,17 @@
 import { z } from "zod";
+import { CHECK_METHODS, CLAIM_KINDS, EXPECT_TYPES, SEVERITIES, SUBMITTABLE_EVIDENCE_KINDS } from "./domain/enums.js";
 
 /** Zod shapes for the MCP tools, kept in core so the MCP shell stays thin. Field names follow walkthrough-design.md. */
 export const checkSchema = z.object({
   id: z.string(),
   intent: z.string().describe("what this check proves"),
-  method: z.enum(["cli", "mcp", "ui", "http", "script"]).describe("how YOU will execute it; the MCP never executes it"),
+  method: z.enum(CHECK_METHODS).describe("how YOU will execute it; the MCP never executes it"),
   target: z.string().describe("URL / command / MCP tool / page to act on"),
   expect: z.object({
-    type: z.enum(["status", "count", "regex", "threshold", "absent", "ui", "metric", "sls_empty"]),
+    type: z.enum(EXPECT_TYPES),
     value: z.unknown().describe("status: number|[min,max]; count: number|{pattern?,eq|min|max}; regex/absent: pattern; threshold: {pattern with one capture group, min|max}; ui: {har:{urlMatch,status,bodyMatch?,method?}} or {text:{contains}} (screenshots are never judged); metric: {op: >|>=|<|<=|==|!=, value, query?} over query_metrics evidence (one finite series, else inconclusive)"),
   }),
-  severity_if_fail: z.enum(["critical", "high", "medium", "low"]),
+  severity_if_fail: z.enum(SEVERITIES),
   verify: z.object({ type: z.string() }).passthrough().optional(),
   alertMatchers: z.array(z.record(z.string(), z.string())).optional().describe("Prometheus alert label matchers relating alerts to this check, e.g. [{alertname: 'HighOrders5xx'}, {route: '~/api/orders.*'}]"),
 });
@@ -27,7 +28,7 @@ export const captureEvidenceShape = {
   id: z.string(),
   type: z.enum(["submit", "screenshot", "logs"]).default("submit").describe("submit = raw output you obtained yourself; screenshot/logs = captured by walkthrough"),
   check_id: z.string().optional(),
-  kind: z.enum(["cli_output", "mcp_result", "http", "screenshot", "har", "log"]).optional(),
+  kind: z.enum(SUBMITTABLE_EVIDENCE_KINDS).optional(),
   source: z.object({ tool: z.string(), server: z.string().optional(), command: z.string().optional() }).optional(),
   content: z.string().optional().describe("raw, unedited output (base64 for a screenshot; HAR JSON for har). Screenshots are never judged; use har (network) or DOM text"),
   path: z.string().optional().describe("screenshot/har file path; must be inside .walkthrough/ (symlinks resolved), HAR <= 5 MB, PNG <= 10 MB"),
@@ -41,11 +42,11 @@ export const evaluateCheckShape = {
 export const recordFindingShape = {
   id: z.string(),
   title: z.string(),
-  severity: z.enum(["critical", "high", "medium", "low"]),
+  severity: z.enum(SEVERITIES),
   symptom: z.string(),
   repro_steps: z.array(z.string()).optional(),
   root_cause_chain: z.array(z.object({
-    claim: z.string(), kind: z.enum(["observed", "inferred"]), evidence_ids: z.array(z.string()), source_ref: z.string().optional(),
+    claim: z.string(), kind: z.enum(CLAIM_KINDS), evidence_ids: z.array(z.string()), source_ref: z.string().optional(),
   })).min(1).describe("symptom → … → cause; observed steps must cite evidence"),
   check_id: z.string().optional(),
 };

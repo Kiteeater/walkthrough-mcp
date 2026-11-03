@@ -12,6 +12,7 @@ import { parseJsonConfig, parseReplayConfig, parseRootConfig } from "./config.js
 // and the examples use, plus the types needed to construct a WalkthroughCore. Guard internals (egress/*, loginstate)
 // are not re-exported; tests import those from their source files.
 export type { Check, CheckResult, Expect, RootCauseLink, SandboxConfig, Severity, Walkthrough } from "./types.js";
+export { CHECK_METHODS, CLAIM_KINDS, EVIDENCE_KINDS, EVIDENCE_TYPES, EXPECT_TYPES, SANDBOX_BACKENDS, SEVERITIES, SUBMITTABLE_EVIDENCE_KINDS, VERDICTS } from "./domain/enums.js";
 export { Redactor } from "./redact.js";
 export { createSandboxFactory, LocalSandbox, type Sandbox } from "./sandbox.js";
 export { PlaywrightCapturer, type Capturer } from "./capture.js";

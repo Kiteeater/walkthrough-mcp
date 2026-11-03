@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   captureEvidenceShape, captureInput, QUERY_METRICS_DESC, queryMetricsShape, START_WATCH_DESC, startWatchShape, COLLECT_WATCH_DESC, collectWatchShape, watchInput, importInput, importMcpResultShape, createCore, evaluateCheckShape, planChecksShape, recordFindingShape, renderWalkthrough,
+  CLAIM_KINDS, SANDBOX_BACKENDS,
 } from "../core/index.js";
 const core = createCore(process.env.WALKTHROUGH_ROOT ?? process.cwd());
 const server = new McpServer({ name: "walkthrough-mcp", version: process.env.npm_package_version ?? "0.1.0" });
@@ -25,7 +26,7 @@ const wrap = (fn: () => unknown) => async () => {
 const id = z.string().describe("walkthrough id");
 server.tool("start_walkthrough", "Start a walkthrough with a Docker Compose sandbox config.", {
   title: z.string(), cwd: z.string(), up: z.string(), down: z.string(), logs: z.string().optional(),
-  sandbox: z.enum(["compose", "local"]).optional().describe("local = host child processes, NOT isolated"),
+  sandbox: z.enum(SANDBOX_BACKENDS).optional().describe("local = host child processes, NOT isolated"),
 }, (a) => wrap(() => core.startWalkthrough({ title: a.title, sandbox: { backend: a.sandbox, cwd: a.cwd, up: a.up, down: a.down, logs: a.logs } }))());
 server.tool("run_in_sandbox", "Bring the sandbox up/down, or exec a command (disabled unless sandbox.allowExec: true; known CLIs go through run_cli's allowlist; no shell).", {
   id, action: z.enum(["up", "down", "exec"]), command: z.string().optional(),
@@ -47,7 +48,7 @@ server.tool("link_source", "Link a source file and line.", {
   id, file: z.string(), line: z.number().int(), note: z.string().optional(),
 }, (a) => wrap(() => core.linkSource(a.id, a))());
 server.tool("record_claim", "Record a claim. observed claims must cite existing, unmodified evidence ids.", {
-  id, question: z.string(), conclusion: z.string(), kind: z.enum(["observed", "inferred"]),
+  id, question: z.string(), conclusion: z.string(), kind: z.enum(CLAIM_KINDS),
   evidenceIds: z.array(z.string()).optional(), sourceIds: z.array(z.string()).optional(),
 }, (a) => wrap(() => core.recordClaim(a.id, a))());
 server.tool("run_cli", "walkthrough runs a whitelisted READ-ONLY CLI for you (argv only, no shell) and stores the output as evidence. mongosh takes only template {name: find|aggregate|countDocuments, db, collection, filter|pipeline}.", {
