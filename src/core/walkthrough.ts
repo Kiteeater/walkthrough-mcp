@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { CHECK_METHODS, isOneOf, SEVERITIES, SUBMITTABLE_EVIDENCE_KINDS } from "./domain/enums.js";
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync, writeSync, existsSync, realpathSync, statSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
@@ -78,9 +79,8 @@ export interface RunCliInput {
   checkId?: string; connector: string; argv?: string[]; template?: MongoTemplate; timeoutS?: number; cwd?: string;
 }
 
-const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
-const METHODS = ["cli", "mcp", "ui", "http", "script"];
-const KINDS: EvidenceKind[] = ["cli_output", "mcp_result", "http", "screenshot", "har", "log"];
+const METHODS = CHECK_METHODS;
+const KINDS = SUBMITTABLE_EVIDENCE_KINDS;
 
 /** Raw output the host agent obtained itself (own tools / external MCP / computer use) and submits for a check. */
 export interface SubmittedEvidence {
@@ -352,7 +352,7 @@ export class WalkthroughCore {
         : raw;
       writeFileSync(abs(ev.path), this.redactor.text(delta).split(rootPrefix).join(""));
     } else {
-      if (!KINDS.includes(input.kind)) throw new Error(`invalid evidence kind: ${input.kind}`);
+      if (!isOneOf(KINDS, input.kind)) throw new Error(`invalid evidence kind: ${input.kind}`);
       if (!input.source?.tool) throw new Error("source.tool is required");
       const binary = input.kind === "screenshot" || input.kind === "har";
       if (binary && input.path && input.content === undefined) input = { ...input, path: this.agentFile(input.path, input.kind as "har" | "screenshot") };
@@ -966,9 +966,9 @@ export class WalkthroughCore {
         if (!c.id || ids.has(c.id)) throw new Error(`check ids must be unique and non-empty: ${c.id}`);
         const problem = expectProblem(c.expect);
         if (problem) throw new Error(`check ${c.id}: expect is not machine-checkable (${problem})`);
-        if (!METHODS.includes(c.method)) throw new Error(`check ${c.id}: method must be one of ${METHODS.join("|")}`);
+        if (!isOneOf(METHODS, c.method)) throw new Error(`check ${c.id}: method must be one of ${METHODS.join("|")}`);
         if (!c.intent || !c.target) throw new Error(`check ${c.id}: intent and target are required`);
-        if (!SEVERITIES.includes(c.severity_if_fail)) throw new Error(`check ${c.id}: severity_if_fail must be one of ${SEVERITIES.join("|")}`);
+        if (!isOneOf(SEVERITIES, c.severity_if_fail)) throw new Error(`check ${c.id}: severity_if_fail must be one of ${SEVERITIES.join("|")}`);
         if (c.verify && !this.registry.has("verifier", c.verify.type)) throw new Error(`check ${c.id}: verifier "${c.verify.type}" not available`);
         for (const mm of c.alertMatchers ?? []) { const p = matcherProblem(mm); if (p) throw new Error(`check ${c.id}: ${p}`); }
         ids.add(c.id);
@@ -1045,7 +1045,7 @@ export class WalkthroughCore {
     inconclusive?: { claim: string; reason: string; check_id?: string; evidence_ids: string[] }[];
   }): Promise<Finding> {
     return this.withLock(id, () => {
-      if (!SEVERITIES.includes(input.severity)) throw new ClaimRejectedError(`invalid severity: ${input.severity}`);
+      if (!isOneOf(SEVERITIES, input.severity)) throw new ClaimRejectedError(`invalid severity: ${input.severity}`);
       if (!input.title || !input.symptom) throw new ClaimRejectedError("title and symptom are required");
       const chain = input.root_cause_chain ?? [];
       if (!chain.length) throw new ClaimRejectedError("root_cause_chain needs at least one step");

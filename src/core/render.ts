@@ -1,4 +1,5 @@
 import type { Evidence } from "./types.js";
+import { SEVERITIES } from "./domain/enums.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WalkthroughCore } from "./walkthrough.js";
@@ -65,7 +66,7 @@ export function renderWalkthrough(core: WalkthroughCore, id: string, opts: { tim
   // ---- audit view: conclusions first ----
   const findings = w.findings ?? [];
   const results = w.checkResults ?? [];
-  const SEV = ["critical", "high", "medium", "low"] as const;
+  const SEV = SEVERITIES;
   const sevCount = (s: string) => findings.filter((f) => f.severity === s).length;
   /** Deepest chain step with a source ref (else the last step) is the root cause shown on the first screen. */
   const rootStep = (f: (typeof findings)[number]) => [...f.root_cause_chain].reverse().find((l) => l.source_ref) ?? f.root_cause_chain.at(-1);
