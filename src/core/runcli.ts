@@ -7,6 +7,7 @@
  *  - every call appends one hash-chained line to commands.jsonl (redacted argv, exit code, output sha256, cli
  *    name+version+profile name). Credentials are never logged: they stay in the CLI's own local login state.
  */
+import { deepFreeze } from "./domain/freeze.js";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
 import { basename, dirname, resolve as resolvePath } from "node:path";
@@ -79,7 +80,7 @@ export function assertArgvHostsAllowed(c: ConnectorConfig, argv: string[]): void
   });
 }
 
-export const PRESET_CONNECTORS: ConnectorConfig[] = [
+export const PRESET_CONNECTORS: ConnectorConfig[] = deepFreeze<ConnectorConfig[]>([
   {
     name: "aliyun", binary: "aliyun",
     // --body (raw JSON request body of the built-in API form) would bypass every per-flag check: never allowed.
@@ -149,7 +150,7 @@ export const PRESET_CONNECTORS: ConnectorConfig[] = [
     appendProfile: false,
   },
   { name: "mongosh", binary: "mongosh", kind: "mongo" },
-];
+]);
 
 const CRED_FLAGS = ["--access-key-id", "--access-key-secret", "--sts-token", "--ram-role-arn", "--private-key", "--password", "-p", "--username", "-u",
   "--apiKey", "--token", "--secret", "--accessKey", "--secretKey", "--profile", "--eval", "-e", "--file", "-f", "--shell", "--nodb", "--config"];
