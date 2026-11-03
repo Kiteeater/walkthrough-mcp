@@ -6,7 +6,8 @@ import { execDecision } from "../execpolicy.js";
 import { appendLogEntry, CliRejectedError, PRESET_CONNECTORS, type CommandLogEntry } from "../runcli.js";
 import type { Redactor } from "../redact.js";
 import type { Evidence, RunRecord, Walkthrough } from "../types.js";
-import { SignedOffError, type CoreDeps, type RunCliInput } from "../walkthrough.js";
+import { SignedOffError } from "../errors.js";
+import type { CoreDeps, RunCliInput } from "../walkthrough.js";
 
 /** Narrow view of WalkthroughCore: only the members the sandbox ops touch. */
 export interface SandboxCore {
