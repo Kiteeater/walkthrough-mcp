@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isSignedOff } from "./domain/decisions.js";
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
@@ -106,7 +107,7 @@ export class WalkthroughCore {
     const fn = async () => {
       const release = await acquireFileLock(join(this.base, `${safeId(id)}.lock`));
       try {
-        if (!opts.allowSigned && existsSync(join(this.dir(id), "walkthrough.json")) && this.load(id).signoff)
+        if (!opts.allowSigned && existsSync(join(this.dir(id), "walkthrough.json")) && isSignedOff(this.load(id)))
           throw new SignedOffError(`walkthrough ${id} is signed off; it is read-only now`);
         return await fn0();
       } finally { release(); }
