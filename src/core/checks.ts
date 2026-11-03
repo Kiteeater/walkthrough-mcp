@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { deepFreeze } from "./domain/freeze.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Expect, Verdict } from "./types.js";
 import { judgeUi, uiExpectProblem, type UiExpect } from "./har.js";
@@ -6,7 +7,7 @@ import { judgeMetric, metricExpectProblem, type MetricExpect } from "./metrics.j
 import { judgeSlsEmpty } from "./sls.js";
 
 /** Default alert patterns an agent can watch for in logs. */
-export const DEFAULT_ALERTS = ["Error:", "Unhandled", "FATAL"];
+export const DEFAULT_ALERTS: string[] = deepFreeze(["Error:", "Unhandled", "FATAL"]);
 
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
