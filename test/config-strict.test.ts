@@ -69,11 +69,16 @@ describe("flow configs are strict (loadFlowConfig)", () => {
     ["unknown capture type", (c) => { c.captures = [{ as: "a", type: "video", url: "u" }]; }, /captures\.0\.type: Invalid discriminator value/],
     ["missing required field", (c) => { delete c.claims; }, /claims: Required/],
     ["missing required nested field", (c) => { delete c.sandbox.up; }, /sandbox\.up: Required/],
+    ["empty sandbox.up without backend local", (c) => { c.sandbox.up = ""; }, /sandbox\.up: must not be empty unless backend is "local"/],
+    ["empty sandbox.down with backend compose", (c) => { c.sandbox.backend = "compose"; c.sandbox.down = ""; }, /sandbox\.down: must not be empty unless backend is "local"/],
   ])("%s → ConfigError with the field path", (_n, edit, re) => {
     const c = okFlow() as Record<string, any>; edit(c);
     const f = flowFile(c);
     expect(() => loadFlowConfig(f)).toThrow(re);
     expect(() => loadFlowConfig(f)).toThrow(`invalid config ${f}`);
+  });
+  it("backend local may leave sandbox.up/down empty (local.up runs)", () => {
+    expect(loadFlowConfig(flowFile({ ...okFlow(), sandbox: { backend: "local", cwd: ".", up: "", down: "", local: { up: "true" } } })).sandbox.up).toBe("");
   });
   it("not JSON → ConfigError naming the file", () => {
     const f = flowFile("{ title: ");

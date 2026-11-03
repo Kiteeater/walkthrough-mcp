@@ -86,7 +86,7 @@ describe("core blocklist: run_cli targets and mongo", () => {
   }
   it("argv value naming it (literal, host:port, URL, glued) or a host resolving to it → refused, binary never runs", async () => {
     const bin = mkdtempSync(join(tmpdir(), "wt-cbbin-"));
-    const c: ConnectorConfig = { name: "tool", binary: fake(bin), allow: [["get"]], args: { get: ["--host", "--url"] } };
+    const c: ConnectorConfig = { name: "tool", binary: fake(bin), allow: [["get"]], args: { get: ["--host", "--url"] }, allowHosts: ["ok.test", "api.evil.test"] };
     const { core, start } = mk([c]);
     const id = start();
     for (const argv of [["get", "--host", BAD], ["get", "--host", `${BAD}:9876`], ["get", "--url", `http://${BAD}/x`], ["get", "--host=x${BAD}"], ["get", "--host", "api.evil.test"], ["get", "--url", "https://api.evil.test:443/v1"]])

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Redactor, WalkthroughCore, type Capturer, type ConnectorConfig, type ReplayConfig, type Sandbox } from "../src/core/index.js";
 
-export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?: string; output?: string; connectors?: ConnectorConfig[]; replay?: ReplayConfig } = {}) {
+export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?: string; output?: string; connectors?: ConnectorConfig[]; replay?: ReplayConfig; resolver?: (host: string) => Promise<string> } = {}) {
   const root = mkdtempSync(join(tmpdir(), "wt-"));
   const sandbox: Sandbox = {
     up: async () => ({ exitCode: 0, output: opts.output ?? "up ok" }),
@@ -13,7 +13,7 @@ export function mockCore(opts: { secrets?: string[]; redactor?: Redactor; logs?:
   };
   const capturer = fakePageCapturer("fake-png");
   const core = new WalkthroughCore({
-    root, sandboxFactory: () => sandbox, capturer, redactor: opts.redactor ?? new Redactor(opts.secrets ?? []), connectors: opts.connectors, ...(opts.replay ? { replay: opts.replay } : {}),
+    root, sandboxFactory: () => sandbox, capturer, redactor: opts.redactor ?? new Redactor(opts.secrets ?? []), connectors: opts.connectors, ...(opts.replay ? { replay: opts.replay } : {}), ...(opts.resolver ? { resolver: opts.resolver } : {}),
   });
   return { core, root };
 }
