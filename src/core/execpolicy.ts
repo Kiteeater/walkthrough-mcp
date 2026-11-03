@@ -1,16 +1,17 @@
 // Policy for run_in_sandbox exec (issue #8). exec is arbitrary code, so it is OFF unless the walkthrough config sets
 // sandbox.allowExec: true. Even then, anything that resolves to a known credentialed CLI is never run here: it goes
 // through run_cli's allowlist, or is rejected. Commands are always spawned as file + args (no shell).
+import { deepFreeze } from "./domain/freeze.js";
 import { basename } from "node:path";
 import { parseCommand, UnsafeCommandError } from "./argv.js";
 import { CliRejectedError, PRESET_CONNECTORS, type ConnectorConfig } from "./runcli.js";
 
 /** CLIs that carry local credentials but have no connector: never runnable via exec. */
-export const CREDENTIALED_CLIS = ["aliyun", "aliyuncli", "mongosh", "mongo", "mongodump", "mongoexport", "mongoimport", "mongorestore", "mongofiles",
-  "mqadmin", "ossutil", "ossutil64", "kubectl", "ssh", "scp", "curl", "wget"];
+export const CREDENTIALED_CLIS: string[] = deepFreeze<string[]>(["aliyun", "aliyuncli", "mongosh", "mongo", "mongodump", "mongoexport", "mongoimport", "mongorestore", "mongofiles",
+  "mqadmin", "ossutil", "ossutil64", "kubectl", "ssh", "scp", "curl", "wget"]);
 /** Wrappers that would hide the real program (or need a shell): rejected outright. */
-export const WRAPPERS = ["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "su", "doas", "xargs", "nohup", "timeout", "nice", "ionice",
-  "stdbuf", "busybox", "command", "script", "setsid", "chroot", "strace", "time", "watch", "flock", "unbuffer", "runuser", "exec", "eval", "source"];
+export const WRAPPERS: string[] = deepFreeze<string[]>(["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "su", "doas", "xargs", "nohup", "timeout", "nice", "ionice",
+  "stdbuf", "busybox", "command", "script", "setsid", "chroot", "strace", "time", "watch", "flock", "unbuffer", "runuser", "exec", "eval", "source"]);
 
 /** Normalised program name: basename, lower-case, without .exe/.cmd/.bat/.sh. */
 export const progName = (file: string) => basename(file.replace(/\\/g, "/")).toLowerCase().replace(/\.(exe|cmd|bat|sh|ps1)$/, "");

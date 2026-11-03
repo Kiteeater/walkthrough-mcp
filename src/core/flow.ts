@@ -1,3 +1,4 @@
+import { deepFreeze } from "./domain/freeze.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { flowPolicy, ReplayRejectedError, type Resolver } from "./egress/policy.js";
 import { guardedFetch } from "./egress/fetch.js";
@@ -32,13 +33,13 @@ export interface FlowConfig {
  * token checked by waitFor.header). Anything else — even if set in the environment — is a load error, so a config
  * can never pull a credential out of the environment.
  */
-export const FLOW_ENV_VARS: Readonly<Record<string, { redact: boolean }>> = {
+export const FLOW_ENV_VARS: Readonly<Record<string, { redact: boolean }>> = deepFreeze<Readonly<Record<string, { redact: boolean }>>>({
   // A port is not a secret, and masking its digits everywhere would corrupt timestamps / ids / amounts.
   PORT: { redact: false },
   // Token-type: registered with the Redactor so it never appears in evidence or reports.
   DEMO_HEALTH_TOKEN: { redact: true },
-};
-export const FLOW_ENV_ALLOWLIST: readonly string[] = Object.keys(FLOW_ENV_VARS);
+});
+export const FLOW_ENV_ALLOWLIST: readonly string[] = Object.freeze(Object.keys(FLOW_ENV_VARS));
 
 /** Expand `${NAME}` (allowlisted names only). Values of `redact: true` names are pushed to `used` for the Redactor. */
 export function expandEnv(v: unknown, where: string, env: NodeJS.ProcessEnv = process.env, used: string[] = []): unknown {
