@@ -25,6 +25,7 @@ import { guardedWebSocket } from "./egress/ws.js";
 import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
 import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
+import { nextActionFor, type NextAction, type SubmittedEvidence } from "./ops/next-action.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
@@ -83,30 +84,7 @@ export interface RunCliInput {
 const METHODS = CHECK_METHODS;
 const KINDS = SUBMITTABLE_EVIDENCE_KINDS;
 
-/** Raw output the host agent obtained itself (own tools / external MCP / computer use) and submits for a check. */
-export interface SubmittedEvidence {
-  type: "submit"; checkId: string; kind: EvidenceKind;
-  source: { tool: string; server?: string; command?: string };
-  content?: string; path?: string;
-}
-
-/** Instruction returned to the host agent: what to do next (design: guide via next_actions, no server→agent calls). */
-export interface NextAction { check_id: string; do: string; then: string[] }
-
-function nextActionFor(c: Check): NextAction {
-  const how: Record<string, [string, EvidenceKind]> = {
-    http: [`send the request yourself: ${c.target}`, "http"],
-    cli: [`run it yourself (or via run_cli when available): ${c.target}`, "cli_output"],
-    mcp: [`call the external MCP tool yourself: ${c.target}`, "mcp_result"],
-    ui: [`operate the page with computer use / Playwright: ${c.target}; judge by HAR or DOM text, not the screenshot`, "har"],
-    script: [`run the script yourself: ${c.target}`, "cli_output"],
-  };
-  const [d, kind] = how[c.method];
-  return {
-    check_id: c.id, do: d,
-    then: [`capture_evidence(check_id="${c.id}", kind="${kind}", content=<raw output, unedited>)`, `evaluate_check(check_id="${c.id}", evidence_ids=[...])`],
-  };
-}
+export type { NextAction, SubmittedEvidence } from "./ops/next-action.js";
 
 export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
