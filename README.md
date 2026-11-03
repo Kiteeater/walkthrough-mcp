@@ -21,7 +21,10 @@ walkthrough is built to look, not touch. Keep it that way:
   targets (name servers, mongo URIs), and flow http actions / readiness polling (these use the same guarded path
   as replay: pinned IP, manual redirects, every hop re-checked, so a redirect or DNS rebind to it is refused). Numeric
   forms such as `579766055`, `0x228e8727` or `34.142.34599` are normalised and refused. For `run_cli` argv /
-  connector targets, hostnames that do not resolve are ignored, so only resolvable forms are blocked there.
+  connector targets, every hostname is resolved once before the CLI starts; a resolver error, timeout or empty
+  answer refuses the call (the CLI never starts). `-n` name servers (mqadmin) are rewritten to the checked IP so the
+  CLI never resolves them again; HTTPS-endpoint CLIs (aliyun) may only name hosts in the connector's `allowHosts`
+  and the agent cannot set `--endpoint`.
   It is not configurable.
 - **Flow http actions are same-host only.** A flow `http` action or `waitFor` may only reach its own URL's host:port.
   A redirect to any other host is refused, so for example a login endpoint that redirects to a separate auth domain
