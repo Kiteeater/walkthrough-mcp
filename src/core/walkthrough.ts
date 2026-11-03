@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { isSignedOff } from "./domain/decisions.js";
-import { isV1, migrate, SCHEMA_VERSION } from "./domain/migrate.js";
+import { migrate, SCHEMA_VERSION } from "./domain/migrate.js";
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
@@ -152,10 +152,10 @@ export class WalkthroughCore {
     // snapshot readable. The random temporary name also avoids concurrent writers clobbering one
     // another before the walkthrough lock is acquired (for example during recovery).
     const file = join(this.dir(w.id), "walkthrough.json");
-    // A signed-off v1 file is never rewritten (its bytes are what was signed); withLock already refuses, this is the backstop.
+    // A signed-off file (any version) is never rewritten (its bytes are what was signed); withLock already refuses, this is the backstop.
     if (existsSync(file)) {
       const disk: unknown = JSON.parse(readFileSync(file, "utf8"));
-      if (isV1(disk) && isSignedOff(disk as Walkthrough)) throw new SignedOffError(`walkthrough ${w.id} is signed off; it is read-only now`);
+      if (isSignedOff(disk as Walkthrough)) throw new SignedOffError(`walkthrough ${w.id} is signed off; it is read-only now`);
     }
     const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
     const body = JSON.stringify(this.redactor.value(w), null, 2);
