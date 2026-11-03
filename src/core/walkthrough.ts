@@ -1,29 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
-import { SUBMITTABLE_EVIDENCE_KINDS } from "./domain/enums.js";
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync, writeSync, existsSync, realpathSync, statSync, rmSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync, existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireFileLock } from "./lockfile.js";
-import { execDecision } from "./execpolicy.js";
 import { BLOCKED_EVIDENCE, type Capturer, type NavigationGuard, type PageCapture } from "./capture.js";
 import { isIP } from "node:net";
 import { Redactor } from "./redact.js";
 import {
-  appendCommandLog, appendLogEntry, cliArgv, CliRejectedError, mongoArgv, PRESET_CONNECTORS, verifyCommandLog,
+  appendLogEntry,
   type CommandLogEntry, type ConnectorConfig, type MongoTemplate,
-  CLI_ENV_DENY, collectMessageBodies, requestedMsgIds,
-  assertArgvHostsAllowed,
 } from "./runcli.js";
-import { allowlistEnv, run } from "./sandbox.js";
 import type { Sandbox } from "./sandbox.js";
 import type { Registry } from "./registry.js";
 import { defaultRegistry } from "./sources.js";
-import { HAR_MAX_BYTES, SCREENSHOT_MAX_BYTES, parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
+import { parseHar, redactHar, redactUrl, redactUrlsIn, safeRegex } from "./har.js";
 import { checkHop, flowPolicy, ReplayRejectedError, type Resolver } from "./egress/policy.js";
 import { guardedGet, guardedRequest, replayRequest } from "./egress/fetch.js";
 import { guardedWebSocket } from "./egress/ws.js";
 import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
-import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
 import type { NextAction, SubmittedEvidence } from "./ops/next-action.js";
 import { ClaimRejectedError, SignedOffError } from "./errors.js";
 import { sha256File } from "./hash.js";
@@ -35,12 +29,9 @@ import { runInSandbox, sandboxCommand, sandboxExec } from "./ops/sandbox.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
-import { METRIC_EVIDENCE, MetricsError, PROM_ALERTS_PATH, promGet, promInstantQuery, promUrl, type PrometheusConfig } from "./metrics.js";
-import {
-  ALERTS_EVIDENCE, ALERT_WATCH_MAX_INTERVAL_S, ALERT_WATCH_MAX_POLLS, ALERT_WATCH_MAX_WINDOW_S, ALERT_WATCH_MIN_INTERVAL_S,
-  MAX_ACTIVE_WATCHES, WATCH_ID_RE, alertKey, alertMatches, redactAlert, severityOf, type AlertMatcher, type PromAlert, type WatchPoll, type WatchState,
-} from "./alerts.js";
-import { MCP_IMPORT_PRESETS, sanitizeParams, scrub, type McpImportConnector } from "./imports.js";
+import { type PrometheusConfig } from "./metrics.js";
+import { type AlertMatcher, type WatchState } from "./alerts.js";
+import { type McpImportConnector } from "./imports.js";
 import type {
   AlertWatch, Check, CheckResult, EvidenceKind, Finding, RootCauseLink, Severity, SignOff,
   Claim, ClaimKind, Evidence, Review, RunRecord, SandboxConfig, SourceLink, Walkthrough,
