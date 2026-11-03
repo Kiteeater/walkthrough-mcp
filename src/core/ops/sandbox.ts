@@ -1,5 +1,6 @@
 // Sandbox ops moved from WalkthroughCore (ops/ split step 4). Bodies are verbatim except `this.` -> `core.`.
 // The class keeps one-line forwarders `return xxx(this, ...)`, so `core` is always the WalkthroughCore instance.
+import { isSignedOff } from "../domain/decisions.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { execDecision } from "../execpolicy.js";
@@ -51,7 +52,7 @@ export function runInSandbox(core: SandboxCore, id: string, action: "up" | "down
 export async function sandboxExec(core: SandboxCore, id: string, command?: string): Promise<RunRecord> {
   if (!command) throw new Error("exec requires a command");
   const w0 = core.load(id);
-  if (w0.signoff) throw new SignedOffError(`walkthrough ${id} is signed off; it is read-only now`); // re-checked under the lock
+  if (isSignedOff(w0)) throw new SignedOffError(`walkthrough ${id} is signed off; it is read-only now`); // re-checked under the lock
   if (w0.sandbox.allowExec !== true) throw new CliRejectedError("run_in_sandbox exec is disabled (set sandbox.allowExec: true in the walkthrough config to enable arbitrary commands); use run_cli for CLIs");
   const d = execDecision(command, process.env, core.deps.connectors ?? PRESET_CONNECTORS);
   if (d.kind === "route") {

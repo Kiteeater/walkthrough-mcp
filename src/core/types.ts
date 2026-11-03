@@ -137,6 +137,23 @@ export interface SignOff {
   autoFinalizedWatches?: { watchId: string; outcome: string }[];
 }
 
+/**
+ * Where a human decision came from. In-memory only for now: the persisted Review / SignOff carry no source
+ * (walkthrough.json bytes are unchanged); `legacy_v1` is reserved for files upgraded by the schemaVersion migration.
+ */
+export type DecisionSource =
+  | { via: "cli"; decidedAt: string }
+  | { via: "review_import"; decidedAt: string }
+  | { via: "legacy_v1" };
+
+/** A human decision: per-claim review (agree/flag) or the report-level sign-off (accept/reject). */
+export type HumanDecision =
+  | { scope: "claim"; claimId: string; verdict: ReviewDecision; note?: string; source: DecisionSource }
+  | { scope: "report"; verdict: SignOffDecision; comment?: string; source: DecisionSource;
+      autoFinalizedWatches?: { watchId: string; outcome: AlertWatch["outcome"] }[] };
+export type ClaimDecision = Extract<HumanDecision, { scope: "claim" }>;
+export type ReportDecision = Extract<HumanDecision, { scope: "report" }>;
+
 export interface RunRecord {
   id: string;
   command: string;
