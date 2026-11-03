@@ -26,6 +26,7 @@ import { allowedHostnames } from "./egress/allowhosts.js";
 import { type ReplayConfig } from "./replay.js";
 import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
 import { nextActionFor, type NextAction, type SubmittedEvidence } from "./ops/next-action.js";
+import { runInSandbox, sandboxCommand, sandboxExec } from "./ops/sandbox.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
 import { loadLoginState, captureSecretValues } from "./loginstate.js";
@@ -94,7 +95,8 @@ const READ_ONLY_METHODS = new Set(["GET", "HEAD"]);
 
 export class WalkthroughCore {
   readonly base: string;
-  private redactor: Redactor;
+  /** @internal */
+  redactor: Redactor;
   private readonly now: () => Date;
   readonly registry: Registry;
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -103,7 +105,8 @@ export class WalkthroughCore {
 
   /** Per-id serial lock (promise-chain mutex) around read-modify-write of walkthrough.json. */
   /** Serializes per walkthrough. Every write path goes through here; once signed off, writes are rejected. */
-  private withLock<T>(id: string, fn0: () => T | Promise<T>, opts: { allowSigned?: boolean } = {}): Promise<T> {
+  /** @internal */
+  withLock<T>(id: string, fn0: () => T | Promise<T>, opts: { allowSigned?: boolean } = {}): Promise<T> {
     // In-process mutex first, then a cross-process lockfile; the sign-off state is re-read only AFTER both are held
     // (no check-then-lock window).
     const fn = async () => {
@@ -122,7 +125,7 @@ export class WalkthroughCore {
     return next;
   }
 
-  constructor(private readonly deps: CoreDeps) {
+  constructor(/** @internal */ readonly deps: CoreDeps) {
     this.base = resolve(deps.root, ".walkthrough");
     this.redactor = deps.redactor ?? Redactor.fromEnv();
     this.now = deps.now ?? (() => new Date());
@@ -147,7 +150,8 @@ export class WalkthroughCore {
     return JSON.parse(readFileSync(file, "utf8")) as Walkthrough;
   }
 
-  private save(w: Walkthrough): void {
+  /** @internal */
+  save(w: Walkthrough): void {
     // Never overwrite the manifest in place: a process dying during write must leave the previous
     // snapshot readable. The random temporary name also avoids concurrent writers clobbering one
     // another before the walkthrough lock is acquired (for example during recovery).
@@ -164,7 +168,8 @@ export class WalkthroughCore {
     }
   }
 
-  private ts(): string { return this.now().toISOString(); }
+  /** @internal */
+  ts(): string { return this.now().toISOString(); }
 
   startWalkthrough(input: { title: string; sandbox: SandboxConfig; id?: string }): Walkthrough {
     const id = input.id ?? `wt-${this.ts().replace(/[^0-9]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
@@ -178,58 +183,12 @@ export class WalkthroughCore {
   }
 
   runInSandbox(id: string, action: "up" | "down" | "exec", command?: string): Promise<RunRecord> {
-    if (action === "exec") return this.sandboxExec(id, command);
-    return this.withLock(id, async () => {
-    const w = this.load(id);
-    const sb = this.deps.sandboxFactory(w.sandbox, w.id);
-    const res = action === "up" ? await sb.up() : await sb.down();
-    const rec: RunRecord = {
-      id: `run-${w.runs.length + 1}`,
-      command: this.redactor.text(this.sandboxCommand(w, action)),
-      exitCode: res.exitCode,
-      output: this.redactor.text(res.output).slice(-20_000),
-      createdAt: this.ts(),
-    };
-    w.runs.push(rec);
-    this.save(w);
-    return rec;
-    });
+    return runInSandbox(this, id, action, command);
   }
 
-  /**
-   * run_in_sandbox exec (issue #8). Off unless sandbox.allowExec: true. A command naming a known credentialed CLI
-   * (aliyun, mqadmin, mongosh, …, by any path/case) never runs here: connector CLIs are routed through run_cli's
-   * allowlist, the rest are rejected; shells/wrappers are rejected. Spawned as file + args, never via a shell.
-   * Every exec is recorded (run record + hash-chained `sandbox_exec` log entry) and flagged red on the report.
-   */
-  private async sandboxExec(id: string, command?: string): Promise<RunRecord> {
-    if (!command) throw new Error("exec requires a command");
-    const w0 = this.load(id);
-    if (w0.signoff) throw new SignedOffError(`walkthrough ${id} is signed off; it is read-only now`); // re-checked under the lock
-    if (w0.sandbox.allowExec !== true) throw new CliRejectedError("run_in_sandbox exec is disabled (set sandbox.allowExec: true in the walkthrough config to enable arbitrary commands); use run_cli for CLIs");
-    const d = execDecision(command, process.env, this.deps.connectors ?? PRESET_CONNECTORS);
-    if (d.kind === "route") {
-      const r = await this.runCli(id, { connector: d.connector.name, argv: d.argv });
-      return this.withLock(id, () => {
-        const w = this.load(id);
-        const rec: RunRecord = { id: `run-${w.runs.length + 1}`, command: this.redactor.text(command), exitCode: r.exitCode, output: `routed to run_cli (${d.connector.name}), evidence ${r.evidence.id}`, createdAt: this.ts(), via: "run_cli" };
-        w.runs.push(rec);
-        this.save(w);
-        return rec;
-      });
-    }
-    return this.withLock(id, async () => {
-      const w = this.load(id);
-      const sb = this.deps.sandboxFactory(w.sandbox, w.id);
-      const res = await sb.exec([d.file, ...d.args]);
-      const rec: RunRecord = { id: `run-${w.runs.length + 1}`, command: this.redactor.text(command), exitCode: res.exitCode, output: this.redactor.text(res.output).slice(-20_000), createdAt: this.ts(), via: "exec" };
-      w.runs.push(rec);
-      const l = appendLogEntry(join(this.dir(id), "commands.jsonl"), { ts: rec.createdAt, walkthroughId: id, type: "sandbox_exec", runId: rec.id, command: rec.command, exitCode: rec.exitCode,
-        outputSha256: createHash("sha256").update(rec.output).digest("hex"), executedBy: "core" });
-      w.commandLogHead = { seq: l.seq, hash: l.hash };
-      this.save(w);
-      return rec;
-    });
+  /** @internal Body lives in ops/sandbox.ts. */
+  sandboxExec(id: string, command?: string): Promise<RunRecord> {
+    return sandboxExec(this, id, command);
   }
 
   /**
@@ -854,9 +813,9 @@ export class WalkthroughCore {
     return r;
   }
 
-  private sandboxCommand(w: Walkthrough, action: "up" | "down"): string {
-    if (w.sandbox.backend === "local") return action === "up" ? (w.sandbox.local?.up ?? w.sandbox.up) : "kill local process group";
-    return action === "up" ? w.sandbox.up : w.sandbox.down;
+  /** @internal Body lives in ops/sandbox.ts. */
+  sandboxCommand(w: Walkthrough, action: "up" | "down"): string {
+    return sandboxCommand(this, w, action);
   }
 
   linkSource(id: string, input: { file: string; line: number; note?: string }): Promise<SourceLink> {
