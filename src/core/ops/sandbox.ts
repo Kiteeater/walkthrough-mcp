@@ -5,21 +5,20 @@ import { join } from "node:path";
 import { execDecision } from "../execpolicy.js";
 import { appendLogEntry, CliRejectedError, PRESET_CONNECTORS, type CommandLogEntry } from "../runcli.js";
 import type { Redactor } from "../redact.js";
-import type { Evidence, RunRecord, SandboxConfig, Walkthrough } from "../types.js";
+import type { Evidence, RunRecord, Walkthrough } from "../types.js";
 import { SignedOffError } from "../errors.js";
-import type { ConnectorConfig } from "../runcli.js";
-import type { Sandbox } from "../sandbox.js";
+import type { CoreDeps, RunCliInput } from "../walkthrough.js";
 
 /** Narrow view of WalkthroughCore: only the members the sandbox ops touch. */
 export interface SandboxCore {
-  readonly deps: { sandboxFactory: (cfg: SandboxConfig, key?: string) => Sandbox; connectors?: ConnectorConfig[] };
+  readonly deps: Pick<CoreDeps, "sandboxFactory" | "connectors">;
   readonly redactor: Redactor;
   load(id: string): Walkthrough;
   save(w: Walkthrough): void;
   dir(id: string): string;
   ts(): string;
   withLock<T>(id: string, fn0: () => T | Promise<T>, opts?: { allowSigned?: boolean }): Promise<T>;
-  runCli(id: string, input: { connector: string; argv?: string[] }): Promise<{ evidence: Evidence; log: CommandLogEntry; exitCode: number }>;
+  runCli(id: string, input: RunCliInput): Promise<{ evidence: Evidence; log: CommandLogEntry; exitCode: number }>;
   sandboxExec(id: string, command?: string): Promise<RunRecord>;
   sandboxCommand(w: Walkthrough, action: "up" | "down"): string;
 }
