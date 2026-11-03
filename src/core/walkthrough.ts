@@ -27,6 +27,7 @@ import { type ReplayConfig } from "./replay.js";
 import { assertNoCoreBlockedTargets, pinNamesrvArgv } from "./egress/targets.js";
 import { nextActionFor, type NextAction, type SubmittedEvidence } from "./ops/next-action.js";
 import { ClaimRejectedError, SignedOffError } from "./errors.js";
+import { sha256File } from "./hash.js";
 import { runInSandbox, sandboxCommand, sandboxExec } from "./ops/sandbox.js";
 import { blockedUrlSecrets, maskAllQuery, wsHostKey } from "./ops/capture-urls.js";
 import { flowScreenshot } from "./flow-capture.internal.js";
@@ -85,7 +86,7 @@ const KINDS = SUBMITTABLE_EVIDENCE_KINDS;
 
 export type { NextAction, SubmittedEvidence } from "./ops/next-action.js";
 
-export const sha256File = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
+export { sha256File } from "./hash.js";
 
 export { blockedUrlSecrets, maskAllQuery } from "./ops/capture-urls.js";
 
